@@ -2,7 +2,7 @@
 
 CUDA optimization is the discipline of translating an algorithm into a schedule over threads, instructions, memory levels, and asynchronous work. The correct starting point is never a favorite tile size or instruction. It is a resource model: what must move, what must be computed, which dependencies are unavoidable, and which hardware resource becomes limiting first.
 
-This part is self-contained. It does not require Part III open beside it. Wherever serving concepts appear—KV cache, paging, grouped-query attention, mixture-of-experts routing—they are restated here at the level a kernel engineer needs. Part III remains the place for fleet scheduling and product SLOs; Part IV owns the GPU schedule.
+This part is self-contained. It does not require Part III open beside it. Wherever serving concepts appear - KV cache, paging, grouped-query attention, mixture-of-experts routing - they are restated here at the level a kernel engineer needs. Part III remains the place for fleet scheduling and product SLOs; Part IV owns the GPU schedule.
 
 ### Running example used throughout
 
@@ -32,6 +32,8 @@ You need comfort with matrix multiplication, reductions, and reading short CUDA 
 :::callout decision|The CUDA optimization loop
 Establish a correct reference. Measure the real workload. Build a bytes-and-FLOPs model. Identify one limiting resource. Change the schedule. Recheck correctness. Reprofile. Stop when the remaining gap is below the value of additional complexity.
 :::
+
+:::pagebreak
 
 ### Map of this part
 
@@ -469,9 +471,9 @@ Larger T raises reuse, but resource consumption grows. The estimate also assumes
 
 Consider the decode projection that maps `M = B = 8` rows through `K = N = D = 4096` in FP16 weights.
 
-- FLOPs ≈ `2 * 8 * 4096 * 4096 ≈ 2.7e8`.
-- Weight traffic alone ≈ `4096 * 4096 * 2 ≈ 34 MB` if weights are read once.
-- Arithmetic intensity against weights is roughly `2.7e8 / 3.4e7 ≈ 8` FLOP/byte before activation and output traffic.
+- FLOPs are approximately `2 * 8 * 4096 * 4096 = 2.7e8`.
+- Weight traffic alone is approximately `4096 * 4096 * 2 = 34 MB` if weights are read once.
+- Arithmetic intensity against weights is roughly `2.7e8 / 3.4e7 = 8` FLOP/byte before activation and output traffic.
 
 On a device whose HBM roof is near 3 TB/s, even perfect weight streaming yields only tens of microseconds of memory time, while tensor-core peak would finish the math much faster if data were free. Decode linear layers are therefore often weight-bandwidth bound at small batch. Prefill with `M = 2048` raises intensity and can move toward the compute roof for the same weights.
 
@@ -848,7 +850,7 @@ Fusion tradeoffs include:
 - backward-save requirements;
 - variant count across dtype and hidden size.
 
-For one residual stream of shape `[tokens, D]` in FP16, a separate add and RMSNorm can move roughly `3 * tokens * D * 2` bytes for the obvious reads and writes, before counting gamma. Fusion that keeps the residual in registers or cache can remove a full tensor trip. At prefill `tokens = 2048`, that is on the order of tens of megabytes saved per fused site; at decode `tokens = 8`, the absolute bytes are small, but launch savings remain.
+For one residual stream of shape `[tokens, D]` in FP16, a separate residual add performs two tensor reads and one intermediate write. RMSNorm must then read that intermediate to compute statistics, read it again to apply the scale unless the row remains on chip, and write the output. The unfused lower bound is therefore five full activation-tensor transfers and the common two-pass case is six, before counting gamma. Fusion removes at least the intermediate write and reread. At prefill with `tokens = 2048` and `D = 4096`, each FP16 tensor is 16 MiB, so eliminating two full transfers saves at least 32 MiB per fused site. At decode with `tokens = 8`, the absolute byte saving is small, but avoiding a launch can still matter.
 
 ### Top-k selection
 
@@ -938,8 +940,9 @@ Even if the GEMMs are efficient, moving quadratic intermediates can dominate mem
 
 For one head during prefill with `S_q = 2048` and FP16 scores:
 
-- `S` or `P` alone is `2048^2 * 2 ≈ 8.4 MB` per head;
-- across `H = 32` heads that is roughly `270 MB` of quadratic traffic if both `S` and `P` are materialized and reread;
+- `S` or `P` alone is `2048^2 * 2 = 8 MiB` per head;
+- across `H = 32` heads, one complete score or probability tensor is 256 MiB;
+- merely storing both tensors consumes 512 MiB, and writing then rereading each produces at least 1 GiB of quadratic HBM traffic before counting Q, K, V, or output traffic;
 - FlashAttention keeps per-row state `(m, l)` and an output tile of size `S_q * d`, so activation traffic scales with sequence times head dimension rather than sequence squared.
 
 The arithmetic may increase because tiles are rescaled and scores are recomputed in backward. The wall-clock win comes from staying under the HBM roof.
@@ -1120,7 +1123,7 @@ Each decode step writes one K and V vector per layer and sequence. The write is 
 
 The address depends on logical sequence, token position, layer, KV head, page mapping, and dtype. Keep that indexing contract centralized. A one-off mismatch between append and read kernels corrupts attention silently.
 
-For the running example, one decode step appends, per layer, `B * H_kv` vectors of length `d`. In FP16 that is `8 * 8 * 128 * 2 ≈ 16 KB` of K plus the same for V—tiny compared with reading the full context, but correctness-critical because every later attention step depends on the written layout.
+For the running example, one decode step appends, per layer, `B * H_kv` vectors of length `d`. In FP16 that is `8 * 8 * 128 * 2 = 16 KiB` of K plus the same for V - tiny compared with reading the full context, but correctness-critical because every later attention step depends on the written layout.
 
 ### Paged KV attention
 
@@ -1147,7 +1150,7 @@ One decode attention step, for all heads, must read roughly:
 
 With `B = 8`, `H_kv = 8`, `S = 4096`, `d = 128`, FP16:
 
-`8 * 8 * 4096 * 128 * 2 * 2 ≈ 1.07e9` bytes ≈ 1.0 GB
+`8 * 8 * 4096 * 128 * 2 * 2 = 1,073,741,824` bytes = 1 GiB
 
 At an illustrative 3 TB/s HBM ceiling, the memory roof is a fraction of a millisecond before scoring arithmetic, softmax, and writes. Useful bandwidth falls if page jumps destroy coalescing. This is why layout and paging dominate decode attention more than peak tensor-core throughput.
 
@@ -1179,7 +1182,7 @@ Compression is useful only if the hardware path processes packed data efficientl
 
 Mixture-of-experts layers activate a subset of experts per token. Routing computes top experts, counts tokens per expert, scans counts into offsets, scatters tokens into expert-contiguous buffers, executes grouped GEMM, then scatters outputs back with routing weights.
 
-The pipeline combines top-k, histogram, scan, gather/scatter, and GEMM—the primitives from earlier sections. Fusing every phase is rarely ideal. The important interfaces are compact routing metadata and layouts that let grouped GEMM consume contiguous expert batches.
+The pipeline combines top-k, histogram, scan, gather/scatter, and GEMM - the primitives from earlier sections. Fusing every phase is rarely ideal. The important interfaces are compact routing metadata and layouts that let grouped GEMM consume contiguous expert batches.
 
 Hot experts create imbalance. Capacity limits, token dropping, or expert replication change semantics and belong to the model contract, not only the kernel.
 
@@ -1391,4 +1394,4 @@ Create a variant when a frequent shape or semantic mode has a materially differe
 
 > A kernel is a proof that an algorithm, a data layout, and a hardware schedule agree.
 
-The proof has three parts: correctness for every supported shape, a resource model that predicts the bottleneck, and measurements that show the optimization survives integration. For this part, that means the same running example you opened with—prefill tiles that avoid quadratic HBM, and decode steps that honor the KV contract—still holds after profiling and fusion. Missing any one produces a benchmark artifact rather than a production kernel.
+The proof has three parts: correctness for every supported shape, a resource model that predicts the bottleneck, and measurements that show the optimization survives integration. For this part, that means the same running example you opened with - prefill tiles that avoid quadratic HBM, and decode steps that honor the KV contract - still holds after profiling and fusion. Missing any one produces a benchmark artifact rather than a production kernel.

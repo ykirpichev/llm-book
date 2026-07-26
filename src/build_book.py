@@ -113,16 +113,21 @@ def inline_markup(text: str) -> str:
     # Stash code spans before bold/italic so "*" inside `...` cannot form markup.
     code_spans: list[str] = []
 
+    def _code_token(index: int) -> str:
+        # NUL-delimited sentinels cannot collide with ordinary manuscript text
+        # and are removed before the string reaches ReportLab.
+        return f"\x00CODE_SPAN_{index}\x00"
+
     def _stash_code(match: re.Match[str]) -> str:
         code_spans.append(match.group(1))
-        return f"@@CODE{len(code_spans) - 1}@@"
+        return _code_token(len(code_spans) - 1)
 
     text = re.sub(r"`([^`]+)`", _stash_code, text)
     text = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<i>\1</i>", text)
     text = re.sub(r"\[([^]]+)]\(([^)]+)\)", r'<link href="\2" color="#008C8C">\1</link>', text)
     for index, code in enumerate(code_spans):
-        text = text.replace(f"@@CODE{index}@@", f'<font name="Courier">{code}</font>')
+        text = text.replace(_code_token(index), f'<font name="Courier">{code}</font>')
     return text
 
 
