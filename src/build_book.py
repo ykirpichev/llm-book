@@ -110,10 +110,24 @@ def esc(text: str) -> str:
 
 def inline_markup(text: str) -> str:
     text = esc(text.strip())
-    text = re.sub(r"`([^`]+)`", r'<font name="Courier">\1</font>', text)
+    # Stash code spans before bold/italic so "*" inside `...` cannot form markup.
+    code_spans: list[str] = []
+
+    def _code_token(index: int) -> str:
+        # NUL-delimited sentinels cannot collide with ordinary manuscript text
+        # and are removed before the string reaches ReportLab.
+        return f"\x00CODE_SPAN_{index}\x00"
+
+    def _stash_code(match: re.Match[str]) -> str:
+        code_spans.append(match.group(1))
+        return _code_token(len(code_spans) - 1)
+
+    text = re.sub(r"`([^`]+)`", _stash_code, text)
     text = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<i>\1</i>", text)
     text = re.sub(r"\[([^]]+)]\(([^)]+)\)", r'<link href="\2" color="#008C8C">\1</link>', text)
+    for index, code in enumerate(code_spans):
+        text = text.replace(_code_token(index), f'<font name="Courier">{code}</font>')
     return text
 
 
@@ -568,6 +582,24 @@ def diagram(name: str, width: float) -> Drawing:
         arrow(d, 276, 101, w - 121, 101)
         d.add(String(82, 32, "A tile -> shared memory", textAnchor="middle", fontName=FONT, fontSize=7, fillColor=MUTED))
         d.add(String(218, 32, "B tile -> shared memory", textAnchor="middle", fontName=FONT, fontSize=7, fillColor=MUTED))
+    elif name == "online_softmax":
+        d.add(String(w / 2, 172, "ONLINE SOFTMAX: MERGE TILE STATES WITHOUT FULL SCORES", textAnchor="middle", fontName=FONT_BOLD, fontSize=8.6, fillColor=INK))
+        box(d, 18, 108, 108, 42, "Tile A\nm_a, l_a, o_a", fill=PALE_TEAL)
+        box(d, 18, 42, 108, 42, "Tile B\nm_b, l_b, o_b", fill=PALE_GOLD, stroke=GOLD)
+        box(d, 168, 72, 96, 48, "m = max\nrescale\nadd", fill=WHITE, stroke=INK)
+        box(d, 308, 72, 104, 48, "Merged\nm, l, o", fill=PALE_CORAL, stroke=CORAL)
+        arrow(d, 128, 129, 166, 104)
+        arrow(d, 128, 63, 166, 88)
+        arrow(d, 266, 96, 306, 96, CORAL)
+        d.add(String(w / 2, 22, "l and o stay exact relative to one shared maximum", textAnchor="middle", fontName=FONT, fontSize=7.4, fillColor=MUTED))
+    elif name == "prefill_decode_kernels":
+        d.add(String(w / 2, 172, "ONE LAYER, TWO KERNEL REGIMES", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
+        box(d, 18, 88, 176, 64, "Prefill\nmany Q rows x long K/V\nGEMM + FlashAttention", fill=PALE_TEAL)
+        box(d, w - 194, 88, 176, 64, "Decode\n1 new Q / sequence\npaged KV + cadence", fill=PALE_CORAL, stroke=CORAL)
+        box(d, w / 2 - 78, 28, 156, 36, "Same math\ndifferent schedule", fill=PALE_GOLD, stroke=GOLD, font=7.4)
+        arrow(d, 106, 86, w / 2 - 40, 58, MUTED, 1.2)
+        arrow(d, w - 106, 86, w / 2 + 40, 58, MUTED, 1.2)
+        d.add(String(w / 2, 12, "optimize the regime you are in; do not reuse the other tile plan blindly", textAnchor="middle", fontName=FONT, fontSize=7.2, fillColor=MUTED))
     elif name == "parallelism_map":
         labels = [
             ("Data", 30, 123, TEAL),
