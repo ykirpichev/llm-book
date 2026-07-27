@@ -550,6 +550,42 @@ def diagram(name: str, width: float) -> Drawing:
                 color = colors_[(row + col // 3) % len(colors_)]
                 d.add(Rect(105 + col * 27, y, 22, 13, rx=2, ry=2, fillColor=color, strokeColor=None))
         d.add(String(w - 50, 12, "time ->", textAnchor="end", fontName=FONT_BOLD, fontSize=7.2, fillColor=MUTED))
+    elif name == "request_lifecycle":
+        d.add(String(w / 2, 172, "ONE REQUEST, MEASURED AT EVERY BOUNDARY", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
+        stages = [
+            ("Arrive\nauth + token", WHITE, INK),
+            ("Queue\n+ route", PALE_GOLD, GOLD),
+            ("Prefill\nprompt", PALE_TEAL, TEAL),
+            ("Decode\nloop", PALE_CORAL, CORAL),
+            ("Stream\nflush", WHITE, INK),
+            ("Cleanup\nfree KV", WHITE, MUTED),
+        ]
+        bw, bh, gap = 58, 36, 10
+        total = len(stages) * bw + (len(stages) - 1) * gap
+        x = (w - total) / 2
+        xs = []
+        for label, fill, stroke in stages:
+            box(d, x, 106, bw, bh, label, fill=fill, stroke=stroke, font=7)
+            xs.append(x)
+            x += bw + gap
+        for i in range(len(stages) - 1):
+            arrow(d, xs[i] + bw, 124, xs[i + 1] - 2, 124)
+        arrow(d, xs[3] + bw / 2 + 16, 104, xs[3] + bw / 2 - 16, 104, CORAL, 1.1)
+        d.add(String(xs[3] + bw / 2, 92, "one token / step", textAnchor="middle", fontName=FONT, fontSize=6.6, fillColor=CORAL))
+        arrow(d, xs[0] + 4, 66, xs[3] + 14, 66, TEAL, 1.2)
+        d.add(String((xs[0] + xs[3]) / 2 + 8, 52, "time to first token", textAnchor="middle", fontName=FONT_BOLD, fontSize=7.2, fillColor=TEAL))
+        arrow(d, xs[3] + 26, 66, xs[4] + bw - 4, 66, CORAL, 1.2)
+        d.add(String((xs[3] + xs[4] + bw) / 2 + 10, 52, "inter-token cadence", textAnchor="middle", fontName=FONT_BOLD, fontSize=7.2, fillColor=CORAL))
+        d.add(String(w / 2, 26, "each boundary needs an owner and a timestamp", textAnchor="middle", fontName=FONT, fontSize=7.3, fillColor=MUTED))
+    elif name == "disaggregation":
+        d.add(String(w / 2, 172, "PREFILL-DECODE DISAGGREGATION AND THE KV HANDOFF", textAnchor="middle", fontName=FONT_BOLD, fontSize=8.6, fillColor=INK))
+        box(d, 26, 84, 104, 62, "Prefill pool\ncompute-heavy\nbig batches", fill=PALE_TEAL, stroke=TEAL, font=7.2)
+        box(d, w / 2 - 55, 92, 110, 46, "KV handoff\nX bytes / BW\n+ protocol", fill=PALE_GOLD, stroke=GOLD, font=7.2)
+        box(d, w - 130, 84, 104, 62, "Decode pool\ncadence-bound\npaged KV", fill=PALE_CORAL, stroke=CORAL, font=7.2)
+        arrow(d, 132, 115, w / 2 - 57, 115, TEAL, 1.6)
+        arrow(d, w / 2 + 57, 115, w - 132, 115, CORAL, 1.6)
+        d.add(String(w / 2, 44, "wins only when phase specialization and isolation exceed", textAnchor="middle", fontName=FONT, fontSize=7.4, fillColor=MUTED))
+        d.add(String(w / 2, 32, "transfer time + extra queueing + operational complexity", textAnchor="middle", fontName=FONT, fontSize=7.4, fillColor=MUTED))
     elif name == "memory_hierarchy":
         levels = [
             ("Registers", 85, CORAL),
