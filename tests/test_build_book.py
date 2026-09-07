@@ -40,6 +40,14 @@ class BuildBookTests(unittest.TestCase):
         )
         self.assertEqual(rows, [["A", "B"], ["one", "two"]])
 
+    def test_inline_code_preserves_multiplication_and_emphasis(self) -> None:
+        rendered = build_book.inline_markup("`B * H` and `S * d` with **bold**")
+        self.assertIn('<font name="Courier">B * H</font>', rendered)
+        self.assertIn('<font name="Courier">S * d</font>', rendered)
+        self.assertIn("<b>bold</b>", rendered)
+        self.assertNotIn("<i>", rendered)
+        self.assertNotIn("\x00", rendered)
+
     def test_slug_is_stable_and_bounded(self) -> None:
         first = build_book.slugify("A Heading With Punctuation!")
         second = build_book.slugify("A Heading With Punctuation!")
