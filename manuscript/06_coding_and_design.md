@@ -1,103 +1,1123 @@
 # Part VI - Coding and System Design
 
-Interview coding at senior levels tests more than syntax. The candidate must choose a data structure, state invariants, analyze complexity, handle streams and concurrency, and show how the local algorithm fits a production system.
+Production algorithms are contracts about state, approximation, time, and failure. Their value in LLM systems appears in telemetry, data processing, retrieval, scheduling, cache policy, evaluation, and capacity control. This part develops the underlying structures and then connects them to complete services.
 
 ## Streaming Algorithms and Top-K
 
-LEAD: A stream cannot be revisited cheaply. The design must decide which information to retain, which approximation to accept, and how error is communicated.
+LEAD: A stream is a sequence that may be too large, too fast, or too expensive to replay. A correct design begins with an explicit query and error contract, then retains the minimum state that satisfies it. The algorithm, window semantics, merge rule, and failure policy must agree.
 
-### Exact top-k
+### Start with the streaming contract
 
-For a finite stream with known scores, maintain a min-heap of size `k`. Each item above the current minimum replaces the root. Time is `O(n log k)` and memory `O(k)`.
+Let the stream be updates `u_1, u_2, ...`. An update may be:
+
+- an insertion `(key, value, event_time)`;
+- a weighted increment `(key, delta)`;
+- a replacement of a previously identified record;
+- a deletion or negative increment;
+- a duplicate delivery of an earlier update.
+
+Those cases are not interchangeable. A cash-register stream permits only nonnegative increments. A strict-turnstile stream permits negative increments but requires every true frequency to remain nonnegative. A general-turnstile stream permits signed frequencies. Count-Min Sketch has its familiar one-sided guarantee only in the cash-register model; a heap over immutable records does not implement updates or deletion.
+
+Define the query before the data structure:
+
+- top `k` immutable records by score;
+- top `k` keys by frequency;
+- maximum over the most recent `w` arrivals;
+- maximum over an event-time interval;
+- mean or variance since a checkpoint;
+- a uniform sample of all records seen;
+- approximate membership, cardinality, frequency, or quantile.
+
+Then define the contract along six dimensions:
+
+| Dimension | Questions that change the algorithm |
+| --- | --- |
+| Scope | All history, count window, event-time window, or exponential decay? |
+| Accuracy | Exact, deterministic rank error, one-sided additive error, or probabilistic relative error? |
+| Updates | Insert-only, replacements, deletions, or signed increments? |
+| Ordering | In arrival order, event-time order, or no ordering guarantee? |
+| Distribution | Must states merge exactly? Are partitions disjoint? Can records move between shards? |
+| Recovery | Are updates replayable? Are sources idempotent? Must snapshots align with offsets? |
+
+The space lower bound follows the query. Exact arbitrary-frequency counts require state proportional to the number of distinct keys. Exact arbitrary quantiles can require retaining the stream. Bounded memory therefore usually means a restricted window, a restricted input model, or an approximation.
+
+### Notation and error vocabulary
+
+The rest of the chapter uses the following notation:
+
+- `N` is the number of processed updates or the current window width, as stated locally;
+- `f(x)` is the true nonnegative frequency of key `x`;
+- `F_1 = sum_x f(x)` is total frequency mass;
+- `D = |{x : f(x) > 0}|` is distinct cardinality;
+- `R(v) = |{i : x_i <= v}|` is the rank of value `v`;
+- `p` is a probability and `delta` is usually a failure-probability budget;
+- `epsilon` is an application-selected error tolerance, not machine epsilon.
+
+An additive frequency bound `|f_hat(x) - f(x)| <= epsilon F_1` scales with total mass. A relative bound `|f_hat(x) - f(x)| <= epsilon f(x)` scales with the queried frequency and is much stronger for rare keys. A rank bound `|R_hat(v) - R(v)| <= epsilon N` says nothing directly about numerical value error. A false-positive rate is a probability over queries and hash construction, not a count-error interval.
+
+Also state the scope of probability:
+
+- **pointwise:** a fixed query chosen independently of the sketch succeeds with probability at least `1 - delta`;
+- **simultaneous:** all queries in a declared set succeed together with probability at least `1 - delta`;
+- **empirical:** an observed error percentile from experiments, not a mathematical guarantee.
+
+To convert a pointwise failure probability to a simultaneous guarantee over `Q` fixed queries, a union bound can allocate `delta/Q` to each query. Adaptive queries chosen after inspecting outputs need a separate analysis; blindly reusing the pointwise statement can be invalid.
+
+Finally, "mergeable" does not mean byte-for-byte identical to processing one serial stream. It means a documented merge operation produces a summary of the multiset union while preserving the promised error contract. Floating-point states, randomized compaction, and order-sensitive implementations can produce different internal bytes while remaining valid.
+
+### Exact top-k for immutable records
+
+Suppose each record has a total ordering key `(score, tie_breaker)`. The tie breaker must be deterministic and unique enough for the application, such as a record ID. Define "larger" as better. Maintain a min-heap `H` containing at most `k` records.
+
+The invariant after processing the first `i` records is:
+
+> `H` contains exactly the best `min(i, k)` records among the prefix, and `H[0]` is the worst retained record.
+
+The update rule follows directly:
+
+1. If `len(H) < k`, insert the record.
+2. Otherwise compare it with `H[0]`.
+3. If it is not better, discard it.
+4. If it is better, replace the root.
 
 ```python
-def top_k(stream, k):
-    heap = []
+from math import isfinite
+from heapq import heappush, heapreplace
+
+def exact_top_k(stream, k):
+    if k < 0:
+        raise ValueError("k must be nonnegative")
+    if k == 0:
+        return []
+
+    heap = []  # (score, stable_id, payload)
     for item in stream:
-        scored = (item.score, item.id, item)
+        if not isfinite(item.score):
+            # A production API must choose reject, canonical ordering, or alert.
+            continue
+        entry = (item.score, item.id, item)
         if len(heap) < k:
-            heappush(heap, scored)
-        elif scored > heap[0]:
-            heapreplace(heap, scored)
-    return [x.item for x in sorted(heap, reverse=True)]
+            heappush(heap, entry)
+        elif entry > heap[0]:
+            heapreplace(heap, entry)
+
+    return [entry[2] for entry in sorted(heap, reverse=True)]
 ```
 
-The stable `id` breaks score ties. Production code defines updates, deletions, late data, serialization, and merge across partitions.
+#### Correctness proof
 
-For distributed top-k, each shard emits local top-k; the coordinator takes top-k of their union. This is exact because an item outside a shard's local top-k cannot be in the global top-k. With per-key groups, the same argument applies per key but state can explode.
+Use induction on the prefix length.
 
-### Sliding windows
+- **Base case:** before any record, the heap contains the best zero records.
+- **Inductive step:** assume the invariant holds after `i - 1` records. If the heap has fewer than `k` records, adding record `i` clearly gives the best prefix of size `i`. Otherwise, `H[0]` is the `k`th-best retained record. If the new record is no better than `H[0]`, at least `k` prefix records are at least as good, so the new record cannot belong to the top `k`. If it is better, the old root becomes rank `k + 1` or worse and replacing it produces exactly the new top `k`.
 
-Window semantics may be count-based, processing-time, or event-time. Event-time windows require watermarks and a lateness policy. A monotonic deque maintains min or max over a count window in amortized `O(1)` time: remove expired indices from the front and dominated values from the back.
+Heap construction for the first `k` records costs `O(k)` with bottom-up heapify or `O(k log k)` with repeated insertion. Each of the remaining `n - k` records costs `O(1)` for comparison and `O(log k)` only when it enters the heap. The worst-case bound is `O(n log k)` time and `O(k)` state. Producing sorted output adds `O(k log k)`.
+
+A full sort costs `O(n log n)` and retains `O(n)` records. Selection by partitioning can find the threshold in expected `O(n)` time for a materialized finite array, but it is not a bounded-state one-pass streaming algorithm. The heap is the appropriate choice when `k << n`, arrivals are incremental, and only retained records need storage.
+
+#### Worked heap trace
+
+Let `k = 3` and let the total-order keys arrive as `(8,a), (2,b), (5,c), (9,d), (5,e)`, where a larger score wins and the ID breaks ties. Heap storage order is an implementation detail; the retained sets evolve as:
+
+| Arrival | Retained top set | Boundary root |
+| --- | --- | --- |
+| `(8,a)` | `{(8,a)}` | `(8,a)` |
+| `(2,b)` | `{(2,b), (8,a)}` | `(2,b)` |
+| `(5,c)` | `{(2,b), (5,c), (8,a)}` | `(2,b)` |
+| `(9,d)` | `{(5,c), (8,a), (9,d)}` | `(5,c)` |
+| `(5,e)` | `{(5,e), (8,a), (9,d)}` | `(5,e)` |
+
+The last replacement depends on the declared ID order. If equal scores should preserve first arrival, use arrival sequence as an inverse tie breaker. If the product must return every record tied with the kth score, a fixed-size heap is only the first phase: find the kth score, then retain or replay all records at that score.
+
+#### Boundary semantics
+
+Production correctness includes details hidden by the asymptotic result:
+
+- Define whether ties at the boundary return exactly `k` records or all tied records.
+- Reject or order `NaN`; language comparisons involving `NaN` can violate heap assumptions.
+- Include version and score definition in serialized state.
+- Decide whether payloads live in the heap or the heap stores IDs into durable storage.
+- Bound record size; `O(k)` records is not `O(k)` bytes when payloads vary.
+- Make query snapshots atomic relative to updates if readers require a coherent top `k`.
+
+### Exact distributed top-k
+
+Let shards partition immutable records into disjoint sets `S_1, ..., S_p`. Let `T_k(S)` denote the best `k` records in set `S`. The coordinator can compute:
+
+`T_k(S_1 union ... union S_p) = T_k(T_k(S_1) union ... union T_k(S_p))`.
+
+To prove this, take a record `x` not in `T_k(S_j)` for its owning shard. At least `k` records in `S_j` rank above `x`; those same records exist globally. Therefore `x` cannot be in the global top `k`. Every possible global winner is present in some local top `k`, so taking top `k` of at most `p k` candidates is exact.
+
+Each shard spends `O(n_j log k)` time and sends `O(k)` records. A coordinator heap costs `O(p k log k)` time and `O(k)` working memory if candidates stream in. A tree reduction uses the same compositional rule and avoids one coordinator receiving all `p k` candidates at once.
+
+The proof fails when:
+
+- records are replicated and duplicates are not deduplicated;
+- scores change after local emission;
+- a key's frequency is split across shards and must be summed;
+- shards use inconsistent score versions or tie breakers;
+- the query is "top keys by global count" rather than "top immutable records."
+
+For global frequency top-k, first aggregate each key's partial counts, or use a mergeable frequency summary with a stated error bound. Local top-k by partial count is not generally exact: a globally frequent key can rank just below `k` on every shard while its sum exceeds every local winner.
+
+A minimal counterexample uses `k = 1`. Shard 1 observes `A:6, X:5`; shard 2 observes `B:6, X:5`. The local winners are `A` and `B`, so merging only local top-1 candidates returns frequency six. Globally, `X` has frequency ten and is the true winner. Record top-k composes because each record has one owner and one score; frequency top-k does not compose until partial counts for the same key are combined.
+
+### Mutable scores, updates, and deletions
+
+A size-`k` heap alone loses information needed when a retained record is deleted or its score decreases. Common exact patterns include:
+
+- a map from ID to current version plus a heap with lazy stale-entry removal;
+- two indexed heaps or an order-statistics tree when arbitrary updates and rank queries are frequent;
+- a durable full state store plus a materialized top-k view;
+- periodic rebuilds when lazy garbage grows beyond a threshold.
+
+Lazy deletion stores `(score, id, version)` in the heap and the current version in a map. Before reading or replacing the root, pop entries whose version is stale. This preserves correctness but not a strict `O(k)` memory bound if updates arrive faster than cleanup. Rebuild when physical heap size exceeds a multiple of live state.
+
+For windowed top-k, expiration is also deletion. Exact implementations often combine a time-indexed expiration structure with a score-indexed structure. A single heap ordered by score cannot efficiently find all expired items, and a heap ordered by time cannot answer top-k efficiently. State and index count must be included in the design estimate.
+
+### Sliding windows and the monotonic deque
+
+A count window of width `w` at arrival index `i` contains indices `[i - w + 1, i]`. A monotonic deque gives the maximum using only candidates that can still win.
+
+Maintain two invariants:
+
+1. indices increase from front to back;
+2. values strictly decrease from front to back.
 
 ```python
+from collections import deque
+
 def sliding_max(values, window):
-    q = deque()  # indices; values decrease from front to back
+    if window <= 0:
+        raise ValueError("window must be positive")
+
+    q = deque()  # candidate indices, values decrease front to back
     for i, value in enumerate(values):
         while q and q[0] <= i - window:
-            q.popleft()
+            q.popleft()                 # expired
         while q and values[q[-1]] <= value:
-            q.pop()
+            q.pop()                     # dominated
         q.append(i)
         if i + 1 >= window:
             yield values[q[0]]
 ```
 
+When a new value `x_i` arrives, any older candidate at the back with value `<= x_i` is dominated: `x_i` is at least as large and expires later, so the older value can never again be the maximum. After removing expired and dominated entries, the front is the largest live candidate.
+
+#### Amortized analysis
+
+One update can pop many entries, so its worst-case time is `O(w)`. Across `n` updates, however, each index is:
+
+- appended exactly once;
+- removed from the back at most once;
+- removed from the front at most once.
+
+The total number of deque operations is at most `3n`, so total work is `O(n)` and amortized work is `O(1)` per update. The deque stores at most `w` indices. A minimum uses the reversed comparison. Returning both minimum and maximum uses two deques.
+
+The deque assumes an arrival-order count window. It does not directly solve out-of-order event-time windows because a late event can be inserted into the middle of the logical order and can invalidate previously emitted results.
+
+### Approximate sliding counts with exponential histograms
+
+The monotonic deque exploits domination and is exact for min or max. A different problem is counting the number of ones among the last `W` bits. An exact algorithm may need enough information to know whether every expiring bit was zero or one, which requires `Theta(W)` bits in the worst case. An exponential histogram compresses old arrivals while keeping recent arrivals precise.
+
+Each bucket represents a consecutive group of one-bits and stores:
+
+- a size that is a power of two;
+- the timestamp of the bucket's most recent one-bit.
+
+Buckets are ordered newest to oldest. Choose an even integer `q >= 1/epsilon`. Except possibly for the largest size, keep between `q/2` and `q/2 + 1` buckets of every represented size. On arrival:
+
+1. expire buckets whose newest timestamp is outside the window;
+2. ignore a zero, or create a newest size-one bucket for a one;
+3. if a size has `q/2 + 2` buckets, merge its two oldest buckets;
+4. give the merged bucket double size and the newer of the two timestamps;
+5. cascade the same rule to larger sizes.
+
+To answer the count, sum every bucket size but count only half of the oldest bucket:
+
+`count_hat = total_bucket_size - oldest_bucket_size / 2`.
+
+Every bucket except the oldest is fully inside the window. Only the oldest bucket can straddle the boundary. If its size is `C`, the estimate's absolute error is at most `C/2`.
+
+Why is that a relative-error bound? A size-`C = 2^r` bucket can exist only after repeated merges. Keeping roughly `q/2` buckets at each smaller size establishes the exponential-histogram invariant:
+
+`(C/2) / (1 + sum_newer_bucket_sizes) <= 1/q`.
+
+The `1` is justified because the boundary bucket's newest one has not expired; otherwise the whole bucket would have been deleted. The true live count is at least that one plus all fully live newer buckets. Therefore:
+
+`|count_hat - true_count| / true_count <= (C/2) / (1 + sum_newer_bucket_sizes) <= 1/q <= epsilon`.
+
+The exact endpoint constants depend on integer rounding, which is why implementations follow the published bucket invariant rather than improvising one. There are `O((1/epsilon) log W)` buckets. A size needs `O(log log W)` bits and a timestamp needs `O(log W)` bits, giving `O((1/epsilon) log^2 W)` bits in the direct representation. Cascading can take `O(log W)` for one arrival but is `O(1)` amortized because every merge reduces bucket count.
+
+#### Worked exponential-histogram query
+
+Suppose the live bucket sizes from newest to oldest are `[1, 1, 2, 2, 4, 8]`, and the size-eight bucket crosses the window boundary. The stored total is `18`; the estimate is `18 - 8/2 = 14`. The true contribution of the boundary bucket is somewhere from one through eight, so the true count is from `11` through `18`. The estimate's worst absolute error is four, exactly half the uncertain bucket.
+
+This is a count-window algorithm. Event-time disorder still needs watermark and revision semantics. Also do not use the relative guarantee to hide near-zero behavior: when the true count is tiny, an exact sparse representation may be simpler and more useful.
+
+### Event time, watermarks, and late data
+
+Streaming systems distinguish:
+
+- **event time:** when the source says the event occurred;
+- **ingestion time:** when the platform first accepted it;
+- **processing time:** when an operator executes it.
+
+A fixed event-time window of width `T` can assign timestamp `t` to `[floor(t / T) T, (floor(t / T) + 1) T)`. A sliding window has a width and a smaller slide, so one event may update several windows. A session window groups events separated by less than an inactivity gap.
+
+A watermark `W` is a progress claim: the system does not expect ordinary future arrivals with event time below `W`. It is not proof that no such event can arrive. Once `W` passes a window end, the system may emit an on-time pane. Allowed lateness `L` keeps state until approximately `window_end + L`; later records are dropped, side-output, or sent to a correction workflow.
+
+An event-time contract must define:
+
+1. **assignment:** fixed, sliding, or session windows;
+2. **watermark generation:** source offsets, observed timestamp lag, or explicit source progress;
+3. **triggers:** early speculative, on-time, and late correction emissions;
+4. **accumulation:** each pane contains only new changes or the full revised aggregate;
+5. **finalization:** when state is deleted and no further in-place corrections occur;
+6. **sink semantics:** append, upsert by `(key, window)`, or retract-and-replace.
+
+If a heavy-hitter result changes after a late event, an append-only sink that prints another list creates ambiguity. An upsert should include `window_id`, `revision`, watermark, completeness state, and estimator parameters. Consumers can then distinguish speculative results from final results.
+
+Watermarks in a multi-partition operator usually follow the minimum non-idle input watermark. One stalled partition can therefore hold every window open. Idleness detection needs a policy because marking a truly delayed partition idle can advance the watermark and make its later records late.
+
 ### Online mean and variance
 
-Welford's update avoids the cancellation of `E[x^2] - E[x]^2`:
+For observations `x_1, ..., x_n`, define:
 
-`n <- n + 1`
+- count `n`;
+- mean `mu_n = (1/n) sum_i x_i`;
+- centered sum of squares `M2_n = sum_i (x_i - mu_n)^2`.
 
-`delta = x - mean`
+The population variance is `M2_n / n`. The unbiased sample variance is `M2_n / (n - 1)` for `n >= 2`.
 
-`mean <- mean + delta / n`
+The algebraically simple formula `variance = mean(x^2) - mean(x)^2` can catastrophically cancel when the variance is small relative to the squared mean. For values near `10^9` separated by units, both terms are near `10^18`; subtracting them can discard the meaningful low-order bits.
 
-`M2 <- M2 + delta * (x - mean)`
+#### Deriving Welford's update
 
-Variance is `M2 / (n - 1)` for a sample. Two Welford states can be merged, which makes the method useful in distributed streams.
+Assume state `(n, mu_n, M2_n)` and a new observation `x`. Let `n' = n + 1` and `delta = x - mu_n`.
 
-### Reservoir sampling
+The new mean is:
 
-To sample `k` items uniformly from a stream of unknown length, fill the reservoir with the first `k`. For item `i` using one-based indexing, choose a random integer in `[1, i]`; replace a reservoir slot if the result is at most `k`.
+`mu_n' = (n mu_n + x) / n' = mu_n + delta / n'`.
 
-The proof is inductive: after processing `i` items, every item is retained with probability `k/i`. Weighted reservoirs require different keys or priority sampling.
+Define `delta2 = x - mu_n'`. Since `mu_n' = mu_n + delta / n'`, we have `delta2 = delta * n / n'`.
 
-### Heavy hitters and Count-Min Sketch
+For the old observations, shifting the center from `mu_n` to `mu_n'` gives:
 
-A Count-Min Sketch maintains several hash rows. To update key `x` by count `c`, increment one counter per row. Estimate by the minimum of those counters. Collisions only overestimate for nonnegative updates.
+`sum_{i=1}^n (x_i - mu_n')^2 = M2_n + n (mu_n - mu_n')^2`,
 
-With width proportional to `1/epsilon` and depth proportional to `log(1/delta)`, error is bounded by `epsilon` times total count with probability at least `1 - delta`. Hash functions and adversarial robustness matter in exposed systems.
+because the cross term contains `sum_i (x_i - mu_n) = 0`. Adding the new observation and simplifying yields:
 
-Combine the sketch with a candidate heap for heavy hitters. The sketch estimates frequency, while the heap retains keys worth reporting. Merging is elementwise addition if dimensions and hashes match.
+`M2_n' = M2_n + delta * delta2`.
 
-### HyperLogLog and Bloom filters
+That produces the stable update:
 
-HyperLogLog estimates cardinality from the position of the first set bit in hashed values across many registers. Its relative error is roughly proportional to `1 / sqrt(registers)`. Bias correction and small-range behavior matter in implementation.
+```python
+def update(state, x):
+    n, mean, M2 = state
+    n2 = n + 1
+    delta = x - mean
+    mean2 = mean + delta / n2
+    delta2 = x - mean2
+    M2_2 = M2 + delta * delta2
+    return n2, mean2, M2_2
+```
 
-A Bloom filter answers set membership with false positives and no false negatives under append-only use. With `m` bits, `n` elements, and `k` hashes, false-positive rate is approximately:
+The method avoids subtracting two nearly equal large accumulated moments. It does not make floating point exact: use an adequate accumulator dtype, reject non-finite inputs according to policy, and consider compensated summation or pairwise reduction for extreme dynamic range.
 
-`(1 - exp(-k n / m))^k`
+#### Merging two variance states
 
-Counting Bloom filters support deletions with counters but use more memory and can underflow if updates are inconsistent.
+Let disjoint partitions `A` and `B` have states `(n_A, mu_A, M2_A)` and `(n_B, mu_B, M2_B)`. Let `n = n_A + n_B` and `delta = mu_B - mu_A`.
+
+The combined mean is:
+
+`mu = mu_A + delta * n_B / n`.
+
+The combined centered sum is:
+
+`M2 = M2_A + M2_B + delta^2 * n_A n_B / n`.
+
+The final term accounts for separation between partition means. It follows by writing each deviation from the combined mean as `(x - mu_A) + (mu_A - mu)` or `(x - mu_B) + (mu_B - mu)`. Within-partition cross terms vanish because centered deviations sum to zero.
+
+This merge is associative over exact arithmetic and therefore supports tree reduction. Floating-point results still depend slightly on merge order. Balanced pairwise merging usually limits error better than repeatedly merging a huge state with a tiny state.
+
+Handle empty states explicitly. For vector features, `mean` and elementwise `M2` have feature shape. A full covariance needs a matrix outer-product accumulator and costs `O(d^2)` state, not `O(d)`.
+
+#### Weighted updates and removals
+
+For positive weights, store total weight `W`, weighted mean `mu`, and:
+
+`M2 = sum_i w_i (x_i - mu)^2`.
+
+Adding `(x, w)` is the same as merging the current state with a one-point state:
+
+`W' = W + w`,
+
+`delta = x - mu`,
+
+`mu' = mu + (w/W') delta`,
+
+`M2' = M2 + w delta (x - mu') = M2 + (W w/W') delta^2`.
+
+Two weighted states merge by replacing counts `n_A, n_B` in the parallel formula with total weights `W_A, W_B`.
+
+If an exactly known point `(x, w)` leaves a window and `W' = W - w > 0`, reverse the update:
+
+`mu' = (W mu - w x) / W'`,
+
+`M2' = M2 - w (x - mu)(x - mu')`.
+
+Removal is more sensitive to floating-point error, especially when `W'` is tiny relative to `W`. Periodically rebuilding from live window state can be safer. If the removed point is not stored exactly, Welford state alone cannot reconstruct it.
+
+Roundoff can leave a tiny negative `M2` after removal or merging. Clamp only a value within a justified floating-point tolerance of zero; a materially negative result indicates corrupted state, mismatched removal, or an implementation error.
+
+"Sample variance" for weights is not one universal formula. Frequency weights model repeated observations; reliability or inverse-variance weights use a different effective degrees-of-freedom correction. State the statistical interpretation before dividing weighted `M2`.
+
+#### Worked variance trace
+
+For `[4, 7, 13, 16]`, the state evolves:
+
+| New value | `n` | `mean` | `M2` |
+| --- | ---: | ---: | ---: |
+| `4` | 1 | 4 | 0 |
+| `7` | 2 | 5.5 | 4.5 |
+| `13` | 3 | 8 | 42 |
+| `16` | 4 | 10 | 90 |
+
+The population variance is `90/4 = 22.5`; the unbiased sample variance is `90/3 = 30`. Splitting into `A=[4,7]` and `B=[13,16]` gives means `5.5` and `14.5`, with `M2_A=M2_B=4.5`. The merge correction is `(14.5-5.5)^2 * 2*2/4 = 81`, so combined `M2 = 4.5 + 4.5 + 81 = 90`.
+
+### Uniform reservoir sampling
+
+The goal is a simple random sample without replacement of size `k` from a stream whose final length `N` is unknown. Every item must have inclusion probability `k / N`.
+
+Algorithm R fills the reservoir with the first `k` items. For the item at one-based position `i > k`, draw `j` uniformly from `{1, ..., i}`. If `j <= k`, replace reservoir slot `j`; otherwise discard the item.
+
+```python
+def reservoir_sample(stream, k, rng):
+    if k < 0:
+        raise ValueError("k must be nonnegative")
+    reservoir = []
+    for i, item in enumerate(stream, start=1):
+        if i <= k:
+            reservoir.append(item)
+        else:
+            j = rng.randint(1, i)  # inclusive
+            if j <= k:
+                reservoir[j - 1] = item
+    return reservoir
+```
+
+#### Uniformity proof
+
+Proceed by induction on processed length `i`.
+
+- After `i = k`, every item is present with probability `1 = k/k`.
+- Assume every earlier item is present after `i - 1` updates with probability `k/(i - 1)`.
+- New item `i` is inserted exactly when `j <= k`, which has probability `k/i`.
+- An earlier retained item is replaced only when the algorithm chooses its particular slot. That occurs with probability `1/i`, so it survives the update with probability `(i - 1)/i`.
+
+Therefore an earlier item's final inclusion probability is:
+
+`(k / (i - 1)) * ((i - 1) / i) = k / i`.
+
+The invariant holds for all `i`, and at `N` every item has probability `k/N`.
+
+The algorithm processes every record and makes one random draw after the reservoir fills. Skip-based reservoir algorithms improve constants for very long streams by sampling how many records to skip before the next replacement, while preserving the same sample distribution.
+
+#### Distributed sampling
+
+Concatenating arbitrary per-shard reservoirs and sampling uniformly from their items is biased when shard sizes differ. A record on a small shard has a larger chance of entering its local reservoir.
+
+Two exact approaches are:
+
+- assign every record an independent continuous random priority derived from a stable record ID and sampling seed, retain the `k` smallest priorities per shard, then retain the global `k` smallest priorities; or
+- merge local uniform reservoirs with weights derived from shard counts using the appropriate multivariate hypergeometric allocation.
+
+The priority approach has the same compositional proof as distributed top-k: a record outside a shard's local `k` smallest priorities cannot be among the global `k` smallest. Stable hash-derived priorities also make replay deterministic, but only if record identity and seed are stable and the hash behaves as a suitable pseudorandom function.
+
+For the shard-allocation approach, let shard sizes be `n_1, ..., n_p`, total `N`, and let `s_j` be the number of final sample records drawn from shard `j`, with `sum_j s_j = k`. A uniform global subset induces the multivariate hypergeometric law:
+
+`P(s_1, ..., s_p) = product_j choose(n_j, s_j) / choose(N, k)`.
+
+First draw the allocation vector from this distribution. Then choose a uniform size-`s_j` subset from each shard. A local uniform reservoir of size `min(k, n_j)` is sufficient: choosing a uniform `s_j` subset of that reservoir is itself uniform over size-`s_j` subsets of the shard. This method requires trustworthy shard counts and coordinated random allocation.
+
+#### Weighted sampling without replacement
+
+For positive item weights `w_i`, "weighted" needs a target law. One common law chooses each next item with probability proportional to its weight among items not yet selected. Generate independent `U_i` uniform on `(0,1]`, define:
+
+`priority_i = -ln(U_i) / w_i`,
+
+and retain the `k` smallest priorities. Since `-ln(U_i)` is exponential with rate one, dividing by `w_i` gives an exponential random variable with rate `w_i`. For `k = 1`, the probability that item `i` has the minimum clock is:
+
+`P(i first) = w_i / sum_j w_j`.
+
+The memoryless property of exponential clocks makes the next minimum proportional to the remaining weights, producing sequential probability-proportional-to-size sampling without replacement.
+
+The priority is composable across shards: keep local `k` smallest, then global `k` smallest. Compute `-ln(U)/w` rather than `U^(1/w)` to avoid numerical underflow. Zero or negative weights are outside this model. Inclusion probability is not generally `k w_i / sum_j w_j`; that expression can exceed one and ignores without-replacement dependence.
+
+Sampling with replacement, weighted sampling, and time-decayed sampling have different distributions. Do not label them "reservoir sampling" without naming the target probability and random-priority construction.
+
+### Deterministic heavy hitters with Misra-Gries
+
+For an insertion-only stream of length `N`, a `phi`-heavy hitter is a key with frequency greater than `phi N`. Exact counts may require one counter per distinct key. Misra-Gries provides deterministic candidates with bounded error.
+
+Choose `r` counters. For each key `x`:
+
+1. if `x` is tracked, increment its counter;
+2. else if fewer than `r` keys are tracked, insert `x` with count one;
+3. else decrement every counter and delete zeros.
+
+With `r = ceil(1/phi) - 1`, every key with frequency greater than `N/(r + 1)` is retained as a candidate.
+
+Why? Each global decrement can be paired with the untracked arriving item and one occurrence from each of the `r` tracked keys, canceling `r + 1` distinct occurrences. There can be at most `floor(N/(r + 1))` such cancellation rounds. A key absent from the final table must have had all of its occurrences canceled, so its true frequency is at most that number.
+
+If `c_hat(x)` is the final counter for a retained key, then:
+
+`c_hat(x) <= f(x)` and `f(x) - c_hat(x) <= g <= N/(r + 1)`,
+
+where `g` is the number of decrement-all rounds. Also,
+
+`g = (N - sum_x c_hat(x)) / (r + 1)`,
+
+because every ordinary increment increases counter mass by one, while a decrement-all round consumes the arriving untracked item and removes one from each of `r` counters. A second pass over replayable data can compute exact frequencies for the candidates. Without replay, report estimates and bounds, not exact counts.
+
+Misra-Gries is excellent when a deterministic no-false-negative candidate guarantee matters. It does not directly retain the numerical top `k` under arbitrary signed updates or event-time expiration.
+
+#### Reference implementation and cost
+
+```python
+def misra_gries(stream, capacity):
+    if capacity <= 0:
+        raise ValueError("capacity must be positive")
+
+    counters = {}
+    for key in stream:
+        if key in counters:
+            counters[key] += 1
+        elif len(counters) < capacity:
+            counters[key] = 1
+        else:
+            dead = []
+            for candidate in counters:
+                counters[candidate] -= 1
+                if counters[candidate] == 0:
+                    dead.append(candidate)
+            for candidate in dead:
+                del counters[candidate]
+    return counters
+```
+
+This literal implementation makes the proof visible but spends `O(r)` time on a decrement-all step. Since each such step accounts for `r + 1` stream occurrences, its total work is still `O(N r)` in the worst case. Implementations that need high throughput use a global offset, counter buckets, or another batched-decrement representation. Those optimizations must preserve deletion at logical zero; merely postponing decrements without handling zero crossings changes the candidates.
+
+As a trace, process `a, b, a, c, a, b, d, a` with `r = 2`. The table evolves:
+
+| Arrival | Counters after update | Explanation |
+| --- | --- | --- |
+| `a` | `{a:1}` | Free counter |
+| `b` | `{a:1, b:1}` | Free counter |
+| `a` | `{a:2, b:1}` | Tracked increment |
+| `c` | `{a:1}` | Cancel `a`, `b`, and arriving `c` |
+| `a` | `{a:2}` | Tracked increment |
+| `b` | `{a:2, b:1}` | Free counter |
+| `d` | `{a:1}` | Cancel `a`, `b`, and arriving `d` |
+| `a` | `{a:2}` | Tracked increment |
+
+Here `N = 8`, final counter mass is two, and `g = (8 - 2)/3 = 2`. Thus `2 <= f(a) <= 4`; the true count is four. The estimate is deliberately a lower bound.
+
+#### Merging Misra-Gries states
+
+Suppose two disjoint partitions have the same capacity `r`, stream masses `N_A, N_B`, and counter maps `c_A, c_B`. First add counters keywise:
+
+`c(x) = c_A(x) + c_B(x)`.
+
+There are at most `2r` keys. If there are more than `r`, let `C` be the `(r + 1)`th-largest positive combined counter. Replace every counter by:
+
+`c'(x) = max(c(x) - C, 0)`.
+
+At most `r` positive counters remain. This is a weighted reduction: it is equivalent to performing enough cancellation rounds on the summarized weighted items.
+
+The error proof is worth stating. Define each input error budget:
+
+`Delta_A = (N_A - sum_x c_A(x))/(r + 1)`
+
+and likewise for `B`. Before pruning,
+
+`0 <= f(x) - c(x) <= Delta_A + Delta_B`.
+
+Pruning decreases any one counter by at most `C`, so its error rises by at most `C`. At least `r + 1` combined counters were at least `C`, hence pruning removes at least `(r + 1)C` total counter mass. Therefore the merged budget
+
+`Delta' = (N_A + N_B - sum_x c'(x))/(r + 1)`
+
+is at least `Delta_A + Delta_B + C`, which covers the new pointwise error. The merged state retains the same deterministic contract. Repeated merges remain valid, although they need not produce the same counters as one serial ordering.
+
+#### Space-Saving: tighter candidates in practice
+
+Space-Saving also keeps `r` entries but uses a different replacement rule:
+
+1. increment a tracked key;
+2. insert an untracked key with `(estimate=1, error=0)` if a slot is free;
+3. otherwise replace a minimum entry of estimate `c_min` by the new key with `(estimate=c_min+1, error=c_min)`.
+
+For a tracked key:
+
+`estimate(x) - error(x) <= f(x) <= estimate(x)`.
+
+For an untracked key, its frequency is at most the current minimum estimate. Unlike Misra-Gries, Space-Saving estimates tracked keys from above and often allocates counters more effectively to skewed streams. It guarantees that every key with frequency greater than `N/r` is tracked.
+
+These intervals can certify a ranking only when they separate. If the kth candidate's lower bound exceeds every other tracked candidate's upper bound and the untracked upper bound, the top-k set is established. Otherwise the result is a candidate ranking, not an exact one.
+
+The ordinary Space-Saving update is nonlinear, so two tables cannot be merged by simply adding entries or taking local winners. Use a published error-aware merge procedure, convert to a summary with a proved reduction rule, or use Misra-Gries when simple deterministic merging is a core requirement. Record which variant is implemented; the shared name alone does not specify merge correctness.
+
+### Count-Min Sketch and its error derivation
+
+A Count-Min Sketch estimates nonnegative key frequencies using a table with depth `d` and width `w`. Row `j` has an independent pairwise-independent hash `h_j`. An increment `(x, c)` with `c >= 0` adds `c` to cell `(j, h_j(x))` in every row. The estimate is:
+
+`f_hat(x) = min_j table[j, h_j(x)]`.
+
+For a fixed row, the queried counter equals the true frequency plus collision noise:
+
+`C_j(x) = f(x) + sum_{y != x, h_j(y)=h_j(x)} f(y)`.
+
+Because all updates are nonnegative, `C_j(x) >= f(x)`, so the estimate never undercounts.
+
+Let total mass be `F_1 = sum_y f(y)`. For a pairwise-independent hash into `w` columns, any other key collides with probability `1/w`. The expected collision noise in one row is at most:
+
+`E[noise_j] <= (F_1 - f(x)) / w <= F_1 / w`.
+
+Choose `w = ceil(e / epsilon)`. Then `E[noise_j] <= epsilon F_1 / e`. By Markov's inequality:
+
+`P(noise_j >= epsilon F_1) <= 1/e`.
+
+The estimate takes the minimum over `d` independent rows, so it exceeds `f(x) + epsilon F_1` only if every row has large collision noise:
+
+`P(f_hat(x) > f(x) + epsilon F_1) <= e^(-d)`.
+
+Choosing `d = ceil(ln(1/delta))` gives, for a fixed queried key:
+
+`f(x) <= f_hat(x) <= f(x) + epsilon F_1`
+
+with probability at least `1 - delta`.
+
+The table uses `O((1/epsilon) log(1/delta))` counters. Update and query cost are `O(log(1/delta))`. Counter width must accommodate total mass; overflow silently destroys the guarantee.
+
+#### Pointwise versus many-query guarantees
+
+The derivation is pointwise: fix `x` independently of the randomly chosen hashes, then ask for its estimate. If a job will issue `Q` fixed queries and wants every one to satisfy the bound with total failure probability at most `eta`, the union bound is:
+
+`P(any query fails) <= Q delta`.
+
+Allocate `delta = eta/Q`, which changes the depth to:
+
+`d = ceil(ln(Q/eta))`.
+
+This is conservative but explicit. It does not automatically cover an adversary that adaptively chooses the next query after seeing previous outputs or keys crafted after learning the hash functions. For exposed services, protect seeds, rotate versions deliberately, and validate the threat model.
+
+As a sizing example, `epsilon = 0.001` and pointwise `delta = 10^(-6)` give:
+
+- `w = ceil(e/epsilon) = 2,719`;
+- `d = ceil(ln(1/delta)) = 14`;
+- `38,066` counters;
+- about `297.4 KiB` with unsigned 64-bit counters, before array and metadata overhead.
+
+If `F_1 = 100,000,000`, the additive error allowance is `epsilon F_1 = 100,000`. That may be excellent for million-count heavy hitters and useless for hundred-count rare keys. Count-Min Sketch does not turn an additive guarantee into a relative one merely because the observed estimate is small.
+
+#### From frequency estimates to top-k
+
+The sketch contains counters but not the original keys, so it cannot enumerate heavy hitters by itself. Pair it with a candidate mechanism:
+
+- a bounded heap or Space-Saving summary updated from observed keys;
+- a Misra-Gries candidate table;
+- an external dictionary for a constrained key universe;
+- a second pass that queries known candidates.
+
+Using sketch estimates as heap priorities can admit false positives due to overestimation. A candidate near the boundary should be reported with its error interval. If the gap between the `k`th and `(k+1)`th true frequency is smaller than the possible sketch error, exact ordering is not guaranteed.
+
+Standard sketches merge by elementwise addition only when width, depth, hash functions, seeds, counter type, and update semantics match. Include those fields in the serialized schema. For disjoint stream partitions, the merged sketch represents the union multiset. It does not deduplicate replicated events.
+
+Conservative update increments only counters currently equal to the row minimum and often reduces empirical overestimation. It is not the same state transition as ordinary Count-Min. Adding two conservatively updated arrays produces useful combined counters in some implementations, but not the state that serial conservative updates would have produced; use only a merge contract proved by the chosen library and do not silently attach the standard linear-state interpretation.
+
+Negative updates break the simple one-sided argument because collision contributions can cancel. Turnstile streams require a compatible sketch and norm-based guarantee, or exact keyed state.
+
+### Cardinality with HyperLogLog
+
+HyperLogLog estimates the number of distinct keys, not total frequency. Hash each key to a uniformly distributed bit string. Use the first `p` bits to choose one of `m = 2^p` registers. In the remaining suffix, let `rho` be one plus the number of leading zeros. Update the selected register:
+
+`M[j] = max(M[j], rho)`.
+
+The intuition begins with one bit string: the event `rho > r` means the first `r` suffix bits are zero, which has probability `2^(-r)`. Seeing a very long zero prefix is therefore evidence of many distinct hashes. Multiple registers reduce variance, and the harmonic mean limits domination by unusually large registers.
+
+The raw estimator is:
+
+`E_raw = alpha_m * m^2 / sum_{j=1}^m 2^(-M[j])`,
+
+where `alpha_m` is a bias-correction constant determined by the estimator analysis. In the original estimator, for `m >= 128`:
+
+`alpha_m = 0.7213 / (1 + 1.079/m)`.
+
+For the usual range and sufficiently large `m`, relative standard error is approximately:
+
+`RSE ~= 1.04 / sqrt(m)`.
+
+Choosing `p = 14` gives `m = 2^14 = 16,384` and:
+
+`RSE ~= 1.04 / 128 = 0.008125 = 0.8125%`.
+
+A plain byte per register therefore uses `16 KiB`, plus metadata; packed implementations can use less. This RSE is a standard deviation, not a hard maximum error. A rough normal-model 95% interval would be about `+/- 1.96 RSE`, but real implementations should expose their calibrated interval and estimator version.
+
+Sparse representations save memory at low cardinality. If `V` registers are still zero, the classical small-range estimate is linear counting:
+
+`E_small = m ln(m/V)`.
+
+For example, with `m = 16,384` and `V = 10,000`, this gives about `8,089` distinct items. Implementations switch estimators using tested thresholds and bias tables; very large ranges also need a hash-width correction. Use the library's published estimator rather than applying every correction unconditionally.
+
+The update itself is idempotent. Repeating an identical canonical key produces the same register index and `rho`, and `max(M[j], rho)` does not change. That means HLL estimates set cardinality despite duplicate occurrences. It does not mean two different events with the same business identifier should always be deduplicated; canonical key choice defines the set being counted.
+
+Two compatible HLL states merge by registerwise maximum because each register summarizes the maximum `rho` seen in that bucket. This produces a cardinality estimate for set union. Inclusion-exclusion, `|A intersect B| = |A| + |B| - |A union B|`, can be numerically poor when the intersection is small relative to estimation error. Use a sketch designed for set expressions when intersections are a primary query.
+
+Ordinary HLL cannot delete a key: a register maximum does not reveal the second-largest `rho` that should replace it. Windowed distinct counting therefore uses separate sketches per pane/window, a specialized time-aware sketch, or recomputation from retained state. Subtracting registers or cardinality estimates is invalid.
+
+Hash width bounds useful cardinality and collision behavior. Seeds, precision `p`, estimator version, and canonical key encoding are part of the state definition. An attacker who can choose hashes can bias registers or create denial-of-service behavior, so exposed systems need keyed hashing or controlled input.
+
+### Bloom filters and the false-positive derivation
+
+A Bloom filter represents approximate set membership in `m` bits using `h` hash locations per inserted key. Insert sets all `h` bits. Query returns "possibly present" if all `h` bits are one and "definitely absent" otherwise.
+
+Under independent uniform hashing, after inserting `n` distinct keys:
+
+- one hash leaves a particular bit zero with probability `1 - 1/m`;
+- all `h n` hash placements leave it zero with probability `(1 - 1/m)^(h n)`;
+- for large `m`, this is approximately `exp(-h n / m)`;
+- a queried bit is therefore one with probability `1 - exp(-h n / m)`;
+- all `h` queried bits are one with approximate probability:
+
+`p_fp ~= (1 - exp(-h n / m))^h`.
+
+This is the false-positive probability for a key not inserted. There are no false negatives only if the filter has not lost bits, hashing and encoding are consistent, and no unsupported deletion occurs.
+
+#### Optimal number of hashes
+
+For fixed `m` and expected `n`, let `a = m/n` and minimize:
+
+`log p_fp(h) = h ln(1 - exp(-h/a))`.
+
+Set `y = exp(-h/a)`. Differentiating with respect to continuous `h` gives:
+
+`d(log p_fp)/dh = ln(1-y) + h y/(a(1-y))`.
+
+At `y = 1/2`, the relation `h = a ln 2` makes the two terms `-ln 2` and `+ln 2`, so the derivative is zero. This is the unique interior minimum. Thus the optimum occurs when about half the bits remain zero and:
+
+`h_opt = (m / n) ln 2`.
+
+At that point:
+
+`p_min ~= (1/2)^h = exp(-(m/n) (ln 2)^2) ~= (0.6185)^(m/n)`.
+
+Solving for a desired false-positive rate `p` gives:
+
+`m ~= -n ln p / (ln 2)^2`
+
+and:
+
+`h ~= (m/n) ln 2 = -ln p / ln 2`.
+
+For `n = 10,000,000` and `p = 0.001`, the design needs about `143,775,876` bits, or `17.1 MiB`, and roughly `10` hash probes. Capacity planning must use the number of distinct inserted keys during the filter's lifetime, not request count.
+
+The optimum is real-valued, but an implementation uses an integer. Evaluate the predicted false-positive rate for the two neighboring positive integers and choose based on both probability and CPU cost. The common double-hashing construction derives locations as:
+
+`g_i(x) = (h_1(x) + i h_2(x)) mod m`, for `i = 0, ..., h-1`.
+
+This avoids computing `h` unrelated hashes, but `h_1`, `h_2`, modulus choice, and domain separation must follow a construction with an appropriate independence argument. If `h_2` shares a factor with `m`, locations can cycle through only part of the bit array.
+
+If actual `n` exceeds the design capacity, more bits become one and false positives rise. If observed fraction `q` of bits is one, the same occupancy model estimates:
+
+`n_hat = -(m/h) ln(1-q)`.
+
+Use that as an operational saturation signal, not as an exact distinct counter. Rotate, layer, or rebuild before occupancy approaches one.
+
+Counting Bloom filters replace bits with counters so deletion can decrement locations. They cost more memory and still require exact update discipline: deleting a key that was never inserted, applying a duplicate deletion, or losing an insertion can reduce counters shared by other keys and create false negatives. Stable Bloom filters intentionally forget old membership and therefore change the error contract.
+
+Compatible Bloom filters can be unioned with bitwise OR. Bitwise AND is not generally a Bloom filter with a simple, reliable set-intersection cardinality or membership contract. Filters must share `m`, hash count, seeds, and encoding.
+
+### Streaming quantiles
+
+A percentile query asks for a value by rank, not by numeric distance. For sorted values `x_(1) <= ... <= x_(N)`, a target quantile fraction `phi` corresponds to rank near `phi N`, with an explicitly chosen rounding convention. An `epsilon`-approximate quantile summary commonly guarantees that the returned value for target rank `r` has true rank in:
+
+`[r - epsilon N, r + epsilon N]`.
+
+Clamp the interval to `[1, N]`. Duplicates require a convention because a value occupies a rank interval; define rank as `R(v) = |{i : x_i <= v}|` or expose lower and upper ranks.
+
+This rank contract does not guarantee a small value error. Consider 500 zeros followed by 500 values equal to one billion. Around the median, a rank error of only ten may still permit returning either endpoint, a numerical difference of one billion. In a dense region, the same rank error may have negligible value effect.
+
+Without assumptions on the value distribution, an exact arbitrary quantile in one pass requires linear state in the worst case: an adversary can arrange unseen order information so that many retained distinctions may determine the final rank. Approximate rank is what permits sublinear summaries.
+
+The deterministic Greenwald-Khanna summary stores ordered tuples that bound the minimum and maximum possible rank of retained values. It periodically compresses adjacent tuples while preserving a maximum rank uncertainty proportional to `epsilon N`. Its worst-case state is `O((1/epsilon) log(epsilon N))` for a stream of length `N`.
+
+#### How KLL compaction works
+
+KLL is a randomized hierarchy of compactors. Level `ell` stores values with implicit weight `2^ell`. New items enter level zero with weight one. When a level exceeds its configured capacity:
+
+1. sort the level;
+2. choose odd or even positions with an independent fair coin;
+3. discard the other positions;
+4. promote the survivors to level `ell + 1`, doubling their implicit weight;
+5. recursively compact an overflowing higher level.
+
+For an even buffer of `2s` items, compaction retains `s` items of double weight, so represented total mass remains `2s * 2^ell`. For any query threshold `v`, sorted pairing means the number of retained representatives below `v`, after doubling, differs from the original prefix count by at most one level-`ell` item. Thus that compaction contributes rank error at most `2^ell`. Choosing odd versus even positions makes the signed contribution mean zero. The capacity schedule limits how many high-weight compactions occur, and concentration of the independent errors yields KLL's probabilistic rank guarantee.
+
+A tiny example shows the approximation. Compact level-zero values `[1, 2, 4, 7]`. If the coin retains `[2, 7]`, each survivor has weight two. Estimated cumulative weights at thresholds `1, 2, 4, 7` are `0, 2, 2, 4`, whereas true ranks are `1, 2, 3, 4`; the absolute rank error is at most one, exactly the level-zero bound. Retaining `[1, 4]` gives the opposite signed error.
+
+To query, gather retained items from all levels, attach weight `2^ell`, sort by value, and scan cumulative weight until reaching the target rank. A production sketch caches or incrementally maintains enough structure to avoid rebuilding everything for each query.
+
+Compatible KLL states merge by concatenating corresponding levels and running the same compaction rule until capacities are restored. The merge represents the union's weighted items, but random choices and merge-tree shape can change the retained sample. Compatibility includes the capacity parameter, comparator or numeric encoding, weight semantics, randomization/serialization version, and the library's declared merge contract.
+
+The canonical analysis achieves space logarithmic in the failure-probability logarithm, commonly stated as `O((1/epsilon) log log(1/delta))` words for its core probabilistic quantile contract. Constants, all-quantiles versus single-query guarantees, and confidence interpretation vary by implementation. Size from the selected library's published normalized-rank-error table rather than treating its tuning parameter as literally `1/epsilon`.
+
+#### Choosing a quantile sketch
+
+Distribution-oriented structures such as t-digest are often chosen for accurate tails, but their guarantee and merge behavior differ from deterministic uniform rank error. Relative-error quantile sketches address a different objective again: they control numerical error relative to the magnitude of positive values rather than uniform rank error. A design should name:
+
+- the exact rank-error definition;
+- pointwise versus simultaneous rank queries;
+- deterministic versus probabilistic failure and the value of `delta`;
+- support for weights and deletions;
+- merge behavior and whether repeated merging degrades accuracy;
+- tail accuracy requirements;
+- serialization compatibility.
+
+Ordinary KLL and GK summaries support insertion, not arbitrary deletion. Sliding-window quantiles need pane decomposition, an expiration-aware algorithm, or retained raw data; subtracting one sketch from another is invalid. Weighted updates also require a library whose compaction and error analysis cover weights.
+
+Do not use a histogram with arbitrary fixed buckets as if it were a general quantile sketch. Its value resolution is fixed by bucket boundaries, and distribution drift can make the approximation useless. Conversely, do not claim KLL bounds numerical interpolation error: it bounds rank.
+
+### Choosing the correct summary
+
+| Query | Representative state | Error contract | Merge operation |
+| --- | --- | --- | --- |
+| Immutable record top-k | Size-`k` min-heap | Exact with total order | Top-k of local candidates |
+| Insertion-only heavy hitters | Misra-Gries | Deterministic additive count bound | Merge and reduce counters carefully |
+| Point frequency | Count-Min Sketch | One-sided additive, probabilistic | Elementwise counter addition |
+| Distinct count | HyperLogLog | Approximate relative error | Registerwise maximum |
+| Membership | Bloom filter | False positives, no false negatives under valid use | Bitwise OR |
+| Quantile | GK, KLL, or other quantile summary | Rank error | Algorithm-specific merge |
+| Mean and variance | `(n, mean, M2)` | Floating-point numerical error | Parallel variance formula |
+| Uniform sample | Random priorities or reservoir | Exact inclusion probability under model | Global priority top-k |
 
 :::callout insight|State the approximation contract
-For every sketch, say whether error is one-sided, probabilistic, mergeable, and sensitive to adversarial keys. That is the difference between naming a structure and designing with it.
+For every summary, say what is approximated, the unit of error, whether the error is one-sided, the probability and scope of failure, the supported update model, and the exact compatibility conditions for merging. A data-structure name is not a correctness contract.
 :::
 
-### Continuous log-stream design
+### A complete event-time heavy-hitter design
 
-If asked to process billions of events, clarify keys, window, ordering, lateness, update rate, query rate, and error tolerance. Partition by stable key, pre-aggregate locally, checkpoint state, and use watermarks for event time. Hot keys may need salting plus a second-stage merge.
+Consider a service that reports the top `k` error signatures per tenant for each five-minute event-time window. Traffic peaks at millions of events per second, events can arrive 20 minutes late, and results should update quickly.
 
-Backpressure is part of correctness. Dropping events can bias top-k or averages. If approximation under overload is allowed, make sampling or shedding explicit and account for it in the estimator.
+#### 1. Identity and ingestion
 
-### Principal Interview Review
+Each event carries `event_id`, tenant, event timestamp, signature, source partition, and source offset. Canonicalize the signature before partitioning. Deduplicate by stable `event_id` within the required replay horizon, or make the source and sink exactly-once enough that duplicate effects are bounded and documented.
 
-1. Implement exact top-k and merge distributed results.
-2. Explain a monotonic deque and its amortized complexity.
-3. Prove reservoir sampling is uniform.
-4. Compare Count-Min Sketch, HyperLogLog, and Bloom filters.
-5. Design a late-data policy for event-time heavy hitters.
+Partition first by tenant and then by a stable subshard to distribute hot tenants. A signature must map deterministically so its partial count can be merged. If salting splits one signature across workers, the second stage must sum its partials before final ranking.
+
+Partitioning by signature avoids split counts but sends an extremely hot signature to one worker. Salting by `(signature, event_id)` distributes its updates, at the cost of a second keyed aggregation that recombines all salts for that signature. Use measured skew to enable salting only for hot keys; salting every key multiplies shuffle and intermediate state.
+
+#### 2. Window state
+
+Assign each event to a half-open interval `[start, start + 5 minutes)`. On every worker and window, maintain:
+
+- a Count-Min Sketch for approximate frequency queries;
+- a Misra-Gries table with capacity `r` for deterministic candidate recall;
+- total accepted mass `F_1`;
+- estimator parameters and hash seed;
+- revision and source progress metadata.
+
+If the distinct-key count is affordable, exact keyed counts are simpler and may be the right answer. Approximation is justified only by a quantified state or throughput constraint.
+
+The candidate contract is explicit: every signature with frequency greater than `F_1/(r+1)` is present. To guarantee recall of all true top-k keys, the design must establish that the kth frequency exceeds this threshold, increase `r`, or use an exact fallback. Count-Min accuracy cannot repair a key that the candidate stage omitted.
+
+#### 3. Watermark and triggers
+
+Derive per-source watermarks from source progress and observed delay, then take the minimum across non-idle inputs. Emit:
+
+- early speculative panes every 30 seconds of processing time;
+- an on-time pane when the watermark passes the window end;
+- late correction panes after accepted late arrivals;
+- a final pane when the watermark passes `window_end + 20 minutes`.
+
+Do not describe the on-time pane as complete. It is complete only relative to the watermark model. Records after allowed lateness go to a durable late-data stream with counts and alerts, not silent deletion.
+
+For example, suppose the on-time result is `A:100, B:90`. A late batch contributes 20 occurrences of `B`, so revision two must atomically replace the order with `B:110, A:100`. Appending a second unversioned list would leave consumers unable to determine which result is current.
+
+#### 4. Merge and ranking
+
+Workers emit compatible sketch state plus candidates. The reducer adds Count-Min counters, merges Misra-Gries maps with the reduce-and-prune rule, queries merged frequency estimates, and emits the best `k` with:
+
+- estimated count;
+- interval `[max(0, f_hat - epsilon F_1), f_hat]` and failure parameter `delta`;
+- window and revision;
+- pane timing class: early, on-time, late, or final;
+- completeness and dropped-event metrics.
+
+For `Q` displayed candidates, either label the Count-Min bound pointwise or allocate an overall failure budget with `delta = eta/Q`. If ranking intervals overlap, emit "order uncertain" or verify exact counts from retained/durable data. A numerical sort of estimates is not a proof of exact order.
+
+#### 5. Sink and correction semantics
+
+Upsert by `(tenant, window_start)` and require monotonically increasing revisions. The sink stores the entire ranked list for each revision or applies an atomic replacement. Downstream consumers should not independently merge top-k lists from multiple revisions. Include an estimator schema version so a rolling deployment cannot merge incompatible hashes or silently compare different error contracts.
+
+Checkpoint operator state together with source offsets or use a framework snapshot that provides the equivalent barrier. At a checkpoint barrier, each operator snapshot must represent exactly the input prefix named by the saved offsets; in-flight records belong either to the snapshot/channel state or to the replay suffix, not neither and not both. Commit sink writes transactionally with the checkpoint, or make `(tenant, window, revision)` upserts idempotent. On restore, load the snapshot, seek every source partition to the recorded offset, and reject a stale revision at the sink. Event-ID deduplication is still needed if upstream redelivery can cross the framework's consistency boundary.
+
+#### 6. Capacity and failure policy
+
+Estimate active windows as approximately:
+
+`active_windows ~= 1 + allowed_lateness / window_slide`,
+
+adjusted for early state, session behavior, and watermark stalls. Multiply by tenants, subshards, sketch bytes, candidate bytes, deduplication state, and checkpoint copies. A stalled watermark can increase retained windows beyond the nominal estimate, so alert on oldest open window and state bytes.
+
+The arithmetic can reject a design before implementation. Five-minute tumbling windows with 20 minutes of allowed lateness retain about five windows in steady state. If there are 50,000 active tenant-subshard pairs and each window uses the earlier `297.4 KiB` Count-Min configuration, dense sketch tables alone require:
+
+`50,000 * 5 * 304,528 bytes ~= 70.9 GiB`.
+
+Candidates, hash metadata, deduplication, object overhead, snapshots, and watermark stalls add more. That budget suggests tiering: use exact sparse maps for low-volume tenants, allocate dense sketches only after a threshold, reduce unnecessary subshards, choose `epsilon` from a business-relevant count gap, and evict finalized state. Parameters belong in the capacity model, not only in a correctness proof.
+
+Under backpressure, silently dropping events biases frequency and can change ranking. Prefer source throttling and durable buffering. If controlled sampling is allowed, attach inclusion probabilities and use an estimator designed for weighted observations; do not feed sampled counts into an ordinary sketch and report them as exact.
+
+Define a hard failure policy for a watermark that never advances. Options include marking a demonstrably idle source, quarantining a damaged partition, or capping retention and marking affected windows incomplete. Any cap changes the completeness contract and must surface in output metadata and alerts.
+
+### Production readiness checklist
+
+Before shipping a streaming summary, verify:
+
+- **semantics:** query, window, update model, ordering, ties, and finalization;
+- **accuracy:** bound, probability, target population, and adversarial assumptions;
+- **numerics:** counter overflow, accumulator dtype, `NaN`, infinity, and hash width;
+- **distribution:** partition rule, merge compatibility, duplicate handling, and skew;
+- **state:** bytes per key/window, expiration, compaction, and schema version;
+- **recovery:** snapshot-to-offset consistency, replay determinism, and idempotent sink;
+- **operations:** watermark lag, state growth, false-positive or error calibration, and hot keys;
+- **degradation:** backpressure behavior, sampling policy, and visible completeness metadata.
+
+### Design Exercises
+
+1. Implement exact top-k for immutable records, prove the heap invariant, and prove the exact distributed merge. Give a counterexample for merging local frequency top-k.
+2. Derive both exact sliding maximum with a monotonic deque and approximate sliding one-counts with an exponential histogram. State their ordering assumptions and complexity.
+3. Derive Welford's online variance update, weighted update, removal formula, and parallel merge. State the variance denominator for each interpretation.
+4. Prove Algorithm R reservoir sampling is uniform. Then derive exact distributed uniform and weighted-without-replacement samples.
+5. Derive Misra-Gries candidate and error guarantees, show how two states merge, and contrast its bounds with Space-Saving.
+6. Derive the Count-Min Sketch point-frequency bound, size it numerically, convert to a many-query failure budget, and build a valid heavy-hitter pipeline around it.
+7. Derive the HyperLogLog update, estimator intuition, error-versus-memory tradeoff, union merge, and limitations for deletion and intersection.
+8. Derive Bloom-filter false-positive probability, optimal hash count, and memory formula. State the assumptions behind "no false negatives."
+9. Explain KLL compaction from first principles, including its rank-error mechanism, query, merge, and the difference between rank and value error.
+10. Design a self-contained event-time heavy-hitter service with late revisions, checkpoint recovery, skew handling, approximation metadata, and a numerical state budget.
+
+### Worked Solutions
+
+#### 1. Exact record top-k
+
+Maintain a min-heap ordered by `(score, stable_id)` with at most `k` records. The invariant after a prefix of length `i` is that the heap contains the best `min(i, k)` prefix records and its root is the worst retained record. If the heap is not full, insert. If it is full, a new record no better than the root has at least `k` records ahead of it and cannot qualify; a better record replaces exactly the old boundary item. That proves the update by induction.
+
+The implementation is:
+
+```python
+from heapq import heappush, heapreplace
+
+def top_k(records, k):
+    heap = []
+    for record in records:
+        entry = (record.score, record.stable_id, record)
+        if len(heap) < k:
+            heappush(heap, entry)
+        elif entry > heap[0]:
+            heapreplace(heap, entry)
+    return [x[2] for x in sorted(heap, reverse=True)]
+```
+
+Handle `k = 0`, reject negative `k`, and define a policy for `NaN`. The worst-case update cost is `O(log k)`, scan time is `O(n log k)`, state is `O(k)`, and sorted materialization is `O(k log k)`. Also state whether the API returns exactly `k` records or all score ties at the boundary.
+
+For disjoint immutable shards `S_j`, each shard emits `T_k(S_j)`. Any record omitted locally has at least `k` same-shard records above it and therefore cannot rank globally. Thus the coordinator or reduction tree computes `T_k` over at most `p k` candidates exactly. Communication is `O(p k)` records for a flat gather.
+
+The proof depends on each immutable record having one owner and one final score. It is false for keys whose frequency is split. With `k = 1`, shard one has `A:6, X:5`, and shard two has `B:6, X:5`. Local winners contain only `A` and `B`, but global `X:10` is the true winner. Partial counts must first be aggregated by key or represented by a mergeable frequency summary. Replication also requires deduplication, and mutable scores or deletion require retained full state because a size-k heap has forgotten the next replacement.
+
+#### 2. Exact and approximate sliding windows
+
+For a count window of width `w`, store candidate indices in increasing index order and decreasing value order. First remove front indices `<= i - w` because they expired. Then remove back indices whose values are `<= x_i`. Each removed value is dominated by the new value: the new one is at least as large and expires later, so the old one can never again be a maximum. Append `i`; the front is the maximum live candidate.
+
+An individual update can remove `O(w)` entries, but each index is appended once and removed at most once from either end. Across `n` inputs there are `O(n)` deque operations, so amortized update time is `O(1)` and state is `O(w)`.
+
+For counts of one-bits over the last `W` positions, an exponential histogram stores power-of-two buckets and the timestamp of each bucket's newest one. With even `q >= 1/epsilon`, keep roughly `q/2` buckets of each size and merge the two oldest whenever a size overflows. Sum all bucket sizes but only half of the oldest:
+
+`count_hat = sum(bucket sizes) - oldest_size/2`.
+
+Only the oldest bucket can straddle the boundary, so absolute error is at most half its size `C/2`. The bucket-count invariant ensures:
+
+`(C/2)/(1 + newer represented ones) <= 1/q <= epsilon`,
+
+which converts this to relative error against the true live count. It stores `O((1/epsilon) log W)` buckets, uses `O((1/epsilon) log^2 W)` bits with direct timestamps, and has amortized `O(1)` update work despite occasional merge cascades.
+
+Both algorithms assume an arrival-order count window. A late event belongs in the middle of event-time order and may revise an emitted answer. A reorder buffer, watermark, allowed-lateness policy, and revision protocol are separate system responsibilities.
+
+#### 3. Online, weighted, removable, and parallel variance
+
+Store `(n, mu, M2)` where `M2 = sum_i (x_i - mu)^2`. For a new `x`, set `n' = n + 1` and `delta = x - mu`. Expanding the mean gives `mu' = mu + delta/n'`. Let `delta2 = x - mu'`. Re-centering the old observations makes cross terms vanish because their deviations around `mu` sum to zero. Adding the new deviation yields `M2' = M2 + delta * delta2`.
+
+Population variance is `M2/n`; unbiased sample variance is `M2/(n-1)` for `n >= 2`. This avoids the dangerous subtraction in `mean(x^2) - mean(x)^2`, though adequate accumulator precision and non-finite input policy are still required.
+
+For a positive frequency weight `w`, replace count by total weight `W`. With `delta = x - mu`:
+
+`W' = W + w`,
+
+`mu' = mu + (w/W') delta`,
+
+`M2' = M2 + w delta (x - mu') = M2 + (Ww/W') delta^2`.
+
+If removing a previously included `(x,w)` and `W > w`:
+
+`mu' = (W mu - w x)/(W-w)`,
+
+`M2' = M2 - w(x-mu)(x-mu')`.
+
+Removal is numerically more fragile than addition and requires exact knowledge that the observation was present. Frequency weights, reliability weights, and probability weights have different unbiased-variance denominators; do not automatically use `W-1` outside replicated-observation frequency weights.
+
+For disjoint states `A` and `B`, let `delta = mu_B - mu_A` and `W = W_A + W_B`. Re-centering both groups around the combined mean gives:
+
+`mu = mu_A + delta W_B/W`,
+
+`M2 = M2_A + M2_B + delta^2 W_A W_B/W`.
+
+For unweighted observations, set `W_A=n_A` and `W_B=n_B`. The extra term is the between-partition sum of squares. Handle empty partitions explicitly, use a balanced merge tree for numerical quality, and ensure each record belongs to exactly one state.
+
+#### 4. Uniform, distributed, and weighted sampling
+
+Algorithm R stores the first `k` items. At one-based position `i > k`, it selects a uniform integer in `[1, i]` and replaces that reservoir slot if the integer is at most `k`. The new item enters with probability `k/i`.
+
+Assume every earlier item is present after `i-1` positions with probability `k/(i-1)`. Conditional on being present, its particular slot is replaced with probability `1/i`, so it survives with probability `(i-1)/i`. Its new inclusion probability is `(k/(i-1))((i-1)/i) = k/i`. The induction proves that every item has inclusion probability `k/N` at the end.
+
+Naively combining equal-size shard reservoirs is biased if shard sizes differ. A robust distributed construction assigns each record an independent continuous priority from a stable ID and seed, keeps the `k` smallest priorities locally, then keeps the `k` smallest globally. An item omitted locally already has `k` lower-priority same-shard items, so it cannot qualify globally. This produces the same uniform size-`k` subset as choosing the globally smallest independent priorities, assuming collision-free continuous priorities or deterministic collision handling.
+
+An alternative first draws shard sample counts from:
+
+`P(s_1,...,s_p) = product_j choose(n_j,s_j)/choose(N,k)`,
+
+then takes a uniform size-`s_j` subset from each shard's uniform reservoir. This is exact but requires trustworthy shard sizes and coordinated hypergeometric allocation.
+
+For positive weights and sequential probability proportional to remaining weight, draw independent `U_i` in `(0,1]`, set:
+
+`priority_i = -ln(U_i)/w_i`,
+
+and keep the `k` smallest. These are independent exponential clocks of rates `w_i`; the chance clock `i` rings first is `w_i/sum_j w_j`, and memorylessness repeats the rule among remaining items. Local priority top-k then global priority top-k is exactly composable. Record the seed, priority/hash algorithm, canonical ID encoding, target population, and whether weights are supported; time decay and sampling with replacement require different laws.
+
+#### 5. Misra-Gries and Space-Saving
+
+With capacity `r`, Misra-Gries increments a tracked key, inserts into a free slot, or otherwise decrements all `r` counters and discards zeros. Each decrement round cancels `r+1` distinct occurrences: the arrival plus one from every tracked key. If there are `g` rounds, then `g <= N/(r+1)`. For any tracked key:
+
+`c_hat(x) <= f(x) <= c_hat(x) + g`.
+
+An untracked key has `f(x) <= g`, so every key above `N/(r+1)` must be tracked. Moreover:
+
+`g = (N - sum_x c_hat(x))/(r+1)`.
+
+To merge states `A` and `B`, add their maps keywise. If more than `r` keys remain, let `C` be the `(r+1)`th-largest combined counter, subtract `C` from every counter, and discard nonpositive values. Pruning lowers any estimate by at most `C` and removes at least `(r+1)C` total counter mass. Therefore the new budget:
+
+`Delta' = (N_A+N_B-sum c')/(r+1)`
+
+increases by at least `C` beyond the two input budgets and still covers every key's underestimate. This proves deterministic merge validity, though the merged table may differ from serial processing order.
+
+Space-Saving replaces the minimum estimate `c_min` with a new key at estimate `c_min+1` and stored error `c_min`. A tracked key then satisfies:
+
+`estimate-error <= f <= estimate`,
+
+and an untracked key is bounded by the current minimum. It often gives tighter practical candidates on skewed data, while Misra-Gries has the simpler cancellation merge. A Space-Saving table is not merged by adding local winners; use a proved error-aware variant. Either summary needs a second pass or separated intervals to certify exact order.
+
+#### 6. Count-Min Sketch and heavy hitters
+
+In one row, the counter for `x` is `f(x)` plus nonnegative collision mass. Therefore every row and their minimum are at least `f(x)`. With width `w`, pairwise-independent hashing makes expected collision noise at most `F_1/w`. Set `w = ceil(e/epsilon)`; then expected noise is at most `epsilon F_1/e`. Markov's inequality bounds the chance that one row's noise exceeds `epsilon F_1` by `1/e`.
+
+With `d` independent rows, the minimum is too large only if every row has excessive noise, with probability at most `e^(-d)`. Choosing `d = ceil(ln(1/delta))` gives `f(x) <= f_hat(x) <= f(x) + epsilon F_1` with probability at least `1-delta` for a fixed query.
+
+For `epsilon=0.001` and `delta=10^(-6)`, choose `w=2,719` and `d=14`: `38,066` counters or about `297.4 KiB` at eight bytes each. At `F_1=100,000,000`, the allowance is 100,000 counts. This is additive, so it is meaningful only relative to the application's frequency scale.
+
+For `Q` fixed queries with overall failure budget `eta`, allocate `delta=eta/Q`, so `d=ceil(ln(Q/eta))`; this follows from the union bound. Adaptive adversarial queries need separate analysis.
+
+The sketch does not store keys, so add Misra-Gries, Space-Saving, an external dictionary, or a replay pass for candidate discovery. Merge compatible standard sketches by elementwise addition, merge candidates with their proved rule, and query the merged sketch. Report `f(x)` in `[max(0,f_hat-epsilon F_1), f_hat]`. If intervals around the kth boundary overlap, the exact order is unresolved.
+
+The guarantee assumes nonnegative updates, no counter overflow, independent hash rows, secret or nonadversarial hashing as appropriate, and identical width, depth, seeds, encoding, counter type, and update rule across merged states. Signed updates, duplicates, and conservative-update variants require a different contract.
+
+#### 7. HyperLogLog
+
+Hash each canonical key uniformly. Use `p` prefix bits to choose one of `m=2^p` registers and let `rho` be one plus the leading-zero count in the remaining bits. Update `M[j]=max(M[j],rho)`. Since `P(rho>r)=2^(-r)`, a large maximum is evidence of many distinct hashes. The harmonic-mean estimator:
+
+`E = alpha_m m^2 / sum_j 2^(-M[j])`
+
+has normal-range relative standard error about `1.04/sqrt(m)`. With `p=14`, `m=16,384`, the RSE is about `0.8125%` and byte registers occupy `16 KiB`. If `V` registers are zero in the small range, linear counting uses `m ln(m/V)`; production libraries also apply calibrated bias and large-range corrections.
+
+Duplicate keys are idempotent because the same register maximum is repeated. Compatible states merge by registerwise maximum, exactly representing the register state of set union. Precision, hash seed/width, canonical encoding, and estimator version must match.
+
+HLL does not estimate per-key frequency or membership. It cannot delete because a register does not retain the second-largest `rho`. Inclusion-exclusion for intersection subtracts three noisy estimates and is unstable for small intersections. Use per-window HLLs or a purpose-built set-expression sketch when those are core queries.
+
+#### 8. Bloom-filter sizing and validity
+
+After `h n` uniform bit placements in `m` bits, a bit remains zero with probability `(1 - 1/m)^(h n)`, approximately `exp(-h n/m)`. A key not in the set becomes a false positive when all `h` queried positions are one, so:
+
+`p_fp ~= (1 - exp(-h n/m))^h`.
+
+Let `a=m/n` and `y=exp(-h/a)`. Then:
+
+`d[ln p_fp]/dh = ln(1-y) + h y/(a(1-y))`.
+
+Setting `y=1/2` and `h=a ln 2` makes the derivative zero. Therefore:
+
+`h_opt = (m/n) ln 2`,
+
+`p_min ~= exp(-(m/n)(ln 2)^2)`,
+
+`m ~= -n ln p/(ln 2)^2`,
+
+`h ~= -ln p/ln 2`.
+
+For ten million distinct keys and `p=0.001`, this is about `143,775,876` bits, `17.1 MiB`, and ten hash probes. Round `h`, then recompute `p_fp` and consider CPU cost. Double hashing can derive `g_i=h_1+i h_2 mod m`, provided the construction and modulus avoid short cycles.
+
+"No false negatives" assumes append-only valid use, no lost or corrupted bits, identical encoding/seeds at insert and query, and correct concurrent writes. An ordinary filter cannot delete. A counting filter can decrement only if every insertion and deletion is balanced; deleting an absent key can clear shared counters and create false negatives. Overfilling raises false positives, so monitor bit occupancy and rotate or rebuild.
+
+#### 9. KLL quantiles
+
+KLL stores a hierarchy. A level-`ell` item has weight `2^ell`. Items enter level zero. When a level exceeds capacity, sort it, flip a fair coin to retain odd or even positions, discard the rest, and promote survivors one level with doubled weight. For `2s` compacted items, represented mass is preserved.
+
+For any threshold `v`, the compacted sorted prefix differs from its original represented rank by at most one level item, or `2^ell`. The random parity makes this a zero-mean signed error. The level capacities limit high-weight compactions; concentration over their errors gives the probabilistic rank bound.
+
+To query rank `r`, attach each retained item its level weight, sort all retained items by value, and return the value where cumulative weight reaches `r`. To merge compatible states, concatenate each level and compact overflows. Merge order can change retained samples but preserves the library's contract.
+
+Rank error is not value error. With 500 zeros and 500 values equal to one billion, a small median rank interval can allow either value. State whether the guarantee is pointwise or simultaneous, the failure probability, handling of duplicates and weights, and the exact quantile convention. KLL does not support arbitrary subtraction; sliding-window deletion needs pane decomposition, an expiration-aware sketch, or retained data.
+
+#### 10. Event-time heavy hitters
+
+Define a half-open window, stable event identity, partition rule, and expected lateness distribution. Use exact keyed counts if feasible; otherwise pair a mergeable frequency sketch with a candidate summary whose recall contract is explicit. Include estimator parameters and seeds in state.
+
+For the proposed service, use five-minute half-open event-time windows. Partition by tenant and a stable subshard; salt measured hot signatures only if a second stage recombines their partial counts. Per active window, maintain Count-Min point estimates, a mergeable Misra-Gries candidate table, `F_1`, revision, source progress, and schema/seed metadata. Every key above `F_1/(r+1)` is a candidate; if the kth true key may fall below that, increase `r` or provide an exact path.
+
+Generate source-aware watermarks and take the minimum over non-idle inputs. Emit early speculative results, an on-time revision when the watermark passes window end, late revisions during 20 minutes of allowed lateness, and a final revision at the retention boundary. Route later events to a durable side output and measure them. A watermark is a progress claim, so on-time does not mean complete.
+
+Use atomic upserts keyed by tenant and window with monotonically increasing revisions. A pane should carry estimated counts, error bounds, completeness class, watermark, dropped-event count, and estimator version. Do not append unversioned competing top-k lists.
+
+Merge compatible Count-Min tables by addition and Misra-Gries tables by keywise addition plus pruning. For each candidate, emit interval `[max(0,f_hat-epsilon F_1), f_hat]`. Allocate a simultaneous failure budget for the displayed set. If boundary intervals overlap, mark order uncertain or verify exact counts.
+
+Checkpoint state at barriers that name a consistent source-offset prefix. On restore, load the snapshot, seek to those offsets, and write idempotently by revision or transactionally with the checkpoint. Deduplicate stable event IDs when redelivery can cross that boundary. Monitor watermark lag, open windows, bytes, checkpoint age, late rate, duplicate rate, and rank stability.
+
+Capacity arithmetic is mandatory. Five-minute windows plus 20-minute lateness retain about five windows. At 50,000 active tenant-subshard pairs and `304,528` bytes per dense sketch, Count-Min tables alone consume about `70.9 GiB`. Tier exact sparse maps for low-volume tenants, allocate dense sketches only when justified, reduce subshards, and choose `epsilon` from a business count gap. Include candidate, deduplication, object, checkpoint, and stalled-watermark overhead.
+
+Backpressure, a stalled watermark, and hot keys are correctness concerns. Prefer throttling and durable buffering. Any forced retention cap must mark results incomplete. If overload sampling is permitted, record inclusion probabilities and use a weighted estimator; silent loss biases counts and can reorder the output.
+
+### Further Study and Primary References
+
+- [Vitter, Random Sampling with a Reservoir](https://www.cs.umd.edu/~samir/498/vitter.pdf) - uniform one-pass sampling and skip-based improvements.
+- [Efraimidis and Spirakis, Weighted Random Sampling with a Reservoir](https://www.sciencedirect.com/science/article/pii/S002001900500298X/pdf) - exponential-key weighted sampling without replacement.
+- [Datar et al., Maintaining Stream Statistics over Sliding Windows](https://perso.ens-lyon.fr/bruno.salvy/INF431/Projet-hyperloglog/INF431_-_Projet_Informatique_files/DatarGionisIndykMotwani2002.pdf) - exponential histograms and sliding-window approximation.
+- [Cormode and Muthukrishnan, Count-Min Sketch](https://www.cs.helsinki.fi/u/jilu/paper/countMin.pdf) - the sketch construction and additive error analysis.
+- [Misra and Gries, Finding Repeated Elements](https://khoury.northeastern.edu/home/pandey/courses/cs7800/spring26/papers/mg.pdf) - deterministic heavy-hitter candidates.
+- [Metwally, Agrawal, and El Abbadi, Efficient Computation of Frequent and Top-k Elements](https://www.cs.ucsb.edu/sites/default/files/documents/2005-23.pdf) - the Space-Saving algorithm and its frequency bounds.
+- [Agarwal et al., Mergeable Summaries](https://doi.org/10.1145/2500128) - merge models and deterministic summary reductions.
+- [Flajolet et al., HyperLogLog](https://dmtcs.episciences.org/3545) - cardinality estimator analysis.
+- [Bloom, Space/Time Trade-offs in Hash Coding with Allowable Errors](https://www.cs.princeton.edu/courses/archive/spr05/cos598E/bib/p422-bloom.pdf) - approximate membership origins.
+- [Chan, Golub, and LeVeque, Algorithms for Computing the Sample Variance](https://doi.org/10.1080/00031305.1983.10483115) - numerical and pairwise variance algorithms.
+- [Greenwald and Khanna, Space-Efficient Online Computation of Quantile Summaries](https://www.cs.dartmouth.edu/~ac/Teach/CS49-Fall11/Papers/greenwald-quantiles.pdf) - deterministic rank-error summaries.
+- [Karnin, Lang, and Liberty, Optimal Quantile Approximation in Streams](https://arxiv.org/abs/1603.05346) - randomized KLL compaction and space analysis.
+- [Apache DataSketches KLL documentation](https://datasketches.apache.org/docs/KLL/KLLSketch.html) - implementation parameters, normalized-rank error, and merge behavior.
+- [Apache Beam Programming Guide](https://beam.apache.org/documentation/programming-guide/) - event time, watermarks, triggers, and allowed lateness.
 
 ## ML Algorithms in Production Code
 
@@ -174,7 +1194,7 @@ Embedding normalization makes cosine similarity equivalent to inner product rank
 `O(nkd)` does not reveal whether the implementation is a dense GEMM, sparse reduction, or cache-unfriendly loop. State shapes, memory layout, and the operation the hardware will actually execute.
 :::
 
-### Principal Interview Review
+### Design Exercises
 
 1. Derive stable logistic loss from logits.
 2. How do you distribute k-means updates?
@@ -182,7 +1202,7 @@ Embedding normalization makes cosine similarity equivalent to inner product rank
 4. Explain why the reference attention code is memory-heavy.
 5. Choose an ANN index for high update rate and metadata filtering.
 
-## A Principal System Design Method
+## An Engineering System Design Method
 
 LEAD: The best system design answer is a sequence of decisions tied to requirements. A diagram is evidence of that reasoning, not a substitute for it.
 
@@ -190,7 +1210,7 @@ LEAD: The best system design answer is a sequence of decisions tied to requireme
 
 Clarify users, operations, scale, latency, consistency, availability, durability, privacy, compliance, cost, and evolution. For ML systems, add model quality, freshness, feedback, evaluation, and failure containment.
 
-Convert vague statements into working numbers. If the interviewer withholds them, declare reasonable assumptions and make the design parameterized. Distinguish hard requirements from preferences.
+Convert vague statements into working numbers. When measurements are unavailable, declare reasonable assumptions, expose their sensitivity, and keep the design parameterized. Distinguish hard requirements from preferences.
 
 ### Step 2: estimate
 
@@ -223,7 +1243,7 @@ Apply load, skew, failure, change, and abuse:
 
 ### Step 6: close the loop
 
-Define metrics, alerts, experiments, rollback, and capacity planning. State unresolved risks and the next experiment. This is often where a Staff answer becomes Principal: the design becomes operable and evolvable.
+Define metrics, alerts, experiments, rollback, and capacity planning. State unresolved risks and the next experiment. This is often where a good design becomes an operable system: the design becomes operable and evolvable.
 
 :::callout decision|Name what you would not build yet
 Restraint is a design skill. Defer components whose complexity is not justified by the stated scale or risk, and identify the trigger that would cause you to add them.
@@ -239,17 +1259,17 @@ Restraint is a design skill. Defer components whose complexity is not justified 
 | Exact vs approximate | Strong semantics | Lower cost or latency | Bounded error is product-acceptable |
 | Shared vs isolated | High utilization | Failure and security isolation | Noisy neighbor or compliance risk dominates |
 
-### Communication during the interview
+### Communicating the design
 
 Signpost transitions: "I will first establish the workload, then estimate the dominant state, then draw a baseline and stress it." Keep a visible list of requirements and risks. When interrupted, answer the question and return to the structure.
 
 If new information invalidates the design, revise it. Defending an obsolete choice signals rigidity, not leadership.
 
-### Principal Interview Review
+### Design Exercises
 
 1. Run the method on a feature store or evaluation service.
 2. Which estimates change a vector database architecture?
-3. How do you show failure domains on a whiteboard?
+3. How do you represent failure domains clearly in an architecture diagram?
 4. What makes an approximation acceptable?
 5. Name a component you would defer in a new LLM platform and the trigger to add it.
 
@@ -303,11 +1323,10 @@ For multi-region, decide whether indexes are replicated, partitioned by data res
 Providing evidence changes the model input; it does not force the output to follow that evidence. Measure faithfulness, citations, conflict handling, and abstention directly.
 :::
 
-### Principal Interview Review
+### Design Exercises
 
 1. Design a secure RAG system for enterprise documents.
 2. How do you evaluate retrieval and generation separately?
 3. What happens when an embedding model changes?
 4. How do ACL filters interact with approximate search?
 5. Design defenses against prompt injection in retrieved content.
-

@@ -1,15 +1,25 @@
-PYTHON := /Users/ykirpichev/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3
-PDF := output/pdf/principal-ml-systems-handbook.pdf
+PYTHON ?= python3
+PDF := output/pdf/engineering-large-language-models.pdf
+PREVIEW_PAGES ?= 1 2 3 9 100 200
 
-.PHONY: book verify clean
+.PHONY: book test verify check-links previews clean
 
 book:
 	$(PYTHON) src/build_book.py --output $(PDF)
 
-verify: book
+test:
+	$(PYTHON) -m unittest discover -s tests -v
+
+verify: test book
 	$(PYTHON) src/verify_pdf.py $(PDF)
+
+check-links:
+	$(PYTHON) src/check_links.py manuscript
+
+previews: book
+	$(PYTHON) src/render_previews.py $(PDF) $(PREVIEW_PAGES)
 
 clean:
 	rm -f $(PDF)
-	rm -f tmp/pdfs/handbook-*.png
-
+	rm -rf tmp/pdfs/review-contact tmp/pdfs/verification
+	rm -f output/previews/page-*.png

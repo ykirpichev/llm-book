@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Reproducible build and review artifacts
+tmp/
+output/previews/
+output/pdf/
+
+# Local archives and unrelated presentation experiments
+.local-archive/
+.tmp_*/
+/flashinfer-*/
+/flashinfer-*.pptx
+/flashinfer-*.inspect.ndjson
+
+# Local environments and credentials
+.venv/
+.env
+.env.*
+!.env.example

@@ -2,7 +2,7 @@
 
 CUDA optimization is the discipline of translating an algorithm into a schedule over threads, instructions, memory levels, and asynchronous work. The correct starting point is never a favorite tile size or instruction. It is a resource model: what must move, what must be computed, which dependencies are unavoidable, and which hardware resource becomes limiting first.
 
-This part progresses from that model to production kernels. It covers execution, memory, host orchestration, GEMM, reductions, scans, histograms, softmax, normalization, attention, serving-specific kernels, profiling, and correctness. Every chapter ends with interview questions and complete answer keys.
+This part progresses from that model to production kernels. It covers execution, memory, host orchestration, GEMM, reductions, scans, histograms, softmax, normalization, attention, serving-specific kernels, profiling, and correctness. Each chapter closes with design exercises and worked solutions that connect the primitive to production workloads.
 
 :::callout decision|The CUDA optimization loop
 Establish a correct reference. Measure the real workload. Build a bytes-and-FLOPs model. Identify one limiting resource. Change the schedule. Recheck correctness. Reprofile. Stop when the remaining gap is below the value of additional complexity.
@@ -155,7 +155,7 @@ Atomics make an update indivisible at a declared scope, but atomicity is not a g
 | Barrier-heavy timeline | Synchronization | Warp stalls at barriers, imbalance | Repartition work, warp-level exchange |
 | High issue utilization, low tensor utilization | Instruction mix | Scalar work dominates | Reduce address/control overhead, use MMA path |
 
-### Principal Interview Review
+### Design Exercises
 
 1. Explain coalescing using lane addresses and transactions.
 2. When is low occupancy acceptable?
@@ -163,7 +163,7 @@ Atomics make an update indivisible at a declared scope, but atomicity is not a g
 4. What is the difference between a barrier, an atomic, and a memory fence?
 5. A kernel reaches 80 percent of HBM bandwidth. What optimizations remain plausible?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Coalescing
 
@@ -293,7 +293,7 @@ cudaEventElapsedTime(&milliseconds, start, stop);
 
 Warm up context creation, allocations, JIT compilation, graph upload, and caches according to the claim. Report both cold and warm behavior when users encounter both.
 
-### Principal Interview Review
+### Design Exercises
 
 1. What conditions are required to overlap a host-device copy with compute?
 2. Why can `cudaDeviceSynchronize()` destroy concurrency?
@@ -301,7 +301,7 @@ Warm up context creation, allocations, JIT compilation, graph upload, and caches
 4. How would you choose graph shape buckets for an inference engine?
 5. Design a double-buffered input pipeline and name its failure modes.
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Copy-compute overlap
 
@@ -464,7 +464,7 @@ Use cuBLAS or another vendor library for standard dense GEMM. Use a template fra
 
 The decision is based on end-to-end value, maintainability, architecture coverage, and test burden. Beating a library on one shape is not the same as owning a production GEMM.
 
-### Principal Interview Review
+### Design Exercises
 
 1. Why does tiling increase arithmetic intensity?
 2. Fix the out-of-bounds and barrier bug in a naive shared-memory kernel.
@@ -473,7 +473,7 @@ The decision is based on end-to-end value, maintainability, architecture coverag
 5. How do tensor cores change implementation and error analysis?
 6. Why does a high-performance GEMM need an epilogue?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Tiling and arithmetic intensity
 
@@ -614,9 +614,9 @@ Caching helps repeated gather indices, but random accesses can remain latency-bo
 
 CUB provides warp-, block-, and device-wide reductions, scans, histograms, and selection. Use it unless a fused operator, unusual data type, fixed small shape, or special semantics justify custom code.
 
-The interview value of implementing a primitive is understanding its invariants. The production decision still favors a maintained library when the boundary fits.
+The value of implementing a primitive is understanding its invariants. The production decision still favors a maintained library when the boundary fits.
 
-### Principal Interview Review
+### Design Exercises
 
 1. Write and explain a warp-plus-block sum reduction.
 2. When would you choose atomics over a two-pass device reduction?
@@ -625,7 +625,7 @@ The interview value of implementing a primitive is understanding its invariants.
 5. How would you optimize a histogram with severe hot-bin contention?
 6. What does deterministic reduction cost?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Warp-plus-block reduction
 
@@ -779,7 +779,7 @@ A sampling kernel may apply temperature, repetition or presence penalties, forbi
 
 Counter-based RNG maps request, sequence position, and sample index to deterministic random bits without mutable per-thread generator state. Reordering requests must not change a user's random stream unless the product contract permits it.
 
-### Principal Interview Review
+### Design Exercises
 
 1. Why is stable softmax logically a maximum reduction and a sum reduction?
 2. Derive the online-softmax merge rule.
@@ -788,7 +788,7 @@ Counter-based RNG maps request, sequence position, and sample index to determini
 5. How would you implement distributed vocabulary top-k?
 6. What can go wrong when fusing sampling operations?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Two reductions
 
@@ -919,7 +919,7 @@ Calling every fused attention kernel "FlashAttention" hides this distinction. St
 
 Useful attention fusion may include Q/K scaling, RoPE, masking, bias, softmax, dropout, or output transformations. Fusion loses when it inflates live state, reduces occupancy, complicates recomputation, or creates a variant explosion.
 
-### Principal Interview Review
+### Design Exercises
 
 1. Why can FlashAttention perform more arithmetic yet run faster?
 2. Derive the running max, sum, and output update.
@@ -928,7 +928,7 @@ Useful attention fusion may include Q/K scaling, RoPE, masking, bias, softmax, d
 5. When does attention fusion reduce performance?
 6. Why is a decode-attention kernel different from a training kernel?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. More arithmetic, less time
 
@@ -1043,7 +1043,7 @@ Hot experts create imbalance. Capacity limits, token dropping, or expert replica
 
 The decode iteration often ends with logits processing and sampling. At small batch, several tiny kernels can add visible launch latency. Graph capture and carefully scoped fusion help. Preserve request cancellation, dynamic sampling policies, and RNG mapping.
 
-### Principal Interview Review
+### Design Exercises
 
 1. How would you fuse RoPE with KV-cache append?
 2. Explain the page-size tradeoff in paged KV attention.
@@ -1052,7 +1052,7 @@ The decode iteration often ends with logits processing and sampling. At small ba
 5. Why can KV quantization increase capacity but reduce speed?
 6. Walk through an MoE routing kernel pipeline.
 
-### Answer Key
+### Worked Solutions
 
 #### 1. RoPE plus append
 
@@ -1184,7 +1184,7 @@ Maintain performance thresholds by shape family, not one absolute number. Hardwa
 | Integration | Which streams, graphs, allocations, and layouts are assumed? |
 | Evidence | Which measurement proves the optimization helps end to end? |
 
-### Principal Interview Review
+### Design Exercises
 
 1. Design a benchmark that distinguishes launch-bound from bandwidth-bound behavior.
 2. A profiler reports low occupancy. What do you do next?
@@ -1193,7 +1193,7 @@ Maintain performance thresholds by shape family, not one absolute number. Hardwa
 5. How do you choose numerical tolerances?
 6. When should an autotuner create a specialized kernel variant?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Launch-bound versus bandwidth-bound
 
@@ -1225,7 +1225,7 @@ Create a variant when a frequent shape or semantic mode has a materially differe
 - [CUDA C++ Best Practices Guide](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/) - transfer, coalescing, bandwidth, occupancy, and optimization methodology.
 - [Nsight Compute Documentation](https://docs.nvidia.com/nsight-compute/) - profiler sections, metrics, rooflines, and analysis workflow.
 - [Efficient GEMM in CUDA](https://docs.nvidia.com/cutlass/latest/media/docs/cpp/efficient_gemm.html) - hierarchical GEMM mapping, mainloop, and epilogue design.
-- [CUB Documentation](https://nvidia.github.io/cccl/cub/) - maintained warp-, block-, and device-wide collectives.
+- [CUB Documentation](https://nvidia.github.io/cccl/unstable/cub/index.html) - maintained warp-, block-, and device-wide collectives.
 - [FlashAttention paper](https://arxiv.org/abs/2205.14135) - IO-aware exact attention and tiling analysis.
 - [FlashAttention-2 paper](https://arxiv.org/abs/2307.08691) - improved work partitioning and parallelism.
 

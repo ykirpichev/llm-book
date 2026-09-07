@@ -1,61 +1,64 @@
 ---
-title: "The Principal ML Systems Handbook"
+title: "Engineering Large Language Models"
 subtitle: "Training, Inference, CUDA, Distributed Systems, and Technical Leadership"
 author: "Yury Kirpichev"
 edition: "First Edition - 2026"
+copyright_year: "2026"
+publication_date: "August 2026"
+keywords: "large language models, LLM systems, model training, inference, CUDA, distributed systems, technical leadership"
 ---
 
-LEAD: A field guide for senior engineers who must connect model behavior, accelerator performance, distributed architecture, and organizational judgment into one coherent system.
+LEAD: A systems guide to building, operating, and evolving large language models across data, training, inference, accelerators, distributed infrastructure, and technical organizations.
 
-This handbook is built around a demanding premise: **the interview is not the subject**. The subject is the ability to design, explain, debug, and lead machine learning systems under real constraints. Interview readiness follows from that mastery.
+Large language models are not isolated neural networks. They are production systems in which statistical behavior, numerical computation, hardware, data governance, reliability, and economics interact. This book develops the models and engineering methods needed to reason across those boundaries.
 
-The material is organized around the questions that repeatedly surface in Staff and Principal loops: How do you design a training recipe? Why does a serving system miss its latency target? What makes one CUDA kernel faster than another? When should a team trade quality for capacity? How do you turn technical ambiguity into an executable cross-org decision?
+The material follows the lifecycle of an LLM system: define the workload and evidence contract; construct data and training recipes; understand inference state and scheduling; optimize accelerator execution; distribute work across machines; design production algorithms and services; examine recent research results; and establish the organizational mechanisms that keep the system operable.
+
+:::toc
+
+### A note on scope
+
+This first edition covers foundations, training, inference, CUDA, distributed systems, production algorithms, system design, recent systems research, and technical leadership. Its research snapshot is current through August 2026. Results identified as recent are reported by their source papers and should be revalidated on the reader's models, hardware, workloads, and quality constraints.
+
+The examples assume transformer-style models and GPU-like accelerators, but the reasoning applies more broadly. Hardware names, model families, and framework APIs will evolve. Arithmetic intensity, dependency structure, failure isolation, data provenance, and organizational incentives will not.
 
 :::callout insight|How to use this book
-For a fast interview pass, read the chapter opener, the decision rules, the pitfalls, and the review drill. For durable mastery, reproduce the derivations, implement the kernels, and defend every architecture against at least two credible alternatives.
+Begin each part with its conceptual model, then work through the derivations, implementation examples, and production consequences. Use the design exercises to test whether you can transfer the reasoning to a new workload rather than merely recall the conclusion.
 :::
 
-### The Principal answer pattern
+### The engineering decision method
 
-A strong answer usually moves through six layers:
+A sound technical decision usually moves through six layers:
 
 1. **Frame the objective.** State the user outcome, workload, SLO, quality bar, and constraints before naming a technique.
 2. **Build a quantitative model.** Estimate bytes, FLOPs, memory, communication, queueing, or sample complexity at the right level of fidelity.
 3. **Choose the bottleneck.** Separate symptoms from the resource or coordination limit that actually controls performance.
 4. **Compare alternatives.** Explain why a reasonable competing design loses under the stated conditions.
 5. **Design the measurement loop.** Define offline, online, guardrail, and operational metrics with a rollback boundary.
-6. **Name the next uncertainty.** A Principal answer makes the remaining risk visible and proposes the cheapest experiment that can retire it.
+6. **Name the next uncertainty.** Make the remaining risk visible and propose the cheapest experiment that can retire it.
 
 ### Editorial conventions
 
-- Color-coded boxes separate the compact **Interview Insight**, the attractive but incomplete **Common Pitfall**, and the governing **Principal Decision**.
-- Equations use implementation-oriented notation; code stays small enough for a whiteboard, then expands into production considerations, and every technical chapter closes with a transfer-focused Principal interview review.
-
-:::toc
-
-### A note on scope
-
-This first edition is a cohesive, recruiter-derived core: foundations, training, inference, CUDA, distributed systems, coding, system design, and leadership. It is intentionally opinionated. The goal is not to catalog every paper. The goal is to teach a reusable method for reaching sound decisions when details change.
-
-The examples assume transformer-style models and GPU-like accelerators, but the reasoning applies more broadly. Hardware names, model families, and framework APIs will evolve. Arithmetic intensity, dependency structure, failure isolation, data provenance, and organizational incentives will not.
-
-### Reader contract
-
-Do not memorize the final recommendation without the assumptions that produced it. A technique is rarely "best" in isolation. It is best for a workload, budget, failure model, and organization. If any of those move, reopen the decision.
+- Color-coded boxes separate a compact **Engineering Insight**, an attractive but incomplete **Common Pitfall**, and a governing **Engineering Decision**.
+- Display equations introduce important relationships with named variables and explicit boundaries. Code begins with the smallest correct mechanism, then expands into production concerns. Technical chapters close with design exercises and worked solutions or answer criteria.
 
 :::pagebreak
 
-### The one-page interview operating system
+### The one-page engineering decision loop
 
-| Phase | What to say | What the interviewer learns |
+| Phase | Engineering action | Result |
 | --- | --- | --- |
-| Clarify | Workload, scale, latency, quality, cost, failure tolerance | You refuse to optimize an undefined system |
-| Model | Dominant bytes, FLOPs, state, communication, queueing | You reason quantitatively |
-| Propose | Baseline architecture with explicit ownership | You can make a decision |
-| Stress | Hot keys, long tails, partial failure, distribution shift | You expect reality |
-| Measure | Success, guardrails, observability, rollback | You close the loop |
-| Extend | Two alternatives and the condition that flips the choice | You understand the design space |
+| Frame | Define workload, scale, latency, quality, cost, and failure tolerance | A testable system contract |
+| Model | Estimate dominant bytes, FLOPs, state, communication, and queueing | A predicted bottleneck |
+| Propose | Build a baseline architecture with explicit ownership | An executable starting point |
+| Stress | Examine hot keys, long tails, partial failure, and distribution shift | Known failure boundaries |
+| Measure | Define outcomes, guardrails, observability, and rollback | Evidence that can change the decision |
+| Evolve | Compare alternatives and name the condition that changes the choice | A system that can adapt |
 
 :::callout decision|The standard of evidence
 Use an equation when it changes the decision, a benchmark when implementation details dominate, and an experiment when uncertainty is cheaper to remove than to debate. Do not use precision theater to hide an unknown workload.
 :::
+
+### Reader contract
+
+Do not memorize the final recommendation without the assumptions that produced it. A technique is rarely "best" in isolation. It is best for a workload, budget, failure model, and organization. If any of those move, reopen the decision.

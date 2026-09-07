@@ -1,6 +1,6 @@
-# Part VIII - Field Reference
+# Part IX - Field Reference
 
-The appendices are designed for the final week before an interview and for architecture reviews after it. Each item is a retrieval cue; return to the chapter when the assumptions are not obvious.
+The appendices are field references for design, implementation, debugging, and incident response. Each item is a retrieval cue; return to the chapter when assumptions or derivations are not obvious.
 
 ## Formula and Capacity Sheet
 
@@ -24,7 +24,7 @@ Always specify which bytes are sharded, replicated, offloaded, or temporarily ga
 
 `roofline = min(peak_compute, bandwidth * FLOPs_per_byte)`
 
-`attention_scores = O(sequence^2)` values if materialized`
+`attention_scores = O(sequence^2)` values if materialized
 
 FlashAttention preserves `O(sequence^2)` arithmetic for dense attention while reducing HBM materialization.
 
@@ -93,7 +93,7 @@ Collective algorithms alter both. Overlap hides only communication that runs con
 Write units. Name what is omitted. A lower bound is not a prediction, and a big-O expression is not a performance model.
 :::
 
-## CUDA Interview Checklist
+## CUDA Engineering Checklist
 
 ### Before writing the kernel
 
@@ -151,7 +151,7 @@ Compute mean and variance or Welford state, normalize, apply scale and bias. Exp
 
 Contrast naive score materialization with tiled online softmax. Derive rescaling. Cover causal masking, ragged lengths, GQA, backward recomputation, and tile selection.
 
-### Common CUDA interview bugs
+### Common CUDA implementation bugs
 
 | Bug | Symptom | Repair |
 | --- | --- | --- |
@@ -166,7 +166,7 @@ Contrast naive score materialization with tiled online softmax. Derive rescaling
 As you write, say what each optimization buys and consumes: fewer HBM bytes, more reuse, more registers, more shared memory, fewer launches, or greater specialization.
 :::
 
-## Rapid-Fire Question Bank
+## Diagnostic Question Bank
 
 ### Training and data
 
@@ -256,7 +256,7 @@ Non-idempotent side effects or missing request identity. Streaming output, data 
 
 ### Leadership
 
-#### What is a Principal engineer's output?
+#### What is a senior technical leader's output?
 
 Better technical decisions and execution across a scope larger than one person's implementation, expressed through architecture, mechanisms, talent, and aligned ownership.
 
@@ -271,10 +271,6 @@ When decision rights are blocked, risk exceeds the local mandate, a deadline req
 #### How do you handle a wrong decision?
 
 Contain harm, state new evidence, reopen the choice, preserve trust by owning the decision, and improve the mechanism that allowed the miss.
-
-#### What is strategy?
-
-A diagnosis of the controlling challenge plus a small set of coordinated choices that concentrate resources and create leverage toward a defined future state.
 
 ## Glossary and Decision Index
 
@@ -297,6 +293,8 @@ A diagnosis of the controlling challenge plus a small set of coordinated choices
 **Operational intensity:** a practical form of arithmetic intensity, sometimes including algorithm- and cache-specific byte assumptions.
 
 **Paged attention:** attention over KV state managed in non-contiguous fixed-size blocks with logical-to-physical mapping.
+
+**Strategy:** a diagnosis of the controlling challenge plus coordinated choices that concentrate resources toward a defined future state.
 
 **Prefill:** prompt processing phase that creates KV state and produces first-token logits.
 
@@ -328,4 +326,3 @@ A diagnosis of the controlling challenge plus a small set of coordinated choices
 > Begin with the objective, quantify the bottleneck, choose the smallest coherent design, and close the loop with evidence.
 
 That principle is equally useful for a KL objective, a CUDA kernel, a distributed scheduler, and a cross-org strategy. The scale changes. The discipline does not.
-

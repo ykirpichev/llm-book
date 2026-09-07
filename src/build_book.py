@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build The Principal ML Systems Handbook from the Markdown manuscript.
+"""Build Engineering Large Language Models from the Markdown manuscript.
 
 The parser intentionally supports a small, editorially controlled Markdown subset.
 That keeps the source pleasant to edit while giving the PDF deterministic layout.
@@ -24,6 +24,7 @@ from reportlab.lib.pagesizes import inch
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.pdfdoc import PDFString
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     BaseDocTemplate,
@@ -46,7 +47,7 @@ from reportlab.platypus.tableofcontents import TableOfContents
 
 ROOT = Path(__file__).resolve().parents[1]
 MANUSCRIPT = ROOT / "manuscript"
-DEFAULT_OUTPUT = ROOT / "output" / "pdf" / "principal-ml-systems-handbook.pdf"
+DEFAULT_OUTPUT = ROOT / "output" / "pdf" / "engineering-large-language-models.pdf"
 
 PAGE_SIZE = (7 * inch, 10 * inch)
 PAGE_W, PAGE_H = PAGE_SIZE
@@ -103,6 +104,15 @@ def register_fonts() -> tuple[str, str, str, str]:
 
 FONT, FONT_BOLD, FONT_ITALIC, FONT_BOLD_ITALIC = register_fonts()
 
+MATH_FONT_PATH = "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
+if Path(MATH_FONT_PATH).exists():
+    MATH_FONT = "ArialUnicodeMath"
+    pdfmetrics.registerFont(TTFont(MATH_FONT, MATH_FONT_PATH))
+else:
+    # Portable fallback. Manuscript equations avoid symbols outside this font's
+    # common Unicode coverage when the macOS math-capable font is unavailable.
+    MATH_FONT = FONT
+
 
 def esc(text: str) -> str:
     return html.escape(text, quote=False)
@@ -114,6 +124,14 @@ def inline_markup(text: str) -> str:
     text = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<i>\1</i>", text)
     text = re.sub(r"\[([^]]+)]\(([^)]+)\)", r'<link href="\2" color="#008C8C">\1</link>', text)
+    return text
+
+
+def equation_markup(text: str) -> str:
+    """Convert a deliberately small equation syntax into ReportLab markup."""
+    text = esc(text.strip())
+    text = re.sub(r"_\{([^}]+)\}", r"<sub>\1</sub>", text)
+    text = re.sub(r"\^\{([^}]+)\}", r"<super>\1</super>", text)
     return text
 
 
@@ -216,6 +234,18 @@ def make_styles() -> dict[str, ParagraphStyle]:
             alignment=TA_CENTER,
             spaceBefore=4,
             spaceAfter=9,
+        ),
+        "equation": ParagraphStyle(
+            "Equation",
+            fontName=MATH_FONT,
+            fontSize=12.5,
+            leading=17,
+            textColor=INK,
+            alignment=TA_CENTER,
+            leftIndent=18,
+            rightIndent=18,
+            spaceBefore=8,
+            spaceAfter=3,
         ),
         "code": ParagraphStyle(
             "Code",
@@ -461,18 +491,34 @@ def diagram(name: str, width: float) -> Drawing:
         arrow(d, 54, 52, 54, 88, CORAL)
         d.add(String(w / 2, 34, "production telemetry and failure cases", textAnchor="middle", fontName=FONT, fontSize=7.5, fillColor=MUTED))
     elif name == "data_pipeline":
+        # Policy controls are a boundary around the entire transformation chain,
+        # not a side branch from one arbitrary stage. The only forward path ends
+        # in a versioned release, whose train/evaluation/red-team splits remain
+        # distinct governed outputs.
+        d.add(Rect(14, 61, w - 28, 116, rx=8, ry=8,
+                   fillColor=PALE_CORAL, strokeColor=CORAL, strokeWidth=1.2))
+        d.add(String(w / 2, 161, "GOVERNANCE AND QUALITY CONTROLS SPAN THE PIPELINE",
+                     textAnchor="middle", fontName=FONT_BOLD, fontSize=8.2, fillColor=CORAL))
+
         labels = ["Collect", "Normalize", "Deduplicate", "Score", "Balance", "Verify"]
-        for i, label in enumerate(labels):
-            y = 145 - i * 24
-            x = 32 + (i % 2) * 35
-            box(d, x, y, 108, 19, label, fill=WHITE, font=7.1)
-            if i:
-                prev_x = 32 + ((i - 1) % 2) * 35
-                arrow(d, prev_x + 54, y + 43, x + 54, y + 21, TEAL, 1.2)
-        box(d, w - 188, 113, 150, 48, "Gates\nprivacy - safety - leakage", fill=PALE_CORAL, stroke=CORAL, font=7.5)
-        box(d, w - 188, 49, 150, 48, "Outputs\ntrain - eval - red-team", fill=PALE_TEAL, font=7.5)
-        arrow(d, 175, 120, w - 190, 137)
-        arrow(d, 175, 72, w - 190, 73)
+        widths = [52, 62, 70, 48, 54, 48]
+        gap = 8
+        x = (w - sum(widths) - gap * (len(widths) - 1)) / 2
+        y = 111
+        for i, (label, bw) in enumerate(zip(labels, widths)):
+            box(d, x, y, bw, 27, label, fill=WHITE, font=6.8)
+            if i < len(labels) - 1:
+                arrow(d, x + bw, y + 13.5, x + bw + gap - 2, y + 13.5, TEAL, 1.25)
+            x += bw + gap
+
+        d.add(String(w / 2, 81, "rights | privacy | safety | source quality | split leakage",
+                     textAnchor="middle", fontName=FONT_BOLD, fontSize=7.2, fillColor=CORAL))
+
+        box(d, 117, 12, 196, 34, "Versioned dataset releases\ntrain | evaluation | red-team",
+            fill=PALE_TEAL, font=7.2)
+        verify_center = (w - sum(widths) - gap * (len(widths) - 1)) / 2 + sum(widths[:-1]) + gap * 5 + widths[-1] / 2
+        d.add(Line(verify_center, 109, verify_center, 49, strokeColor=TEAL, strokeWidth=1.4))
+        arrow(d, verify_center, 49, 315, 29, TEAL, 1.4)
     elif name == "distillation":
         box(d, 24, 110, 112, 45, "Teacher\nrich distribution", fill=PALE_GOLD, stroke=GOLD)
         box(d, w - 136, 110, 112, 45, "Student\nserving budget", fill=PALE_TEAL)
@@ -594,8 +640,21 @@ def diagram(name: str, width: float) -> Drawing:
         arrow(d, 282, 114, 282, 82, MUTED)
         arrow(d, 236, 61, 209, 61, MUTED)
         arrow(d, 163, 82, 163, 114, MUTED)
-        d.add(String(w / 2, 172, "PRINCIPAL-LEVEL DESIGN CLOSES THE CONTROL LOOP", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
+        d.add(String(w / 2, 172, "SYSTEM DESIGN CLOSES THE CONTROL LOOP", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
         d.add(String(w / 2, 19, "capacity, quality, reliability, isolation, and cost are first-class requirements", textAnchor="middle", fontName=FONT, fontSize=7.3, fillColor=MUTED))
+    elif name == "agent_trust_boundary":
+        d.add(String(w / 2, 169, "MODEL PROPOSALS CROSS A DETERMINISTIC POLICY BOUNDARY", textAnchor="middle", fontName=FONT_BOLD, fontSize=8.7, fillColor=INK))
+        box(d, 20, 104, 82, 42, "User goal\n+ authority", fill=WHITE, stroke=INK, font=7.1)
+        box(d, 129, 104, 82, 42, "Model\nproposal", fill=PALE_TEAL, stroke=TEAL, font=7.1)
+        box(d, 238, 94, 94, 62, "Policy gate\nidentity | schema\npermission | state", fill=PALE_GOLD, stroke=GOLD, font=6.8)
+        box(d, 359, 104, 52, 42, "Tool", fill=PALE_CORAL, stroke=CORAL, font=7.1)
+        arrow(d, 104, 125, 127, 125, INK, 1.3)
+        arrow(d, 213, 125, 236, 125, TEAL, 1.3)
+        arrow(d, 334, 125, 357, 125, GOLD, 1.3)
+        box(d, 129, 32, 203, 34, "Audit log + postcondition verification", fill=WHITE, stroke=INK, font=7.0)
+        arrow(d, 385, 101, 315, 68, CORAL, 1.2)
+        arrow(d, 230, 68, 170, 101, MUTED, 1.2)
+        d.add(String(w / 2, 16, "untrusted observations never grant authority", textAnchor="middle", fontName=FONT_BOLD, fontSize=7.3, fillColor=CORAL))
     elif name == "leadership_loop":
         center = (w / 2, 94)
         nodes = [
@@ -619,10 +678,13 @@ def diagram(name: str, width: float) -> Drawing:
 
 @dataclass
 class Meta:
-    title: str = "The Principal ML Systems Handbook"
+    title: str = "Engineering Large Language Models"
     subtitle: str = "Training, Inference, CUDA, Distributed Systems, and Technical Leadership"
     author: str = "Yury Kirpichev"
     edition: str = "First Edition - 2026"
+    copyright_year: str = "2026"
+    publication_date: str = "August 2026"
+    keywords: str = "large language models, LLM systems, model training, inference, CUDA, distributed systems"
 
 
 class HandbookDocTemplate(BaseDocTemplate):
@@ -655,7 +717,9 @@ class HandbookDocTemplate(BaseDocTemplate):
         )
         self.addPageTemplates([
             PageTemplate(id="Cover", frames=[body_frame], onPage=self._cover_page),
+            PageTemplate(id="Front", frames=[body_frame], onPage=self._front_page),
             PageTemplate(id="Body", frames=[body_frame], onPage=self._body_page),
+            PageTemplate(id="Part", frames=[body_frame], onPage=self._part_page),
         ])
 
     def beforeDocument(self):
@@ -667,6 +731,9 @@ class HandbookDocTemplate(BaseDocTemplate):
 
     def _cover_page(self, canvas, doc):
         canvas.saveState()
+        canvas.setKeywords(self.meta.keywords)
+        canvas.showOutline()
+        canvas._doc.Catalog.Lang = PDFString("en-US")
         canvas.setFillColor(NAVY)
         canvas.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
         canvas.setFillColor(HexColor("#122650"))
@@ -680,14 +747,14 @@ class HandbookDocTemplate(BaseDocTemplate):
             x = 40 + i * 72
             canvas.line(x, 70, x + 132, 202)
         canvas.setFillColor(WHITE)
-        canvas.setFont(FONT_BOLD, 28)
-        canvas.drawString(42, PAGE_H - 160, "THE PRINCIPAL")
+        canvas.setFont(FONT_BOLD, 27)
+        canvas.drawString(42, PAGE_H - 160, "ENGINEERING")
         canvas.setFillColor(CYAN)
-        canvas.setFont(FONT_BOLD, 35)
-        canvas.drawString(42, PAGE_H - 202, "ML SYSTEMS")
+        canvas.setFont(FONT_BOLD, 31)
+        canvas.drawString(42, PAGE_H - 202, "LARGE LANGUAGE")
         canvas.setFillColor(WHITE)
         canvas.setFont(FONT_BOLD, 35)
-        canvas.drawString(42, PAGE_H - 244, "HANDBOOK")
+        canvas.drawString(42, PAGE_H - 244, "MODELS")
         canvas.setFillColor(HexColor("#B9C8DE"))
         canvas.setFont(FONT, 11)
         subtitle = ["TRAINING  /  INFERENCE  /  CUDA", "DISTRIBUTED SYSTEMS  /  TECHNICAL LEADERSHIP"]
@@ -698,6 +765,11 @@ class HandbookDocTemplate(BaseDocTemplate):
         canvas.drawString(44, 58, self.meta.author.upper())
         canvas.setFillColor(CYAN)
         canvas.drawRightString(PAGE_W - 44, 58, self.meta.edition.upper())
+        canvas.restoreState()
+
+    def _front_page(self, canvas, doc):
+        """Render front matter without running heads or folios."""
+        canvas.saveState()
         canvas.restoreState()
 
     def _body_page(self, canvas, doc):
@@ -717,6 +789,18 @@ class HandbookDocTemplate(BaseDocTemplate):
             canvas.setFillColor(MUTED)
             canvas.setFont(FONT, 6.5)
             canvas.drawString(MARGIN_X, 9 * mm, self.meta.author)
+        canvas.restoreState()
+
+    def _part_page(self, canvas, doc):
+        """Render a clean part opener without inheriting the previous running header."""
+        canvas.saveState()
+        page = canvas.getPageNumber()
+        canvas.setFillColor(TEAL)
+        canvas.setFont(FONT_BOLD, 7.2)
+        canvas.drawRightString(PAGE_W - MARGIN_X, 9 * mm, str(page))
+        canvas.setFillColor(MUTED)
+        canvas.setFont(FONT, 6.5)
+        canvas.drawString(MARGIN_X, 9 * mm, self.meta.author)
         canvas.restoreState()
 
     def afterFlowable(self, flowable):
@@ -777,7 +861,7 @@ def callout_flowable(kind: str, title: str, body_lines: Sequence[str], width: fl
     palette = {
         "insight": (PALE_TEAL, TEAL, "INTERVIEW INSIGHT"),
         "pitfall": (PALE_CORAL, CORAL, "COMMON PITFALL"),
-        "decision": (PALE_GOLD, GOLD, "PRINCIPAL DECISION"),
+        "decision": (PALE_GOLD, GOLD, "ENGINEERING DECISION"),
         "formula": (PANEL, INK, "FORMULA"),
         "check": (PALE_TEAL, TEAL, "DESIGN CHECK"),
     }
@@ -832,10 +916,32 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
     combined = "\n\n".join(path.read_text(encoding="utf-8") for path in files)
     meta, content = metadata_from_text(combined)
     lines = content.splitlines()
-    # The first registered template is the cover. Switch to the body template
-    # before the first page break so page two starts cleanly in book layout.
+    # The first registered template is the cover. Page two is a conventional
+    # copyright/imprint page; the authored front matter begins on page three.
     story: list[Flowable] = [
         Spacer(1, PAGE_H - MARGIN_TOP - MARGIN_BOTTOM - 8),
+        NextPageTemplate("Front"),
+        PageBreak(),
+        Spacer(1, 310),
+        Paragraph(inline_markup(meta.title), STYLES["h2"]),
+        Rule(TEAL, 42, 2.4),
+        Spacer(1, 12),
+        Paragraph(f"Copyright © {esc(meta.copyright_year)} {esc(meta.author)}", STYLES["body"]),
+        Paragraph("All rights reserved.", STYLES["body"]),
+        Spacer(1, 8),
+        Paragraph(
+            inline_markup(f"{meta.edition}. Published {meta.publication_date}."),
+            STYLES["body"],
+        ),
+        Spacer(1, 8),
+        Paragraph(
+            "This book provides technical and educational information. Readers are responsible for validating designs, code, performance claims, security controls, and operational decisions in their own environments.",
+            STYLES["small"],
+        ),
+        Paragraph(
+            inline_markup(f"Research and software references were reviewed through {meta.publication_date}."),
+            STYLES["small"],
+        ),
         NextPageTemplate("Body"),
         PageBreak(),
     ]
@@ -881,6 +987,19 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
             story.extend([Spacer(1, 6), diagram(name, width), Paragraph(inline_markup(caption), STYLES["caption"])])
             i += 1
             continue
+        if stripped.startswith(":::equation"):
+            flush_paragraph(buffer, story)
+            equation_source = stripped[len(":::equation"):].strip()
+            if equation_source.count("|") != 1:
+                raise ValueError("equations require exactly one '|' between expression and caption")
+            args = equation_source.split("|", 1)
+            expression = args[0].strip()
+            caption = args[1].strip() if len(args) > 1 else ""
+            story.append(Paragraph(equation_markup(expression), STYLES["equation"]))
+            if caption:
+                story.append(Paragraph(inline_markup(caption), STYLES["caption"]))
+            i += 1
+            continue
         if stripped == ":::toc":
             flush_paragraph(buffer, story)
             if story and not isinstance(story[-1], PageBreak):
@@ -905,7 +1024,7 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
         if stripped.startswith("# "):
             flush_paragraph(buffer, story)
             title = stripped[2:].strip()
-            story.extend([PageBreak(), Paragraph(inline_markup(title.upper()), STYLES["part"]), Heading(title, STYLES["chapter"], 1), Rule(CORAL, 58, 4), Spacer(1, 8)])
+            story.extend([NextPageTemplate("Part"), PageBreak(), Paragraph(inline_markup(title.upper()), STYLES["part"]), Heading(title, STYLES["chapter"], 1), Rule(CORAL, 58, 4), Spacer(1, 8)])
             i += 1
             continue
         if stripped.startswith("## "):
@@ -913,7 +1032,7 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
             title = stripped[3:].strip()
             chapter_no += 1
             if story and not isinstance(story[-1], PageBreak):
-                story.append(PageBreak())
+                story.extend([NextPageTemplate("Body"), PageBreak()])
             story.extend([
                 ChapterBand(f"Chapter {chapter_no:02d}", title, str(chapter_no).zfill(2)),
                 Spacer(1, 16),

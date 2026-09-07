@@ -2,7 +2,7 @@
 
 Inference turns a fixed model into a variable, stateful, multi-tenant service. Prompt length, output length, sampling policy, cache state, adapter choice, arrival bursts, and hardware topology change the cost of every request. The systems problem is to preserve a declared quality and latency contract while sharing expensive accelerators efficiently.
 
-This part follows a request from API admission through token streaming and cleanup. It covers measurement, prefill and decode, KV memory, scheduling, exact and approximate decoding, distributed serving, quantization, adapters, capacity, reliability, and rollout. Every chapter ends with principal-level interview questions and complete answer keys.
+This part follows a request from API admission through token streaming and cleanup. It covers measurement, prefill and decode, KV memory, scheduling, exact and approximate decoding, distributed serving, quantization, adapters, capacity, reliability, and rollout. Every chapter ends with advanced engineering questions and complete answer keys.
 
 :::callout decision|The serving contract comes first
 Before choosing an engine or optimization, define model semantics, supported request features, latency objectives, overload behavior, and the quality deviations that are permitted. A faster system that silently changes these is a different product.
@@ -111,7 +111,7 @@ Run both a component benchmark and an end-to-end replay. Component results expla
 Changing prompt/output mix, ignoring queue time, omitting rejected requests, reducing sampling work, or reporting a saturated batch with no latency constraint can raise tokens per second without improving a real service.
 :::
 
-### Principal Interview Review
+### Design Exercises
 
 1. Define time to first token, inter-token latency, time per output token, and end-to-end latency at precise boundaries.
 2. Why is goodput often a better capacity objective than raw token throughput?
@@ -120,7 +120,7 @@ Changing prompt/output mix, ignoring queue time, omitting rejected requests, red
 5. A GPU trace looks healthy, but user latency regressed. How do you localize the problem?
 6. What belongs in a reproducible inference benchmark report?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Latency metrics
 
@@ -152,7 +152,7 @@ LEAD: A request moves through phases with different shapes and bottlenecks. Pref
 
 ### Phase anatomy
 
-Text-only autoregressive serving has two principal model phases:
+Text-only autoregressive serving has two primary model phases:
 
 - **Prefill** processes all uncached prompt tokens, produces the first-token state, and materializes their KV cache.
 - **Decode** adds one token per active sequence per iteration, reads prior KV state, samples a token, and appends new KV.
@@ -255,7 +255,7 @@ Routing a request away from a useful prefix may cost more than waiting briefly f
 "The model is memory-bound" is too coarse. State whether the critical shape is short-prompt prefill, long-prompt attention, small-batch decode, long-context KV reads, a collective, or host scheduling. Each points to a different intervention.
 :::
 
-### Principal Interview Review
+### Design Exercises
 
 1. Why can the same model be compute-bound in prefill and bandwidth-bound in decode?
 2. Derive the KV-cache memory equation and explain every omitted overhead.
@@ -264,7 +264,7 @@ Routing a request away from a useful prefix may cost more than waiting briefly f
 5. Design a chunked-prefill policy for interactive and batch traffic.
 6. How should a multimodal request change phase accounting and capacity planning?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Different phase bounds
 
@@ -399,7 +399,7 @@ Deletion requirements propagate to cache copies, offloaded tiers, and replicas. 
 The useful metric is first-token time or cost saved after lookup, routing, transfer, memory displacement, and security policy. Cache reuse that fragments capacity or creates a hot node can lower fleet goodput.
 :::
 
-### Principal Interview Review
+### Design Exercises
 
 1. Why does paged KV reduce waste, and what costs does it introduce?
 2. How would you choose token-block size?
@@ -408,7 +408,7 @@ The useful metric is first-token time or cost saved after lookup, routing, trans
 5. Design a cache-aware routing and eviction policy.
 6. When should the system transfer, offload, recompute, or discard KV state?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Paging tradeoff
 
@@ -544,7 +544,7 @@ During overload, apply a declared hierarchy: protect in-flight interactive seque
 "Maximize useful tokens subject to deadline, fairness, memory, and semantic constraints" can be translated into ordering, budgets, and invariants. "Keep the GPU busy" cannot decide whom to delay or reject.
 :::
 
-### Principal Interview Review
+### Design Exercises
 
 1. Design an iteration-level scheduler for mixed interactive and batch traffic.
 2. How do you prevent long prefills from breaking token cadence without starving them?
@@ -553,7 +553,7 @@ During overload, apply a declared hierarchy: protect in-flight interactive seque
 5. Explain cancellation and slow-client handling end to end.
 6. Why can intentionally lower accelerator utilization improve fleet goodput?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Mixed scheduler
 
@@ -707,7 +707,7 @@ At high target batch, ordinary decode may already reuse weights well. Draft comp
 A proposal with excellent agreement can lose if it is expensive, reduces target batch capacity, creates awkward verification shapes, or worsens queueing. Report committed output tokens per end-to-end second under the same SLO and semantics.
 :::
 
-### Principal Interview Review
+### Design Exercises
 
 1. Why must the order of logits processors be part of the API contract?
 2. Design deterministic RNG mapping for continuous batching and cancellation.
@@ -716,7 +716,7 @@ A proposal with excellent agreement can lose if it is expensive, reduces target 
 5. How would you choose proposal length online and decide when to disable speculation?
 6. Compare standalone drafts, multi-token heads, and tree proposals.
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Processor order
 
@@ -755,6 +755,8 @@ LEAD: A serving fleet places model parameters, KV state, and request phases acro
 **Pipeline parallelism** assigns layer ranges to stages. It reduces per-device weights and can overlap microbatches, but latency includes stage traversal and bubbles depend on the number and uniformity of microbatches. Dynamic continuous batches complicate stable pipeline schedules.
 
 **Expert parallelism** places mixture-of-experts experts across devices. It reduces resident expert weights per device and increases aggregate capacity, but token routing creates all-to-all traffic and load imbalance. Hot experts and small per-expert token counts can dominate decode.
+
+**Context parallelism must be phase-specific.** Prefill context parallelism (PCP) partitions prompt query positions and, depending on the algorithm, exchanges or circulates their K/V context. It is chiefly a long-prompt TTFT and attention-working-set tool. Decode context parallelism (DCP) sequence-shards the historical KV cache and merges partial attention for each new token. It is chiefly a cache-capacity and decode-goodput tool. In current vLLM, PCP is a separate process-group dimension, whereas DCP reuses ranks within a divisible tensor-parallel group; treating both as one generic CP degree gives the wrong device count and cost model.
 
 Part V develops these mechanisms in depth. For serving, the decision is driven by request latency, active batch, KV placement, link topology, and the model's fit, not training precedent.
 
@@ -836,7 +838,7 @@ Replaying a prefill can reconstruct KV if the input and model version are availa
 
 For streaming responses, retries after emitted tokens are delicate. The service can resume only if it can reproduce exact state and avoid duplicate bytes, otherwise it should terminate with a clear partial-response error. Exactly-once token streaming across arbitrary failures is an application protocol, not an automatic property of the model engine.
 
-### Principal Interview Review
+### Design Exercises
 
 1. Why can increasing tensor-parallel degree reduce fleet goodput?
 2. How would you choose between replication, tensor parallelism, and pipeline parallelism for serving?
@@ -845,7 +847,7 @@ For streaming responses, retries after emitted tokens are delicate. The service 
 5. How should routing balance queue delay against state locality?
 6. What changes in autoscaling and failure handling after disaggregation?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Tensor-parallel degree
 
@@ -982,7 +984,7 @@ A worker memory budget includes:
 
 Adapter count alone is misleading because ranks and targeted layers differ. Account bytes and measured per-token work. For sparse popularity, maintain a warm subset and route by adapter locality. For uniformly hot adapters, replicate them. For a long tail, consider host-resident staging, but include transfer time and queue hot spots.
 
-### Principal Interview Review
+### Design Exercises
 
 1. Compare weight-only, weight-activation, and KV quantization as serving interventions.
 2. Why can a four-bit checkpoint be smaller but slower than a higher-precision one?
@@ -991,7 +993,7 @@ Adapter count alone is misleading because ranks and targeted layers differ. Acco
 5. Design multi-adapter batching and residency management.
 6. What isolation and versioning rules connect adapters, tokenizers, and prefix caches?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Quantization targets
 
@@ -1168,7 +1170,7 @@ Optimize total service cost after semantic and reliability constraints. The chea
 | Rollout | Versioned artifacts, cache isolation, canary guardrails, tested rollback |
 | Security | Auth, quotas, tenant isolation, deletion, abuse limits, audit trail |
 
-### Principal Interview Review
+### Design Exercises
 
 1. Produce a capacity plan for a new LLM endpoint from workload traces and SLOs.
 2. Why is GPU utilization insufficient for autoscaling?
@@ -1177,7 +1179,7 @@ Optimize total service cost after semantic and reliability constraints. The chea
 5. What observability distinguishes a scheduler regression from a kernel or network regression?
 6. Design an overload and rollback policy that preserves explicit semantics.
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Capacity plan
 

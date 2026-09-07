@@ -2,7 +2,7 @@
 
 Distributed design begins when one accelerator, process, memory domain, or failure domain cannot satisfy the objective. Every parallelism axis exchanges one scarce resource for another: memory for communication, latency for throughput, replication for availability, or implementation simplicity for scale.
 
-This part builds from communication cost to complete training and inference plans. It covers collectives, topology, data and fully sharded parallelism, tensor and context parallelism, pipelines, sparse experts, distributed inference, checkpoint recovery, cluster scheduling, and diagnosis. Every chapter ends with principal-level questions and complete answer keys.
+This part builds from communication cost to complete training and inference plans. It covers collectives, topology, data and fully sharded parallelism, tensor and context parallelism, pipelines, sparse experts, distributed inference, checkpoint recovery, cluster scheduling, and diagnosis. Every chapter ends with advanced engineering questions and complete answer keys.
 
 :::callout decision|Write the physical plan, not only the degrees
 A configuration such as TP=8, PP=4, DP=16 is incomplete until every process group is mapped to devices, links, nodes, failure domains, tensors, and schedules. Logical parallelism becomes performance only through physical placement.
@@ -126,7 +126,7 @@ Use sequence numbers, communicator IDs, tensor metadata, and call stacks in diag
 Because ranks synchronize through collectives, the operation often waits for a straggler created earlier by data loading, a kernel, page fault, or another communicator. Measure arrival skew separately from transport duration.
 :::
 
-### Principal Interview Review
+### Design Exercises
 
 1. Derive ring all-reduce bytes and explain when a tree can be faster.
 2. Compare all-reduce with reduce-scatter plus all-gather by ownership and use.
@@ -135,7 +135,7 @@ Because ranks synchronize through collectives, the operation often waits for a s
 5. Diagnose a collective whose duration is high only on some iterations.
 6. Why can a bandwidth benchmark disagree with application communication performance?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Ring and tree
 
@@ -254,7 +254,7 @@ Input failures are distributed failures. A corrupt sample on one rank, data-serv
 The memory saving appears only if gathers, resharding, prefetch, backward, optimizer ownership, and checkpoints agree on tensor lifetime. A poorly wrapped fully sharded model can both use more peak memory and communicate more.
 :::
 
-### Principal Interview Review
+### Design Exercises
 
 1. Compare replicated DDP, ZeRO stage 2, and fully sharded training.
 2. How do bucket size and parameter order affect gradient overlap?
@@ -263,7 +263,7 @@ The memory saving appears only if gathers, resharding, prefetch, backward, optim
 5. What distributed state must agree when mixed-precision overflow occurs?
 6. Why can activation checkpointing make a communication plan slower or incorrect?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. DDP and sharded variants
 
@@ -316,7 +316,7 @@ Treat each tensor as carrying a distribution type such as:
 - partial, meaning local values require reduction;
 - uneven or padded shard with a validity mask.
 
-Operators transform these types. A compiler or framework can insert collectives, but a principal design should state them. Many accidental all-gathers come from an interface that forgets a tensor is already sharded.
+Operators transform these types. A compiler or framework can insert collectives, but a robust design should state them. Many accidental all-gathers come from an interface that forgets a tensor is already sharded.
 
 Residual connections require compatible layouts. Dropout masks, bias, and normalization statistics must have a defined logical mapping so changing tensor-parallel degree does not silently change model semantics beyond the reproducibility contract.
 
@@ -355,6 +355,8 @@ Random operations need a logical mask policy. If dropout is intended to be invar
 
 Context parallelism partitions the entire sequence and its activations across a group. Tokenwise linear and normalization operations run locally. Attention is different: local queries require keys and values from the full logical context.
 
+That description is sufficient for training, where many query positions are processed together, but it is too coarse for serving. Prefill and autoregressive decode have different query-to-history ratios and therefore need different context-parallel layouts. The distributed-inference chapter distinguishes **prefill context parallelism (PCP)** from **decode context parallelism (DCP)**; the two should not be treated as interchangeable settings.
+
 Implementations may:
 
 - all-gather K/V for attention, paying memory;
@@ -386,7 +388,7 @@ Schedule group operations in a consistent order across ranks and reserve streams
 For every transformer sublayer, label input, intermediate, and output as replicated, sharded, or partial. The required collective and its bytes then become visible, and redundant gathers are hard to hide.
 :::
 
-### Principal Interview Review
+### Design Exercises
 
 1. Derive the collectives in paired column- and row-parallel linear layers.
 2. How would you implement vocabulary-parallel cross-entropy without gathering logits?
@@ -395,7 +397,7 @@ For every transformer sublayer, label input, intermediate, and output as replica
 5. Design causal context partitioning that avoids severe load imbalance.
 6. How do you choose TP and CP degrees for a long-context transformer?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Paired linear layers
 
@@ -535,7 +537,7 @@ Reject plans that fit only with zero allocator reserve or depend on perfect over
 Every additional axis multiplies process groups, state mappings, checkpoints, tests, and failure modes. Add a parallelism dimension only when it solves a measured memory or throughput constraint that a simpler plan cannot.
 :::
 
-### Principal Interview Review
+### Design Exercises
 
 1. Derive pipeline bubble and explain why more microbatches can still hurt throughput.
 2. Compare flush and 1F1B schedules by memory, semantics, and recovery.
@@ -544,7 +546,7 @@ Every additional axis multiplies process groups, state mappings, checkpoints, te
 5. Evaluate the 64-GPU example against an alternative plan.
 6. Why is the fastest isolated parallel plan sometimes wrong for the full training run?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Bubble and microbatches
 
@@ -690,7 +692,7 @@ Operational dashboards should show expert load histograms, overflow, entropy, di
 An MoE model can activate few parameters yet wait on two all-to-alls, token packing, a hot expert, and tiny grouped GEMMs. Capacity parameters still consume memory and checkpoint bandwidth even when inactive.
 :::
 
-### Principal Interview Review
+### Design Exercises
 
 1. Trace one token through distributed top-k expert routing and back.
 2. Compare padding, dropping, backup routing, and dynamic capacity on overflow.
@@ -699,7 +701,7 @@ An MoE model can activate few parameters yet wait on two all-to-alls, token pack
 5. When should a hot expert be replicated, and how is consistency maintained?
 6. Why is expert-parallel decode often harder than expert-parallel training?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Token path
 
@@ -771,13 +773,64 @@ Grouped-query and multi-query attention may have fewer KV heads than TP ranks. R
 
 Block tables and prefix references must use the same distributed ownership. A request is not admitted until every required rank can reserve its shard; otherwise one rank can OOM after peers have advanced.
 
-### Context-parallel inference
+### Phase-specific context parallelism
 
-Long-context prefill can partition queries or sequence blocks across ranks and use context-parallel attention. Decode has one new query per sequence but a large historical KV. Sharding the history reduces local KV memory and read bandwidth, then ranks must combine partial attention states.
+“Context parallelism” is not one inference plan. Prefill applies many queries to an expanding context and is usually optimized for time to first token. Decode applies one new query per active sequence to a large paged history and is usually optimized for inter-token latency, KV capacity, or batch goodput. A system can use different degrees and even different algorithms for these phases.
 
-For exact attention, each shard computes a local maximum, exponential sum, and weighted value. These statistics can be merged with global reductions or an online recurrence. Communication volume may be smaller than gathering all KV, but collective latency appears on every layer and token.
+#### Prefill context parallelism
 
-Use CP for inference when context capacity or attention time is the constraint and the reduction cost fits the token SLO. It is not automatically beneficial merely because training used CP.
+Prefill context parallelism (PCP) divides newly processed prompt tokens across PCP ranks. Each rank projects and attends for a subset of query positions, reducing the local attention work and activation footprint. It primarily targets long-prompt time to first token and contexts whose attention working set does not fit conveniently on one rank.
+
+Two implementation families make different memory-communication trades:
+
+- **partial query, full KV:** ranks keep local query chunks but exchange or gather the keys and values needed by those queries;
+- **partial query, partial KV:** ranks keep both query and KV partitions and circulate blocks, often with ring attention and an online softmax merge.
+
+The first is simpler but can reproduce the full-KV memory cost. The second bounds local KV working memory but introduces ordered communication and causal-load-balancing work. Contiguous causal partitions are imbalanced because late query blocks see more history; zigzag or interleaved mappings distribute early and late positions more evenly.
+
+PCP is normally an additional process-group dimension. In vLLM's current group geometry, PCP is separate from tensor parallelism and therefore increases the world size for a fixed tensor-parallel group. Support remains version- and attention-backend-dependent, so a deployment must validate the exact release and kernel path rather than assuming that every context-parallel prefill algorithm is production-ready.
+
+#### Decode context parallelism
+
+Decode context parallelism (DCP) instead partitions the historical KV cache along the sequence dimension. Every rank evaluates the new query against its local history, then the ranks merge compact partial-attention state. For a shard `r`, let `m_r` be its maximum score, `l_r` its shifted exponential sum, and `o_r` its shifted weighted-value sum. The exact global result is:
+
+:::equation m = max_{r} m_{r}|The global maximum provides a common numerical reference across history shards.
+
+:::equation l = Σ_{r} exp(m_{r} - m) l_{r}|Shifted local normalizers combine into the exact global softmax denominator.
+
+:::equation o = (1 / l) Σ_{r} exp(m_{r} - m) o_{r}|Only compact statistics need to be reduced; the historical KV tensors need not be gathered.
+
+Interleaving token blocks across DCP ranks spreads future cache growth and attention work more evenly than assigning each rank one permanently contiguous interval.
+
+vLLM's DCP is not another multiplicative world-size dimension. It reuses ranks inside each tensor-parallel group, and the tensor-parallel degree must be divisible by the DCP degree. This matters most for grouped-query and multi-query attention. Ordinary tensor parallelism first shards KV heads, but when the tensor-parallel degree `T` exceeds the number of KV heads `H_{kv}`, heads are repeated across `T / H_{kv}` ranks. DCP can use those otherwise duplicate-bearing ranks to shard each head's token history instead.
+
+:::equation 1 ≤ D ≤ T / H_{kv}|For head-sharded GQA, the useful DCP degree D is bounded by the KV-head replication factor; model and backend constraints may narrow this range.
+
+Increasing DCP reduces duplicated KV capacity and may admit a larger decode batch, but it adds communication to every attention layer and generated token. It is therefore not automatically a token-latency optimization. The gain often appears first as more cache headroom, fewer evictions, or higher SLO-compliant fleet goodput.
+
+#### Group geometry and mixed phases
+
+For the supported mainline vLLM layout, the rank space can be summarized as:
+
+:::equation WorldSize = DP × PP × PCP × TP|DCP is nested within TP and therefore does not multiply the launched rank count.
+
+| Mechanism | Primary shard | Adds ranks for fixed TP? | Main serving objective | Recurring cost |
+| --- | --- | --- | --- | --- |
+| TP | weights, activations, and usually KV heads | yes | model fit and layer compute | per-layer reductions or gathers |
+| PCP | prompt query positions; optionally KV blocks | yes | long-prompt TTFT and working-set fit | KV exchange or ring traffic during prefill |
+| DCP | historical KV tokens within a TP subgroup | no | remove KV duplication, enlarge batch or context | partial-attention merge during decode |
+
+Chunked prefill blurs the phase boundary. A request may already have DCP-sharded history while a new prompt chunk supplies many query positions. Prefix-cache hits create the same condition. The engine must combine the new chunk with distributed historical state; the label “prefill” alone does not determine which communication appears in the kernel.
+
+A sound selection sequence is:
+
+1. choose the smallest TP degree that fits weights and meets layer latency;
+2. add PCP only when long-prompt TTFT or prefill attention memory remains limiting;
+3. add DCP when TP has created KV-head duplication or decode capacity is history-bound;
+4. measure phase-specific latency, cache occupancy, communication, batch size, and fleet replica count together;
+5. verify the current runtime's model, attention-backend, chunked-prefill, speculative-decoding, and multi-token-prediction compatibility.
+
+Do not copy a training CP degree into serving by precedent. PCP and DCP solve different bottlenecks, have different process-group geometry, and can move opposite SLOs.
 
 ### KV transfer and remote memory
 
@@ -833,16 +886,16 @@ Strong-scaling efficiency is secondary to good requests per fleet cost. A plan t
 Every added rank must justify the requests it prevents the fleet from serving independently. Fit, latency, queueing, and failure reserve decide together.
 :::
 
-### Principal Interview Review
+### Design Exercises
 
 1. Why is tensor parallelism more latency-sensitive in decode than in training?
 2. Design distributed KV ownership for TP, PP, and GQA.
-3. When can context-parallel decode outperform replicated or head-sharded KV?
+3. Compare PCP and DCP: what does each shard, when does it add ranks, and which serving bottleneck does it address?
 4. How do you reshard KV during migration without a central bottleneck?
 5. Design state-aware routing to a model-parallel group.
 6. Specify safe recovery after one rank fails during streaming generation.
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Decode sensitivity
 
@@ -852,9 +905,9 @@ Decode has a small token dimension and repeats a serial step for every output to
 
 PP stages own KV only for their layers. Within a stage, TP ranks own compatible attention heads when KV-head count permits. If GQA has fewer KV heads than TP ranks, either form KV-sharing subgroups, replicate selected heads, or lower attention TP; document the added bytes or exchange. Block tables and reservations are sharded identically, and admission succeeds only when every stage/rank reserves its required pages.
 
-#### 3. Context-parallel decode
+#### 3. Prefill versus decode context parallelism
 
-CP helps when long-history KV memory or read time dominates and no rank can hold or scan the history efficiently. Each rank reads a shard and reduces compact online-softmax statistics instead of gathering KV. It loses when collective latency per layer/token exceeds saved KV time, especially at short context or small models. Sweep context, batch, CP degree, and topology under the inter-token SLO.
+PCP shards prompt query positions across a separate process-group dimension and may also partition the KV working set. It can reduce long-prompt TTFT or make the prefill attention working set fit, but it usually consumes additional ranks and communicates KV blocks or online-attention state. DCP shards historical KV tokens among ranks already assigned to a TP group. In vLLM it does not increase world size; it is most useful when TP has replicated a small number of GQA or MQA KV heads. DCP recovers cache capacity and can raise decode batch goodput, but adds a partial-attention merge at every layer and token. Benchmark PCP on prompt length and TTFT; benchmark DCP on context, cache occupancy, batch size, inter-token latency, and SLO-constrained goodput.
 
 #### 4. KV resharding
 
@@ -1003,7 +1056,7 @@ A checkpoint that has never been restored is an untested backup. Track restore s
 The useful rate is training progress that survives expected failures. Include checkpoint pause, storage contention, lost work, restart, resharding, and queue delay when comparing parallel plans.
 :::
 
-### Principal Interview Review
+### Design Exercises
 
 1. Design atomic publication for a multi-terabyte sharded checkpoint.
 2. What distinguishes a recovery checkpoint from a model export?
@@ -1012,7 +1065,7 @@ The useful rate is training progress that survives expected failures. Include ch
 5. How would you choose checkpoint frequency for a large cluster job?
 6. What does safe elasticity require beyond restarting with fewer data-parallel ranks?
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Atomic checkpoint
 
@@ -1168,7 +1221,7 @@ Bitwise reproducibility across rank counts is often impractical due to reduction
 
 ### End-to-end design method
 
-A principal distributed design proceeds in this order:
+A robust distributed design proceeds in this order:
 
 1. define training/inference objective, SLO, batch semantics, and failure tolerance;
 2. build per-rank memory and per-step FLOP/byte models;
@@ -1194,7 +1247,7 @@ Change one axis at a time when possible. Autotuning can search degrees, but cons
 | Operations | Placement, quotas, alerts, flight recorder, runbooks |
 | Economics | Queue plus run time, recovery-adjusted cost, useful output |
 
-### Principal Interview Review
+### Design Exercises
 
 1. Design topology-aware scheduling for several competing large training jobs.
 2. How do you distinguish a network slowdown from rank arrival skew?
@@ -1203,7 +1256,7 @@ Change one axis at a time when possible. Autotuning can search degrees, but cons
 5. Compare strong-scaling efficiency with time-to-valid-model as objectives.
 6. Walk through the first hour of diagnosing a 5 percent intermittent step-time regression.
 
-### Answer Key
+### Worked Solutions
 
 #### 1. Topology-aware scheduling
 
@@ -1241,6 +1294,8 @@ Confirm version, workload, topology, and measurement changes; compare the same s
 - [GShard](https://arxiv.org/abs/2006.16668) and [Switch Transformers](https://www.jmlr.org/beta/papers/v23/21-0998.html) - sparse expert routing and scaling.
 - [PyTorch Distributed Checkpoint](https://docs.pytorch.org/docs/stable/distributed.checkpoint.html) - parallel save/load and resharded restore.
 - [PyTorch Flight Recorder](https://docs.pytorch.org/tutorials/unstable/flight_recorder_tutorial.html) - collective hang and desynchronization diagnosis.
+- [vLLM Context Parallel Deployment](https://docs.vllm.ai/en/v0.16.0/serving/context_parallel_deployment/) - maintained distinction between prefill and decode context parallelism, algorithms, and deployment guidance.
+- [vLLM Parallel Configuration](https://docs.vllm.ai/en/latest/api/vllm/config/parallel/) and [Parallel-State Source](https://docs.vllm.ai/en/stable/api/vllm/distributed/parallel_state/) - current DCP constraints and PCP/TP/DCP process-group geometry.
 
 ### Final Distributed Systems Principle
 
