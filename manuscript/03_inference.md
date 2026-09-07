@@ -818,7 +818,7 @@ One replica is no longer enough: a model may not fit one device, traffic exceeds
 
 **Expert parallelism** places mixture-of-experts experts across devices. It reduces resident expert weights per device and increases aggregate capacity, but token routing creates all-to-all traffic and load imbalance. Hot experts and small per-expert token counts can dominate decode.
 
-**Context parallelism must be phase-specific.** Prefill context parallelism (PCP) partitions prompt query positions and, depending on the algorithm, exchanges or circulates their K/V context. It is chiefly a long-prompt TTFT and attention-working-set tool. Decode context parallelism (DCP) sequence-shards the historical KV cache and merges partial attention for each new token. It is chiefly a cache-capacity and decode-goodput tool. In current vLLM, PCP is a separate process-group dimension, whereas DCP reuses ranks within a divisible tensor-parallel group; treating both as one generic CP degree gives the wrong device count and cost model.
+**Context parallelism must be phase-specific.** Prefill context parallelism (PCP) partitions prompt query positions and, depending on the algorithm, exchanges or circulates their K/V context. It is chiefly a long-prompt TTFT and attention-working-set tool. Decode context parallelism (DCP) sequence-shards the historical KV cache and merges partial attention for each new token. It is chiefly a cache-capacity and decode-goodput tool. PCP adds a rank dimension in vLLM; DCP reuses allocated ranks rather than multiplying their count. Without PCP those ranks lie inside TP, while newer combined layouts can span PCP as well. Part V gives the version-specific constraints. Neither PCP nor DCP means choosing a different TP degree for the two serving phases.
 
 Part V develops these mechanisms in depth. For serving, the decision is driven by request latency, active batch, KV placement, link topology, and the model's fit, not training precedent.
 
@@ -862,6 +862,29 @@ For transferred KV bytes `X` and sustainable path bandwidth `BW`, a lower bound 
 The actual path includes source readiness, registration, serialization or layout conversion, network queueing, destination placement, and synchronization. Long prompts create more state to transfer but also more prefill work that specialization may save.
 
 For the running service, a 2,000-token prompt hands off about 260 MB of KV (`2000 * 131 kB`). Over the assumed 50 GB/s path that is roughly 5 ms plus protocol overhead - cheap next to the prefill it frees the decode pool from repeating. The same transfer over a contended or slower path can erase the benefit, which is why the bound is a starting point and not a verdict.
+
+#### Different TP sizes for prefill and decode
+
+“Prefill TP” and “decode TP” usually refer to **the same tensor-parallel mechanism configured independently in two worker pools**, not two new forms of tensor parallelism. For example, one prefill instance could use TP=4 while each decode instance uses TP=2. Each engine still has its own weight shards, collectives, and KV ownership. The request crosses between engines; changing phase does not automatically resize a live TP group.
+
+[vLLM's disaggregated-prefilling documentation](https://docs.vllm.ai/en/latest/features/disagg_prefill/) explicitly supports choosing parallel strategies independently for TTFT and inter-token latency. The broader idea predates the recent vLLM conference: [DistServe at OSDI 2024](https://www.usenix.org/conference/osdi24/presentation/zhong-yinmin) co-optimized phase-specific resources and parallelism. Treat a conference presentation as an implementation or deployment update unless its novelty is established separately.
+
+Why might the degrees differ? Large prefill matrix operations can amortize communication, and a tight first-token budget can justify a wider group. Small-batch decode performs frequent short steps; collective latency and local matrix shape can make a narrower group more efficient. But there is no rule that prefill TP must be larger. Weight fit, long-context KV reads, aggregate memory bandwidth, batch size, and a strict token-gap target may favor wider decode. Measure both phases rather than deriving the answer from “compute-bound” and “memory-bound” labels alone.
+
+Consider an illustrative head-sharded layout for the running service's eight KV heads, with no PCP or DCP. Keep all layers on each group and use equal head partitions:
+
+| Prefill rank, TP=4 | KV heads produced | Destination, TP=2 |
+| --- | --- | --- |
+| P0 | 0-1 | D0, which owns heads 0-3 |
+| P1 | 2-3 | D0, which owns heads 0-3 |
+| P2 | 4-5 | D1, which owns heads 4-7 |
+| P3 | 6-7 | D1, which owns heads 4-7 |
+
+The logical cache is unchanged; its physical ownership changes. For a 2,000-token prompt, the exact FP16 KV size is 250 MiB (`2000 * 128 KiB`). Each source owns 62.5 MiB and each destination must reserve 125 MiB, excluding block padding and workspace. A connector must map head ranges and token blocks into the destination layout, not copy P0's buffer to D0 and assume the other heads are present. This arithmetic describes ownership, not a measured speedup or a recommended TP setting.
+
+Different TP sizes are often called **heterogeneous TP** in connector documentation. Support is model- and layout-specific: the [NixlConnector compatibility matrix](https://docs.vllm.ai/en/latest/features/nixl_connector_compatibility/) distinguishes dense head-sharded attention, replicated MLA state, and hybrid recurrent models. Check the exact runtime, connector, KV dtype, attention backend, and model restrictions. A valid pair of TP sizes is not proof of a supported handoff.
+
+Pool size is a separate decision. One TP=4 prefill instance plus two TP=2 decode instances uses eight GPUs; it does not create one TP=8 replica. Compare this layout with four colocated TP=2 instances under the same traffic and GPU budget. Include queueing, KV reshaping/transfer, destination capacity, TTFT, token-gap tails, and cost per SLO-compliant request. Disaggregation provides tuning freedom, not a guaranteed raw-throughput improvement.
 
 :::callout decision|Disaggregate only after modeling the handoff
 The architecture wins when phase specialization, independent scaling, and interference isolation exceed KV transfer, additional queueing, network contention, and operational complexity at the real prompt/context distribution.

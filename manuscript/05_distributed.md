@@ -357,6 +357,8 @@ Context parallelism partitions the entire sequence and its activations across a 
 
 That description is sufficient for training, where many query positions are processed together, but it is too coarse for serving. Prefill and autoregressive decode have different query-to-history ratios and therefore need different context-parallel layouts. The distributed-inference chapter distinguishes **prefill context parallelism (PCP)** from **decode context parallelism (DCP)**; the two should not be treated as interchangeable settings.
 
+Do not confuse these with **phase-specific tensor parallelism**: a disaggregated service can run ordinary TP at one degree in its prefill pool and another degree in its decode pool. That changes model-group ownership across a KV handoff, whereas PCP and DCP partition sequence work or history. Part III's “Different TP sizes for prefill and decode” gives a concrete TP=4 to TP=2 handoff.
+
 Implementations may:
 
 - all-gather K/V for attention, paying memory;
@@ -802,23 +804,33 @@ Decode context parallelism (DCP) instead partitions the historical KV cache alon
 
 Interleaving token blocks across DCP ranks spreads future cache growth and attention work more evenly than assigning each rank one permanently contiguous interval.
 
-vLLM's DCP is not another multiplicative world-size dimension. It reuses ranks inside each tensor-parallel group, and the tensor-parallel degree must be divisible by the DCP degree. This matters most for grouped-query and multi-query attention. Ordinary tensor parallelism first shards KV heads, but when the tensor-parallel degree `T` exceeds the number of KV heads `H_{kv}`, heads are repeated across `T / H_{kv}` ranks. DCP can use those otherwise duplicate-bearing ranks to shard each head's token history instead.
+In the vLLM layout with PCP disabled, DCP reuses ranks inside each tensor-parallel group, and the tensor-parallel degree must be divisible by the DCP degree. This matters most for grouped-query and multi-query attention. With equal head partitions and a compatible TP degree, ordinary TP first shards KV heads; when the tensor-parallel degree `T` exceeds the number of KV heads `H_{kv}`, each head is repeated across `T / H_{kv}` ranks. DCP can use those otherwise duplicate-bearing ranks to shard each head's token history instead.
 
-:::equation 1 ≤ D ≤ T / H_{kv}|For head-sharded GQA, the useful DCP degree D is bounded by the KV-head replication factor; model and backend constraints may narrow this range.
+:::equation 1 ≤ D ≤ T / H_{kv}|Replication-removal sizing for compatible GQA layouts with PCP disabled and T at least H_kv; not a universal DCP limit.
+
+For example, with four KV heads and TP=8, each head has two copies before DCP. Choosing DCP=2 lets each copy-bearing pair store complementary token blocks. There are still eight GPUs, but the pair stores one logical history instead of two full copies. This is sequence sharding inside the allocated model group, not a TP=8 prefill pool handing off to a TP=2 decode pool.
 
 Increasing DCP reduces duplicated KV capacity and may admit a larger decode batch, but it adds communication to every attention layer and generated token. It is therefore not automatically a token-latency optimization. The gain often appears first as more cache headroom, fewer evictions, or higher SLO-compliant fleet goodput.
 
 #### Group geometry and mixed phases
 
-For the supported mainline vLLM layout, the rank space can be summarized as:
+For vLLM's model-worker rank space, excluding API processes and independently launched pools, the layout can be summarized as:
 
-:::equation WorldSize = DP × PP × PCP × TP|DCP is nested within TP and therefore does not multiply the launched rank count.
+:::equation WorldSize = DP × PP × PCP × TP|DCP reuses this rank space rather than adding another multiplier; the product does not imply every combination is supported.
+
+The implementation is evolving. In [vLLM's parallel configuration at revision 252ed876](https://github.com/vllm-project/vllm/blob/252ed876214a0a01a6d0ce93bb5bbe77685a4160/vllm/config/parallel.py), checked September 7, 2026:
+
+- with PCP=1, DCP must divide TP;
+- with PCP greater than one, the accepted DCP sizes are 1, PCP, or TP multiplied by PCP;
+- PCP greater than one cannot yet be combined with DP greater than one.
+
+Thus “DCP is always nested inside TP” is too broad: combined layouts can span the PCP axis or the full TP-by-PCP block. These are configuration constraints in the cited revision, not a guarantee that every model or attention backend supports each accepted combination. The older replication-removal bound above explains the no-PCP case; it must not be applied to every combined layout.
 
 | Mechanism | Primary shard | Adds ranks for fixed TP? | Main serving objective | Recurring cost |
 | --- | --- | --- | --- | --- |
 | TP | weights, activations, and usually KV heads | yes | model fit and layer compute | per-layer reductions or gathers |
 | PCP | prompt query positions; optionally KV blocks | yes | long-prompt TTFT and working-set fit | KV exchange or ring traffic during prefill |
-| DCP | historical KV tokens within a TP subgroup | no | remove KV duplication, enlarge batch or context | partial-attention merge during decode |
+| DCP | historical KV tokens across existing ranks | no | remove KV duplication, enlarge batch or context | partial-attention merge during decode |
 
 Chunked prefill blurs the phase boundary. A request may already have DCP-sharded history while a new prompt chunk supplies many query positions. Prefix-cache hits create the same condition. The engine must combine the new chunk with distributed historical state; the label “prefill” alone does not determine which communication appears in the kernel.
 
@@ -907,7 +919,7 @@ PP stages own KV only for their layers. Within a stage, TP ranks own compatible 
 
 #### 3. Prefill versus decode context parallelism
 
-PCP shards prompt query positions across a separate process-group dimension and may also partition the KV working set. It can reduce long-prompt TTFT or make the prefill attention working set fit, but it usually consumes additional ranks and communicates KV blocks or online-attention state. DCP shards historical KV tokens among ranks already assigned to a TP group. In vLLM it does not increase world size; it is most useful when TP has replicated a small number of GQA or MQA KV heads. DCP recovers cache capacity and can raise decode batch goodput, but adds a partial-attention merge at every layer and token. Benchmark PCP on prompt length and TTFT; benchmark DCP on context, cache occupancy, batch size, inter-token latency, and SLO-constrained goodput.
+PCP shards prompt query positions across a separate process-group dimension and may also partition the KV working set. It can reduce long-prompt TTFT or make the prefill attention working set fit, but it usually consumes additional ranks and communicates KV blocks or online-attention state. DCP shards historical KV tokens among already allocated ranks: inside TP when PCP is disabled, or across supported PCP/TP layouts when it is enabled. In vLLM it does not increase world size. Removing duplicated GQA or MQA KV heads is one important use case. DCP can recover cache capacity and raise decode batch goodput, but adds a partial-attention merge at every layer and token. Benchmark PCP on prompt length and TTFT; benchmark DCP on context, cache occupancy, batch size, inter-token latency, and SLO-constrained goodput.
 
 #### 4. KV resharding
 
@@ -1295,7 +1307,7 @@ Confirm version, workload, topology, and measurement changes; compare the same s
 - [PyTorch Distributed Checkpoint](https://docs.pytorch.org/docs/stable/distributed.checkpoint.html) - parallel save/load and resharded restore.
 - [PyTorch Flight Recorder](https://docs.pytorch.org/tutorials/unstable/flight_recorder_tutorial.html) - collective hang and desynchronization diagnosis.
 - [vLLM Context Parallel Deployment](https://docs.vllm.ai/en/v0.16.0/serving/context_parallel_deployment/) - maintained distinction between prefill and decode context parallelism, algorithms, and deployment guidance.
-- [vLLM Parallel Configuration](https://docs.vllm.ai/en/latest/api/vllm/config/parallel/) and [Parallel-State Source](https://docs.vllm.ai/en/stable/api/vllm/distributed/parallel_state/) - current DCP constraints and PCP/TP/DCP process-group geometry.
+- [vLLM Parallel Configuration](https://github.com/vllm-project/vllm/blob/252ed876214a0a01a6d0ce93bb5bbe77685a4160/vllm/config/parallel.py) and [Parallel-State Source](https://github.com/vllm-project/vllm/blob/252ed876214a0a01a6d0ce93bb5bbe77685a4160/vllm/distributed/parallel_state.py) - revision checked September 7, 2026, including combined PCP/TP/DCP geometry; distinguish this from the older deployment guide's no-PCP examples.
 
 ### Final Distributed Systems Principle
 
