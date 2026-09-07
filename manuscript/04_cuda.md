@@ -2,15 +2,59 @@
 
 CUDA optimization is the discipline of translating an algorithm into a schedule over threads, instructions, memory levels, and asynchronous work. The correct starting point is never a favorite tile size or instruction. It is a resource model: what must move, what must be computed, which dependencies are unavoidable, and which hardware resource becomes limiting first.
 
+This part is self-contained. It does not require Part III open beside it. Wherever serving concepts appear - KV cache, paging, grouped-query attention, mixture-of-experts routing - they are restated here at the level a kernel engineer needs. Part III remains the place for fleet scheduling and product SLOs; Part IV owns the GPU schedule.
+
+### Running example used throughout
+
+Every major section returns to one illustrative workload so estimates stay comparable. Treat the numbers as a teaching machine class, not a product claim.
+
+| Symbol | Meaning | Value in this part |
+| --- | --- | --- |
+| `D` | model hidden width | 4096 |
+| `H` | query heads | 32 |
+| `H_kv` | key/value heads (GQA) | 8 |
+| `d` | head dimension (`D / H`) | 128 |
+| Prefill | one prompt | `B = 1`, `S_q = 2048` |
+| Decode | concurrent sequences | `B = 8`, each with context `S = 4096` |
+| Device | illustrative datacenter GPU | ~3 TB/s HBM, high tensor-core peak |
+
+Two regimes matter:
+
+- **Prefill / training-like attention:** many query rows attend over keys and values. Arithmetic intensity can be high when tiles reuse well.
+- **Decode:** each sequence adds one new query token and rereads a long KV cache. Bytes per useful FLOP rise sharply; launch and memory latency matter as much as peak math.
+
+:::diagram prefill_decode_kernels|The same attention equations appear in both regimes. Prefill wants large tiled GEMM reuse. Decode wants efficient paged KV traffic and low per-token overhead.
+
+### Prerequisites and reader contract
+
+You need comfort with matrix multiplication, reductions, and reading short CUDA C++ kernels. You do not need prior mastery of a particular GPU generation. Architecture names change; the method does not: define ownership, storage scope, synchronization, bytes, FLOPs, and the measurement that would falsify the claim.
+
 This part progresses from that model to production kernels. It covers execution, memory, host orchestration, GEMM, reductions, scans, histograms, softmax, normalization, attention, serving-specific kernels, profiling, and correctness. Each chapter closes with design exercises and worked solutions that connect the primitive to production workloads.
 
 :::callout decision|The CUDA optimization loop
 Establish a correct reference. Measure the real workload. Build a bytes-and-FLOPs model. Identify one limiting resource. Change the schedule. Recheck correctness. Reprofile. Stop when the remaining gap is below the value of additional complexity.
 :::
 
+:::pagebreak
+
+### Map of this part
+
+| Section | Role in the story |
+| --- | --- |
+| Execution and memory | Build the resource ledger the rest of the part uses |
+| Host orchestration | Show when kernel speed fails to reach the user |
+| Hierarchical GEMM | Construct the reusable engine behind linear layers |
+| Reductions, scans, histograms | Obtain the collective primitives softmax and routing need |
+| Softmax, norm, top-k | Compose those primitives into transformer epilogues |
+| FlashAttention | Fuse score, softmax, and value reduction without quadratic HBM |
+| LLM inference kernels | Specialize the schedule for decode, paging, and quantization |
+| Profiling and correctness | Close the loop on the running example with evidence |
+
 ## GPU Execution, Memory, and Resource Accounting
 
 LEAD: Threads execute in warps, warps are scheduled on streaming multiprocessors, and data moves through a hierarchy whose capacity grows as latency and sharing scope increase. Performance follows from how well the schedule uses those resources.
+
+Before optimizing any kernel in the running example, you need a model of how the GPU executes work and where data can live. The rest of this part repeatedly asks: which level holds the tile, which group synchronizes, and which resource saturates first?
 
 :::diagram memory_hierarchy|Registers and shared memory provide explicit locality; caches and HBM provide progressively larger scope. Each level has a capacity, bandwidth, allocation unit, and synchronization cost.
 
@@ -51,7 +95,7 @@ A warp becomes ineligible when it waits for data, a dependency, a barrier, or an
 - **thread-level parallelism:** many resident warps can run while another waits;
 - **instruction-level parallelism:** one thread or warp has several independent operations in flight.
 
-A memory-bound gather may need many resident warps because each warp has dependent long-latency loads. A tensor-core mainloop can run well at lower occupancy if it has an effective asynchronous pipeline and enough independent matrix operations.
+Apply this to the running example. A memory-bound decode gather over paged KV may need many resident warps because each warp has dependent long-latency loads. A prefill tensor-core mainloop can run well at lower occupancy if it has an effective asynchronous pipeline and enough independent matrix operations.
 
 ### Memory spaces and their contracts
 
@@ -80,6 +124,8 @@ Useful bandwidth is:
 `requested_bytes / transferred_bytes * measured_bus_bandwidth`
 
 This ratio explains why a kernel can report high device-memory throughput while delivering little useful data.
+
+In the running example, a well-laid-out KV vector of width `d = 128` in FP16 is 256 bytes per token per head. A warp that loads those values as contiguous pairs can cover them with a small number of sectors. The same logical read through a badly packed page table, with lanes jumping across pages, can multiply transferred sectors without increasing useful bytes.
 
 :::callout insight|Explain coalescing with addresses
 Say which address each lane requests, which aligned sectors cover those addresses, and how many bytes are useful. "Contiguous is good" is an observation; the transaction count is the explanation.
@@ -137,6 +183,8 @@ Suppose an illustrative SM supports 2,048 threads, 64 resident warps, 65,536 reg
 
 The shared-memory limit allows 3 blocks, or 24 warps, which is 37.5 percent theoretical occupancy. That may be enough if the kernel pipelines memory well. Reducing shared memory to admit a fourth block helps only if the added warps hide a real stall and the redesign does not add traffic.
 
+This cliff appears later when FlashAttention or decode kernels grow pipeline stages or accumulator tiles: more on-chip state can raise reuse and still lower achieved bandwidth if residency collapses.
+
 ### Synchronization and memory ordering
 
 `__syncthreads()` is a block barrier and establishes the shared-memory visibility needed by participating threads. It must be reached by all non-exited threads in the block along a convergent control path.
@@ -154,6 +202,10 @@ Atomics make an update indivisible at a declared scope, but atomicity is not a g
 | Low residency with spills | Registers | Local loads/stores, allocation report | Shorten live ranges, reduce tile, split kernel |
 | Barrier-heavy timeline | Synchronization | Warp stalls at barriers, imbalance | Repartition work, warp-level exchange |
 | High issue utilization, low tensor utilization | Instruction mix | Scalar work dominates | Reduce address/control overhead, use MMA path |
+
+:::callout pitfall|Occupancy is not the objective
+Raising theoretical occupancy while destroying reuse, vector width, or tensor-core issue often slows the kernel. Use occupancy as a residency constraint, then optimize the limiting stall or bandwidth metric on the real shape.
+:::
 
 ### Design Exercises
 
@@ -188,6 +240,8 @@ First determine whether 80 percent is bus traffic or useful requested bytes. If 
 ## Host-Device Orchestration, Streams, and CUDA Graphs
 
 LEAD: A fast kernel can sit inside a slow application. Transfers, allocations, launch submission, synchronization, and shape management determine whether kernel speed reaches the user.
+
+The previous section gave a resource model inside one kernel. The running example does not live there. A decode step is a short sequence of kernels, copies, and sampling work submitted from the host or a captured graph. This section is the shell around that sequence: how work is ordered, overlapped, and kept off the global critical path.
 
 ### The asynchronous execution contract
 
@@ -250,6 +304,8 @@ Graphs are valuable when:
 
 Graphs are less useful when the workload changes structure every iteration, graph updates are frequent and expensive, or one long kernel dominates latency.
 
+In the decode regime of the running example, each step may launch several short kernels: RoPE or cache append, attention, MLP GEMMs, normalization, logits, and sampling. If each launch costs tens of microseconds and the GPU work is also short at small batch, CPU submission becomes visible. Graph capture amortizes that overhead for stable shape buckets.
+
 ```cuda
 cudaGraph_t graph;
 cudaGraphExec_t graph_exec;
@@ -272,6 +328,12 @@ Graph executables and captured resources have ownership constraints. Reusing one
 LLM engines often maintain graph variants for batch and token-count buckets. Padding to a captured shape trades extra device work for stable launch overhead and addresses. Too many buckets create compilation, memory, and test burden.
 
 Choose buckets from traffic distribution and kernel sensitivity. Keep a general eager fallback. Track hit rate, padded work, graph memory, and update failures.
+
+For the running example, a decode graph family might cover `B in {1, 2, 4, 8}` with a small set of context-length buckets. Padding eight sequences to the next captured length is acceptable only when the saved launch latency exceeds the wasted KV and GEMM work.
+
+:::callout decision|Capture only after the dependency graph is stable
+Do not graph-capture a prototype that still allocates, synchronizes globally, or changes topology every step. First make the eager path stream-ordered and leak-free; then capture the steady-state shape.
+:::
 
 ### Multi-GPU copies and peer access
 
@@ -326,6 +388,8 @@ Allocate two or more host and device buffers. While compute consumes buffer A, c
 ## Hierarchical Matrix Multiplication
 
 LEAD: GEMM performance comes from hierarchical reuse. Each fetched A and B value should participate in many multiply-accumulates before leaving on-chip storage.
+
+With the machine model and host shell in place, the next building block is the matrix multiply that dominates both prefill and the MLP path. In the running example, a linear layer maps activations of width `D = 4096` through a weight matrix. Prefill exposes many token rows at once; decode may expose only `B = 8` rows. The math is the same GEMM. The efficient schedule is not.
 
 :::diagram gemm_tiling|A and B tiles are cooperatively staged; warps consume subtiles; threads or tensor-core fragments accumulate C in registers before an epilogue writes it efficiently.
 
@@ -405,6 +469,16 @@ Ignoring the final store, a square block tile of width `T` loads roughly `2 T^2`
 
 Larger T raises reuse, but resource consumption grows. The estimate also assumes each input tile is loaded once and does not include cache effects, epilogue traffic, or edge waste.
 
+#### Running-example intensity sketch
+
+Consider the decode projection that maps `M = B = 8` rows through `K = N = D = 4096` in FP16 weights.
+
+- FLOPs are approximately `2 * 8 * 4096 * 4096 = 2.7e8`.
+- Weight traffic alone is approximately `4096 * 4096 * 2 = 34 MB` if weights are read once.
+- Arithmetic intensity against weights is roughly `2.7e8 / 3.4e7 = 8` FLOP/byte before activation and output traffic.
+
+On a device whose HBM roof is near 3 TB/s, even perfect weight streaming yields only tens of microseconds of memory time, while tensor-core peak would finish the math much faster if data were free. Decode linear layers are therefore often weight-bandwidth bound at small batch. Prefill with `M = 2048` raises intensity and can move toward the compute roof for the same weights.
+
 ### Register tiling and microkernels
 
 One thread can compute an `r_m x r_n` output patch. It loads a small vector from A and B, then updates multiple independent accumulators. Register tiling increases reuse from shared memory and exposes instruction-level parallelism.
@@ -450,6 +524,8 @@ Fusing bias, scaling, activation, quantization, or residual operations can elimi
 
 When M and N expose too few output tiles but K is large, split K across blocks. Partial C tiles are combined with atomics or a workspace reduction. The extra reduction is worthwhile when it unlocks otherwise idle SMs.
 
+In the running example's decode GEMM with `M = 8`, ordinary output tiling may leave most of the GPU idle. Split-K or a persistent wave across the weight matrix recovers utilization, at the cost of partial-result traffic.
+
 Stream-K-like scheduling distributes K work more evenly across a fixed set of work units to reduce wave quantization and tail imbalance. Persistent kernels keep blocks resident and pull tiles from a global or hierarchical queue. These strategies improve utilization for awkward shapes but add coordination and deterministic-order questions.
 
 ### Batched and grouped GEMM
@@ -463,6 +539,10 @@ Small matrices may be launch- and scheduling-bound. Grouping several problems in
 Use cuBLAS or another vendor library for standard dense GEMM. Use a template framework such as CUTLASS when you need controlled layouts, data types, schedules, or epilogues without writing every hardware primitive. Write a custom kernel when the operator is unusual enough that the library boundary creates material traffic or launch cost.
 
 The decision is based on end-to-end value, maintainability, architecture coverage, and test burden. Beating a library on one shape is not the same as owning a production GEMM.
+
+:::callout pitfall|Winning one shape is not owning GEMM
+A custom kernel that beats a library on `M = 8` decode can lose on prefill, on another dtype, or after an architecture upgrade. Measure the production shape mix and the maintenance boundary before replacing a library path.
+:::
 
 ### Design Exercises
 
@@ -502,6 +582,8 @@ MMA accumulator fragments are arranged for compute, not necessarily coalesced ou
 ## Reductions, Prefix Scans, and Histograms
 
 LEAD: Collective primitives expose the essential GPU issues: participation masks, associative structure, synchronization scope, contention, and the boundary between local and device-wide coordination.
+
+GEMM builds the large linear maps. Softmax, normalization, sampling, and expert routing still need collective operations: maxima, sums, prefix offsets, and bin counts. This section develops those primitives once, with ownership and masks stated carefully, so later kernels can compose them instead of inventing synchronization ad hoc.
 
 ### Reduction as a tree
 
@@ -598,6 +680,8 @@ A naive histogram performs one global atomic per sample. If many samples choose 
 
 Shared-memory atomics are not free, and a large bin count may not fit. The input distribution controls the best method. Benchmark uniform, skewed, and adversarial distributions.
 
+These primitives reappear later when mixture-of-experts routing counts tokens per expert and scans those counts into expert-buffer offsets.
+
 ### Segmented reductions
 
 A segmented reduction combines values within variable-length groups. Segments may be represented by offsets, keys, or boundary flags. Short segments waste blocks if assigned one per block; long segments need multi-block cooperation.
@@ -615,6 +699,10 @@ Caching helps repeated gather indices, but random accesses can remain latency-bo
 CUB provides warp-, block-, and device-wide reductions, scans, histograms, and selection. Use it unless a fused operator, unusual data type, fixed small shape, or special semantics justify custom code.
 
 The value of implementing a primitive is understanding its invariants. The production decision still favors a maintained library when the boundary fits.
+
+:::callout insight|State ownership before writing the loop
+Before coding a reduction or scan, name which lane owns the result, which mask participates, what identity fills inactive lanes, and which barrier makes partials visible. Most collective bugs are ownership bugs dressed as arithmetic bugs.
+:::
 
 ### Design Exercises
 
@@ -655,6 +743,8 @@ Determinism fixes partitioning and operation order, restricts atomic races, and 
 
 LEAD: These kernels are small relative to GEMM in FLOPs and large in system importance. They are often bandwidth- or launch-bound, numerically sensitive, and excellent fusion candidates.
 
+The collectives from the previous section become transformer epilogues here. Softmax is two reductions plus a normalize pass. LayerNorm and RMSNorm are statistics plus an affine map. Top-k and sampling sit at the end of a decode step. In the running example, these kernels rarely dominate FLOPs, but they dominate launch count, numerical edge cases, and fusion decisions around attention and logits.
+
 ### Stable softmax
 
 For a row `x`, softmax is:
@@ -687,6 +777,8 @@ for (int i = threadIdx.x; i < cols; i += blockDim.x) {
 
 The code may recompute exponentials in the final loop. Keeping every value in registers can be faster for narrow rows but creates spills for wide rows. Recompute spends special-function arithmetic to avoid HBM or local-memory traffic.
 
+For attention in the running example, a softmax row length equals the attended context. Prefill rows can be length 2048; decode rows can be length 4096. Materializing those scores in HBM is the problem FlashAttention later removes. The reduction structure remains the same.
+
 ### Online softmax derivation
 
 Suppose a processed prefix has maximum `m_a` and exponential sum `l_a = sum exp(x - m_a)`. A new tile has maximum `m_b` and local sum `l_b = sum exp(x - m_b)`. The combined maximum is:
@@ -698,6 +790,8 @@ Rescale each partial into the new reference frame:
 `l = exp(m_a - m) l_a + exp(m_b - m) l_b`
 
 This state `(m, l)` is associative up to floating-point order. Adding an output accumulator produces the recurrence used in tiled attention.
+
+:::diagram online_softmax|Two tiles keep compact state instead of the full score vector. Merging rescales both sides into one maximum, then adds denominators and weighted outputs.
 
 ### Masking and edge cases
 
@@ -724,6 +818,8 @@ LayerNorm over a row computes:
 `y_i = gamma_i * (x_i - mean) / sqrt(variance + epsilon) + beta_i`
 
 A one-pass Welford state `(count, mean, M2)` is numerically stable and mergeable across lanes. A two-pass mean-then-variance kernel can be competitive when rows are moderate and input rereads hit cache.
+
+In the running example, normalization rows have length `D = 4096`. That fits a block-strided reduction comfortably. The dominant cost is usually reading and writing the activation tensor, which is why residual-plus-norm fusion matters.
 
 LayerNorm backward reduces both `sum(dy times gamma)` and `sum(dy times gamma times x_hat)` for each row, then applies the closed-form gradient. Gradients for `gamma` and `beta` reduce across rows and may require a second dimension of parallelism.
 
@@ -756,6 +852,8 @@ Fusion tradeoffs include:
 - backward-save requirements;
 - variant count across dtype and hidden size.
 
+For one residual stream of shape `[tokens, D]` in FP16, a separate residual add performs two tensor reads and one intermediate write. RMSNorm must then read that intermediate to compute statistics, read it again to apply the scale unless the row remains on chip, and write the output. The unfused lower bound is therefore five full activation-tensor transfers and the common two-pass case is six, before counting gamma. Fusion removes at least the intermediate write and reread. At prefill with `tokens = 2048` and `D = 4096`, each FP16 tensor is 16 MiB, so eliminating two full transfers saves at least 32 MiB per fused site. At decode with `tokens = 8`, the absolute byte saving is small, but avoiding a launch can still matter.
+
 ### Top-k selection
 
 Full sorting is unnecessary for small k. A common hierarchy is:
@@ -778,6 +876,10 @@ Communication is small relative to gathering the full vocabulary. For top-p, loc
 A sampling kernel may apply temperature, repetition or presence penalties, forbidden-token masks, top-k, top-p, normalization, and RNG. Fusing the pipeline reduces launches but complicates exact semantics and variant coverage.
 
 Counter-based RNG maps request, sequence position, and sample index to deterministic random bits without mutable per-thread generator state. Reordering requests must not change a user's random stream unless the product contract permits it.
+
+:::callout pitfall|Fusion that changes sampling semantics
+A fused logits path that reorders penalties, truncates top-p differently, or reindexes RNG under batching can pass unit tests on toy shapes and still alter user-visible text. Preserve the declared probability contract, then fuse.
+:::
 
 ### Design Exercises
 
@@ -818,6 +920,8 @@ Fusion can change operation order, numerical rounding, tie behavior, RNG indexin
 
 LEAD: FlashAttention is not an approximate attention mechanism. It is an exact tiled schedule that avoids materializing the quadratic score and probability matrices in HBM.
 
+Online softmax made the merge rule available. FlashAttention is that rule applied to attention tiles so the running example's prefill path never writes `S` or `P` to HBM. The algorithm stays exact; the schedule changes.
+
 :::diagram attention|Attention combines QK scores, masking and softmax, then a weighted V reduction. The performance question is which intermediates must cross HBM.
 
 ### The naive schedule
@@ -833,6 +937,17 @@ For one head, standard attention is:
 A naive implementation writes `S` to HBM, reads it for softmax, writes `P`, reads `P` for the V product, and writes `O`. `S` and `P` each contain `sequence^2` elements.
 
 Even if the GEMMs are efficient, moving quadratic intermediates can dominate memory and prevent long contexts from fitting.
+
+#### Running-example HBM contrast
+
+For one head during prefill with `S_q = 2048` and FP16 scores:
+
+- `S` or `P` alone is `2048^2 * 2 = 8 MiB` per head;
+- across `H = 32` heads, one complete score or probability tensor is 256 MiB;
+- merely storing both tensors consumes 512 MiB, and writing then rereading each produces at least 1 GiB of quadratic HBM traffic before counting Q, K, V, or output traffic;
+- FlashAttention keeps per-row state `(m, l)` and an output tile of size `S_q * d`, so activation traffic scales with sequence times head dimension rather than sequence squared.
+
+The arithmetic may increase because tiles are rescaled and scores are recomputed in backward. The wall-clock win comes from staying under the HBM roof.
 
 ### Tiled forward algorithm
 
@@ -915,6 +1030,12 @@ FlashAttention-style training and prefill process many queries and exploit matri
 
 Calling every fused attention kernel "FlashAttention" hides this distinction. State whether the workload is training, prefill, or decode, and model the corresponding shapes.
 
+For the running example's decode step, each of `B = 8` sequences contributes one query row of length `d = 128` per head and must read `S = 4096` cached keys and values. With GQA, `H = 32` query heads share `H_kv = 8` KV heads, so each KV stream is reused by four query heads. The kernel problem is no longer "avoid `S^2` materialization"; it is "stream paged KV efficiently and keep online softmax state compact."
+
+:::callout decision|Name the attention regime before naming the kernel
+If the workload is prefill or training, argue IO-aware tiling and tensor-core occupancy. If it is decode, argue KV layout, paging, vectorized loads, and launch overhead. Reusing the wrong regime's plan is a common false optimization.
+:::
+
 ### Fusion boundaries
 
 Useful attention fusion may include Q/K scaling, RoPE, masking, bias, softmax, dropout, or output transformations. Fusion loses when it inflates live state, reduces occupancy, complicates recomputation, or creates a variant explosion.
@@ -958,6 +1079,18 @@ Training/prefill has many query rows and large tiles, enabling compute reuse and
 
 LEAD: LLM serving kernels operate on dynamic batches, ragged state, low precision, and strict token cadence. Layout and scheduler contracts are part of kernel design.
 
+Prefill attention and GEMM covered the compute-rich path. This section specializes the schedule for decode and related serving kernels. The serving vocabulary is restated here so the section stands alone: what KV cache is, why it is paged, how GQA shares keys and values, and which contracts a kernel must honor.
+
+### Serving contracts restated for kernel work
+
+Autoregressive decode keeps, for every layer and every active sequence, the keys and values of all tokens generated or prefills so far. That working set is the **KV cache**. Its lifetime follows requests, not training batches. Capacity is measured in tokens times layers times KV heads times head dimension times dtype bytes, plus allocator fragmentation.
+
+A **paged KV cache** stores tokens in fixed-size physical pages and maintains a block table from logical token blocks to physical pages. Kernels must translate `(sequence, position)` into a page and offset, then load K/V vectors. The page size trades fragmentation against contiguous access and metadata overhead.
+
+**Grouped-query attention (GQA)** and **multi-query attention (MQA)** reduce KV heads relative to query heads. In the running example, `H = 32` and `H_kv = 8`, so four query heads read one KV head. The kernel must map those query heads to reuse loaded K/V without silently mixing sequences or heads.
+
+**Token cadence** is the product constraint that decode steps are short and frequent. A kernel that wins a microbenchmark but adds host synchronization, allocator traffic, or an extra full-tensor pass can miss inter-token latency even when its FLOP rate looks healthy.
+
 ### Embedding lookup and output projection
 
 Embedding lookup is a gather. Adjacent output dimensions for one token are contiguous; token IDs across requests are irregular. Assign lanes across the embedding dimension so one token's vector loads coalesce. Repeated token IDs may benefit from cache, but do not rely on it for the worst case.
@@ -992,9 +1125,11 @@ Each decode step writes one K and V vector per layer and sequence. The write is 
 
 The address depends on logical sequence, token position, layer, KV head, page mapping, and dtype. Keep that indexing contract centralized. A one-off mismatch between append and read kernels corrupts attention silently.
 
+For the running example, one decode step appends, per layer, `B * H_kv` vectors of length `d`. In FP16 that is `8 * 8 * 128 * 2 = 16 KiB` of K plus the same for V - tiny compared with reading the full context, but correctness-critical because every later attention step depends on the written layout.
+
 ### Paged KV attention
 
-A block table maps logical token blocks to physical pages. Decode attention traverses pages, loads K/V vectors, computes query-key scores, performs online softmax, and accumulates values.
+A block table maps logical token blocks to physical pages. Decode attention traverses pages, loads K/V vectors, computes query-key scores, performs online softmax, and accumulates values. This is the same `(m, l, o)` recurrence derived earlier; only the K/V addressing and parallelism differ from FlashAttention prefill.
 
 Key design decisions:
 
@@ -1008,6 +1143,18 @@ Key design decisions:
 - how partial results merge for long context.
 
 Smaller pages reduce fragmentation and copy cost but increase page-table entries and discontinuities. Larger pages improve contiguous access but waste more tail capacity.
+
+#### Bandwidth sketch for the running example
+
+One decode attention step, for all heads, must read roughly:
+
+`B * H_kv * S * d * bytes_per_element * 2 (K and V)`
+
+With `B = 8`, `H_kv = 8`, `S = 4096`, `d = 128`, FP16:
+
+`8 * 8 * 4096 * 128 * 2 * 2 = 1,073,741,824` bytes = 1 GiB
+
+At an illustrative 3 TB/s HBM ceiling, the memory roof is a fraction of a millisecond before scoring arithmetic, softmax, and writes. Useful bandwidth falls if page jumps destroy coalescing. This is why layout and paging dominate decode attention more than peak tensor-core throughput.
 
 ### Split-K decode attention
 
@@ -1025,6 +1172,8 @@ Quantized K/V reduces capacity and bandwidth. The kernel reads packed values plu
 
 Finer scales improve fidelity and increase metadata traffic. Dynamic token scales add append-time reduction. K and V can have different sensitivity and therefore different formats.
 
+If the running example quantizes KV to 4 bits with modest scale metadata, theoretical KV read volume drops by roughly 4x before considering dequant instructions and scale loads. The optimization wins only when the unpack path still feeds the score pipeline faster than the FP16 baseline.
+
 ### Weight-only quantized GEMM
 
 For low-batch decode, weight bandwidth dominates many linear layers. A weight-only kernel loads packed weights, dequantizes them, and multiplies by higher-precision activations. The schedule must overlap unpack/dequant with MMA and load scales efficiently.
@@ -1033,15 +1182,19 @@ Compression is useful only if the hardware path processes packed data efficientl
 
 ### MoE routing and grouped GEMM
 
-MoE routing computes top experts, counts tokens per expert, scans counts into offsets, scatters tokens into expert-contiguous buffers, executes grouped GEMM, then scatters outputs back with routing weights.
+Mixture-of-experts layers activate a subset of experts per token. Routing computes top experts, counts tokens per expert, scans counts into offsets, scatters tokens into expert-contiguous buffers, executes grouped GEMM, then scatters outputs back with routing weights.
 
-The pipeline combines top-k, histogram, scan, gather/scatter, and GEMM. Fusing every phase is rarely ideal. The important interfaces are compact routing metadata and layouts that let grouped GEMM consume contiguous expert batches.
+The pipeline combines top-k, histogram, scan, gather/scatter, and GEMM - the primitives from earlier sections. Fusing every phase is rarely ideal. The important interfaces are compact routing metadata and layouts that let grouped GEMM consume contiguous expert batches.
 
 Hot experts create imbalance. Capacity limits, token dropping, or expert replication change semantics and belong to the model contract, not only the kernel.
 
 ### Sampling and token cadence
 
 The decode iteration often ends with logits processing and sampling. At small batch, several tiny kernels can add visible launch latency. Graph capture and carefully scoped fusion help. Preserve request cancellation, dynamic sampling policies, and RNG mapping.
+
+:::callout insight|Decode kernels inherit the cache contract
+Append, attention, and quantization kernels share one address and dtype contract for KV pages. Document that contract once. Most silent attention corruptions are layout mismatches, not softmax algebra mistakes.
+:::
 
 ### Design Exercises
 
@@ -1082,6 +1235,8 @@ Compute router logits and top experts; form token-expert pairs; count pairs per 
 
 LEAD: Kernel work is complete only when the optimization is reproducible across representative shapes, numerically valid, integrated into the application, and understandable from evidence.
 
+The preceding sections built a schedule for the running example's layer and decode step. This final section is how you defend that schedule: benchmarks that match the claim, profiler hypotheses tied to resources, and correctness layers that catch the shapes serving actually produces.
+
 :::diagram roofline|A roofline places achieved work against arithmetic intensity. Hierarchical rooflines can reveal whether HBM, L2, L1, or compute is the active ceiling.
 
 ### Build a trustworthy benchmark
@@ -1095,7 +1250,7 @@ Specify:
 - reference implementation and numerical tolerance;
 - whether allocation, transfer, launch, and framework dispatch are included.
 
-Random inputs can hide value-dependent behavior such as histogram contention, sparsity, overflow, or early exit. Include adversarial and production-derived distributions.
+For this part's running example, a minimum matrix includes prefill `[B=1, S=2048]` attention and GEMM shapes, decode `[B=8, S=4096]` paged attention, and the corresponding linear layers at `D=4096`. Random inputs can hide value-dependent behavior such as histogram contention, sparsity, overflow, or early exit. Include adversarial and production-derived distributions.
 
 ### Cold, warm, and steady-state claims
 
@@ -1112,6 +1267,8 @@ Arithmetic intensity is useful operations divided by bytes moved across a chosen
 Choose the correct work units and peak. Tensor-core FLOPs, scalar FP32 FLOPs, integer operations, and special functions have different ceilings. Choose the correct bytes: requested HBM bytes, measured HBM traffic, or cache-level traffic.
 
 A hierarchical roofline adds L1 and L2 ceilings. A kernel may sit below the HBM roof because it is actually limited by L1 bandwidth, shared-memory conflicts, instruction issue, or dependency latency.
+
+Place the running example on that roof deliberately: decode linear layers and paged attention belong near the bandwidth side; large prefill GEMMs and well-tiled FlashAttention can approach the compute side. If a decode kernel claims compute-bound behavior, demand the intensity calculation.
 
 ### From profiler sections to a hypothesis
 
@@ -1142,6 +1299,8 @@ Inspect generated code after large performance changes, unexpected register clif
 5. **Numerical analysis:** absolute/relative error, ULP where useful, distributional error, and model-level quality.
 6. **Gradient checks:** finite difference on tiny cases plus reference backward.
 7. **Determinism:** define and test the promised level.
+
+Serving kernels add cases that dense unit tests miss: partially filled final pages, GQA head mapping, sequence packing boundaries, and graph replay with reused device addresses.
 
 ### Tolerances
 
@@ -1183,6 +1342,10 @@ Maintain performance thresholds by shape family, not one absolute number. Hardwa
 | Shapes | Which cases use specialized paths and which use fallback? |
 | Integration | Which streams, graphs, allocations, and layouts are assumed? |
 | Evidence | Which measurement proves the optimization helps end to end? |
+
+:::callout decision|Close on the claim you opened with
+If the chapter's running example was decode at `B=8`, `S=4096`, the acceptance evidence must include that shape, not only a large square GEMM where every kernel looks good. Optimize the workload you promised to serve.
+:::
 
 ### Design Exercises
 
@@ -1233,4 +1396,4 @@ Create a variant when a frequent shape or semantic mode has a materially differe
 
 > A kernel is a proof that an algorithm, a data layout, and a hardware schedule agree.
 
-The proof has three parts: correctness for every supported shape, a resource model that predicts the bottleneck, and measurements that show the optimization survives integration. Missing any one produces a benchmark artifact rather than a production kernel.
+The proof has three parts: correctness for every supported shape, a resource model that predicts the bottleneck, and measurements that show the optimization survives integration. For this part, that means the same running example you opened with - prefill tiles that avoid quadratic HBM, and decode steps that honor the KV contract - still holds after profiling and fusion. Missing any one produces a benchmark artifact rather than a production kernel.
