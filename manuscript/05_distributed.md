@@ -195,6 +195,14 @@ For Adam-like training with low-precision parameters, optimizer states and maste
 
 Activation memory follows microbatch, sequence length, hidden size, layer count, checkpoint policy, and parallel partitioning. Sharding model state does not automatically solve activation OOM.
 
+### Carry the running model across the training boundary
+
+Use the same nominal seven-billion-parameter model as Parts III and IV, but change the task from inference to full-parameter training. Under an explicitly chosen convention of two-byte weights, two-byte gradients, four-byte master weights, and two four-byte Adam moments, persistent model state is `7e9 * 16 = 112 GB` in decimal units. This excludes activations, temporary buffers, communication buckets, and allocator reserve. Different optimizers or gradient dtypes change the result.
+
+Ordinary data parallelism replicates those 112 GB on each rank; adding replicas does not make the per-rank state fit. Ideal eight-way full sharding reduces the resident shard to `112 / 8 = 14 GB` per rank, before transient all-gathers and the other excluded allocations. That number happens to equal the running model's two-byte inference weight size, but the allocations have different meanings. Training does not become a 14 GB job merely because its persistent state is sharded.
+
+The inference request's KV budget also does not transfer into training unchanged. Its 32 layers, eight KV heads, head dimension 128, and two-byte elements give 128 KiB per cached token, or 250 MiB for a 2,000-token prompt. Training instead retains or recomputes the forward tensors needed by backward; use the chosen microbatch, sequence length, and checkpoint policy to budget those activations. The arithmetic is checked in `tests/test_resource_models.py`; neither calculation establishes measured GPU capacity.
+
 ### ZeRO stages
 
 ZeRO-style sharding progressively removes data-parallel redundancy:

@@ -231,6 +231,8 @@ Lineage that exists only in logs is fragile. Keep durable edge tables or manifes
 
 #### A minimal record envelope
 
+Example status: Illustrative Python excerpt; not standalone.
+
 ```python
 from dataclasses import dataclass
 
@@ -371,6 +373,8 @@ These relations are not transitive in the same way. Exact identity forms clean e
 
 Compute a cryptographic digest over a declared canonical serialization. Preserve all source memberships even when one content object becomes the representative:
 
+Example status: Illustrative Python excerpt; not standalone.
+
 ```python
 def exact_identity(record, normalizer_version, digest):
     canonical = serialize_canonical(record)
@@ -506,6 +510,8 @@ All related items must land in the same split. A safe order is:
 Splitting individual rows and deduplicating afterward can keep one duplicate in train and one in evaluation, producing an optimistic metric.
 
 #### Reference near-duplicate flow
+
+Example status: Illustrative Python excerpt; not standalone.
 
 ```python
 def near_duplicate_candidates(record, lsh_index, config):
@@ -1484,6 +1490,8 @@ With temperature `T`, logits `z` become:
 :::equation p_{i}(T) = exp(z_{i}/T) / Σ_{j} exp(z_{j}/T)|Temperature reveals or suppresses probability structure among non-argmax tokens.
 
 Higher temperature softens the distribution and exposes relationships among non-argmax tokens. Lower temperature sharpens it. In classic distillation, multiplying the KL term by `T^2` compensates for the gradient scale change introduced by temperature.
+
+Example status: Illustrative Python excerpt; not standalone.
 
 ```python
 def distillation_loss(student_logits, teacher_logits, labels, T=2.0, alpha=0.7):

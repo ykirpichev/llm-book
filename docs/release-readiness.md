@@ -1,0 +1,65 @@
+# Working-draft release checks
+
+## Repository boundary and rights
+
+The release consists of the book branch and its ancestors, not every local Git
+reference. Local tool checkpoint references contain presentation experiments
+and machine-specific paths; they are not book commits and must not be pushed.
+Use explicit branch/tag pushes, never `git push --mirror` or a blanket refspec.
+The ignored `.local-archive/` remains local and recoverable.
+
+The existing all-rights-reserved notice is now explicit in `LICENSE`. No new
+reuse rights have been granted. The cover is labeled as a working draft, not a
+finished first edition. Repository visibility must remain private for this
+release.
+
+`python src/audit_repository.py --history` checks reachable book-history text
+and extracted PDF text for selected credential signatures and personal local
+paths, without printing matched values. This is a bounded check, not a promise
+that no secret can exist. Historical PNGs are book-preview artifacts and are
+not OCR-scanned by the tool. Current figures are drawn by `src/build_book.py`;
+the current build does not import third-party image files. Primary-source
+citations identify the research being explained rather than granting rights
+to reproduce those sources.
+
+The book-history scan found no selected credential signatures. One historical
+Makefile blob (`648f856e5728`) contains a developer-specific Python executable
+path; the current Makefile uses `PYTHON ?= python3`. This known historical path
+remains in private history; no force-push or history rewrite was performed.
+The public university URL containing `/home/` was a false positive and the
+scanner now distinguishes such URL paths from local filesystem paths.
+
+## Release evidence
+
+Checked September 7, 2026, for the `draft-2026-09-07` private review release.
+
+| Check | Result and limit |
+| --- | --- |
+| CPU test suite | 33 passing tests: attention, top-K/statistics, RAG, resource arithmetic, runnable manuscript excerpt, status labels, audit regexes, and typesetter regressions. |
+| PDF build and structure | 348 pages, 68 outline entries, 96 external link annotations; metadata and required-topic checks pass; no suspiciously empty pages flagged. |
+| Link reachability | 87 unique manuscript URLs; no 404/410 responses; four publisher URLs returned 403 and remain unverified. |
+| Visual review | All 348 pages inspected at contact-sheet scale; enlarged checks of chapter titles, code wrapping, RAG budgets/results, leadership cases, and the agent-policy diagram. Final short-list heading pagination was rerendered and checked. Not a word-by-word copy edit. |
+| Numerical evidence | Shared model arithmetic is tested; selected paper claims are linked with explicit baseline/scope limits in `docs/claim-audit.md`. GPU experiments were not reproduced. |
+| Repository boundary | Only the book branch and release tag are publication targets. Unrelated presentations and prior review renders remain in the ignored, recoverable local archive. No history rewrite or visibility change. |
+
+The four access-blocked links are DOI `10.1080/00031305.1983.10483115`, DOI
+`10.1145/2500128`, DOI `10.1145/3600006.3613165`, and the ScienceDirect PDF with
+identifier `S002001900500298X`. A 403 does not show that the citation is broken,
+but the automated check cannot validate its content.
+
+## Deliverables and rebuild
+
+- Editable Markdown, figures/typesetter source, fixtures, tests, pinned Python
+  requirements, and build instructions are versioned in the book repository.
+- The reviewed PDF is attached to the private GitHub release
+  `draft-2026-09-07`, rather than tracked as a generated binary in Git.
+- `make verify` runs the CPU tests, rebuilds the PDF, and checks its structure.
+  GitHub Actions runs the same workflow on `main` using Python 3.12.
+- Current local detailed renders are in `output/previews/`; contact sheets are
+  in `tmp/pdfs/release-review/`. Previous review renders were moved, not deleted,
+  to `.local-archive/book-review-2026-09-07/`.
+
+The release is suitable for private draft review, not a claim of a finished or
+fully independently validated textbook. A public release still needs an
+independent technical/copy edit, a final security/rights review, and any desired
+reuse-license decision. Those limitations do not block this private checkpoint.

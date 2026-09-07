@@ -2,6 +2,30 @@
 
 Reviewed: 2026-09-07. Status: working draft, not a publication sign-off.
 
+## Completion checkpoint — September 7, 2026
+
+The findings below describe the earlier 338-page checkpoint and are retained
+as the rationale for this pass. They are not a list of still-unmodified files.
+The revised build is 348 pages; final evidence is in
+[release-readiness.md](release-readiness.md).
+
+| Identified gap | Completed in this working draft |
+| --- | --- |
+| Part VI balance | Split streaming into four navigable chapters; added a worked, versioned documentation-assistant case, latency/cost budgets, a measured toy failure comparison, and worked design answers. |
+| Executable examples | Added CPU attention, top-K/statistics, and RAG fixtures; labeled every fenced manuscript example; 33 automated tests cover algorithms, arithmetic, runnable excerpts, and builder checks. |
+| Evidence | Added nearby Foundations citations and a claim-to-source ledger; bounded headline performance claims and corrected Fides attribution. |
+| Continuity | Carried the running model into distributed-training memory accounting; connected RAG token budgets to KV capacity; expanded exercise answers and added three explicitly fictional leadership decisions. |
+| Reading experience | Removed duplicate chapter titles while preserving navigation; fixed diagram bounds, code truncation/contrast, and short exercise-set pagination. |
+| Private release hygiene | Preserved all-rights-reserved terms, checked reachable book history, kept unrelated archives local, and documented a versioned private PDF release. |
+
+Remaining limits are deliberate and disclosed: the CUDA excerpts are not GPU
+validated, the technical audit is targeted rather than line-by-line, four
+publisher links block automated checking, and reuse rights have not been
+broadened. A public or final-edition launch should still include independent
+technical/copy editing and a final rights/security review.
+
+## Original review
+
 ## Overall assessment
 
 The book has a useful identity: engineering decisions across the complete LLM lifecycle, supported by resource models and failure analysis. Inference and CUDA are particularly strong because they connect calculations to a running workload rather than just listing techniques. The design exercises, worked solutions, and field-reference decision index make the material useful beyond a first read.

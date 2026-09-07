@@ -2,7 +2,9 @@
 
 A working technical book by Yury Kirpichev covering model training, data, distillation, LLM inference, CUDA, distributed systems, ML coding, system design, and technical leadership.
 
-The manuscript is under editorial review. Start with the [front matter](manuscript/00_front_matter.md) or the [draft review and priorities](docs/editorial-review.md). Publication and reuse terms have not yet been selected; the manuscript currently retains its existing copyright notice.
+This is a **working draft**, not a finished first edition. Start with the [front matter](manuscript/00_front_matter.md), [release checks](docs/release-readiness.md), or [original review and completion status](docs/editorial-review.md). The existing all-rights-reserved terms are explicit in [LICENSE](LICENSE); no open-source or open-content license is granted at this stage.
+
+The versioned PDF is attached to the [September 2026 working-draft release](https://github.com/ykirpichev/llm-book/releases/tag/draft-2026-09-07). The repository and release remain private; access requires repository permission.
 
 ## Read the draft
 
@@ -36,6 +38,7 @@ Install Poppler with `brew install poppler` on macOS or `sudo apt-get install po
 
 ```bash
 make book
+make test
 make verify
 make check-links
 make previews
@@ -45,20 +48,27 @@ The final PDF is written to:
 
 `output/pdf/engineering-large-language-models.pdf`
 
-Generated PDFs and previews are ignored by Git. Successful GitHub Actions runs attach the PDF as a downloadable artifact; the manuscript and builder are the versioned sources. Platform font availability can affect line breaks, so use the same environment when comparing page layouts.
+Generated PDFs and previews are ignored by Git. A GitHub Release preserves the reviewed PDF; successful GitHub Actions runs also attach their build as a temporary downloadable artifact. The manuscript and builder are the versioned sources. Platform font availability can affect line breaks, so use the same environment when comparing page layouts.
+
+## Verified teaching examples
+
+See [examples/README.md](examples/README.md) for runnable CPU attention, streaming top-K/statistics, and a small RAG regression fixture. Each has explicit assumptions and tests. Manuscript snippets distinguish runnable code from illustrative excerpts and pseudocode. CUDA excerpts have not been compiled or benchmarked in this release.
+
+The [claim audit](docs/claim-audit.md) records selected source/version checks and the running-model arithmetic. It is not a line-by-line technical certification.
 
 ## Source layout
 
 - `manuscript/` - editable Markdown manuscript, ordered by filename.
 - `src/build_book.py` - deterministic typesetting, diagrams, cover, table of contents, headers, and PDF outlines.
 - `src/verify_pdf.py` - structural, navigation, pagination, and text-quality checks.
-- `tests/` - tests for manuscript parsing and rendering markup.
-- `docs/` - editorial review and priorities.
+- `examples/` - runnable, dependency-light teaching references and evaluation fixtures.
+- `tests/` - algorithm, arithmetic, manuscript, audit-tool, and builder checks.
+- `docs/` - editorial review, evidence audit, and release records.
 - `output/pdf/` - final deliverables.
 - `output/previews/` - selected rendered pages used for visual review.
 - `tmp/pdfs/` - temporary full-document renders.
 
-`make verify` runs parser unit tests, rebuilds the book, checks every page for
+`make verify` runs the complete CPU test suite, rebuilds the book, checks every page for
 geometry and suspicious emptiness, validates navigation and required topics,
 checks publication metadata and front matter, and scans extracted text for
 placeholder or stale editorial language.

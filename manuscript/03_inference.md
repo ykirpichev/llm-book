@@ -569,6 +569,8 @@ A slow client can make stream buffers grow while the GPU continues generation. S
 
 ### Scheduler pseudocode
 
+Example status: Illustrative Python excerpt; not standalone.
+
 ```python
 def schedule_tick(state, target_ms):
     candidates = state.ready_requests()
@@ -709,6 +711,8 @@ If rejected, sample from the normalized positive residual:
 `r(x) proportional to max(0, p(x) - q(x))`
 
 This decomposition preserves the target distribution when probabilities are computed under matching histories and the correction is implemented exactly. Guard zero proposal probability, normalize stably, and apply identical target logits processors before constructing `p`. Vocabulary sharding may require distributed normalization or candidate exchange.
+
+Example status: Illustrative Python excerpt; not standalone.
 
 ```python
 def verify_token(proposed, p, q, uniform):

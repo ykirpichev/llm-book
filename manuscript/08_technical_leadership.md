@@ -334,6 +334,34 @@ Durable impact is durable. Mention the interface, metric, review, tool, ownershi
 4. Explain a cross-org disagreement without making the other side irrational.
 5. Demonstrate mentorship by the ownership the other person gained.
 
+### Three decision cases
+
+The following cases are fictional teaching examples, not claims about the author's employment or measured project outcomes. Each uses a concrete choice to show what a leadership mechanism changes.
+
+#### A migration that passes the average and fails a customer
+
+A team proposes a new embedding model for the documentation assistant in Part VI. In this scenario, aggregate evidence recall rises from 88 to 92 percent, but recall for a small, heavily filtered tenant falls from 84 to 69 percent. These are invented scenario values. The new index also uses the same vector dimension as the old one, which makes an accidental mixed-version query look superficially valid.
+
+The decision is to delay tenant-wide cutover, not to reject the model permanently. The retrieval owner creates versioned query/index pairs; the access-control owner checks eligibility at both retrieval and context assembly; the release owner adds a per-tenant regression gate. Keep the old pair routable during shadow traffic and canary deployment. The next experiment varies filtered candidate budgets on the failing slice while measuring latency.
+
+The contribution is the release boundary: a visible owner, a customer-level guardrail, and a rollback unit. “The average improved” is insufficient evidence for the affected tenant. Conversely, demanding that every query improve would make change impossible; agree on material slice-level regressions and hard security gates before seeing results.
+
+#### A faster kernel that does not change the roadmap
+
+A kernel experiment is faster in isolation, but trace replay shows that the service still misses its latency target during long-prompt bursts. Profiling identifies queueing ahead of prefill as the dominant tail. The kernel result can be valid while its priority is wrong.
+
+Keep the optimization and its reproducible benchmark, but move the next experiment to admission and prefill scheduling. Assign one engineer to reproduce the end-to-end trace with a fixed arrival process, and another owner to define the acceptable rejection policy with the product team. Compare SLO-constrained goodput, not just completed tokens per second.
+
+The decision record should say which hypothesis failed: “kernel time dominates user-visible tail latency” was not supported by this workload. It should not say that the engineer's work failed. Preserve the useful code, the shapes where it wins, and the evidence that changed prioritization. This makes a negative result reusable instead of encouraging the team to hide it.
+
+#### An incident where speed and confidentiality disagree
+
+After a permissions rollout, the documentation assistant begins returning cached answers under an outdated access scope. Disabling the new permission service would restore response latency but could continue disclosure. The incident commander separates the objectives: stop unauthorized answers first, then recover availability inside the access boundary.
+
+Disable affected answer-cache reads and fail closed for protected content whose authorization cannot be established. Preserve scoped diagnostic evidence without copying confidential answers into a broad incident channel. One owner validates revocation and cache invalidation, another estimates the availability impact, and a communications owner gives users a concrete reduced-service status.
+
+Recovery requires replaying the previously failing access cases against the canonical authority, not merely seeing the error counter fall after traffic was rejected. The follow-up action is an authorization-aware cache contract with revocation tests and a named owner. “Be more careful during rollout” cannot be verified and therefore is not a sufficient corrective action.
+
 ## Cross-Layer Design Synthesis
 
 LEAD: The following scenarios connect the major technical layers of the book. Each decision path is deliberately compact and should be expanded through assumptions, equations, alternatives, failure modes, and measurement.

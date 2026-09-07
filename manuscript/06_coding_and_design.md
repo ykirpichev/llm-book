@@ -2,7 +2,7 @@
 
 Production algorithms are contracts about state, approximation, time, and failure. Their value in LLM systems appears in telemetry, data processing, retrieval, scheduling, cache policy, evaluation, and capacity control. This part develops the underlying structures and then connects them to complete services.
 
-## Streaming Algorithms and Top-K
+## Exact Streaming Queries and Time Windows
 
 LEAD: A stream is a sequence that may be too large, too fast, or too expensive to replay. A correct design begins with an explicit query and error contract, then retains the minimum state that satisfies it. The algorithm, window semantics, merge rule, and failure policy must agree.
 
@@ -79,6 +79,8 @@ The update rule follows directly:
 2. Otherwise compare it with `H[0]`.
 3. If it is not better, discard it.
 4. If it is better, replace the root.
+
+Example status: Illustrative Python excerpt; not standalone.
 
 ```python
 from math import isfinite
@@ -184,6 +186,8 @@ Maintain two invariants:
 1. indices increase from front to back;
 2. values strictly decrease from front to back.
 
+Example status: Illustrative Python excerpt; not standalone.
+
 ```python
 from collections import deque
 
@@ -280,6 +284,16 @@ If a heavy-hitter result changes after a late event, an append-only sink that pr
 
 Watermarks in a multi-partition operator usually follow the minimum non-idle input watermark. One stalled partition can therefore hold every window open. Idleness detection needs a policy because marking a truly delayed partition idle can advance the watermark and make its later records late.
 
+### Check your design: exact queries
+
+Before moving on, explain why local top-k can be merged for immutable records but not by simply summing local frequency ranks. Then specify what a late event changes in an already emitted time window. A complete answer names a total order for records, retained candidate evidence for frequencies, and a revision-aware sink for windows. The cumulative exercises later in this part give worked solutions.
+
+## Online Statistics and Sampling
+
+LEAD: A useful online summary must preserve the quantity the reader actually needs. Stable moments describe a distribution's center and spread; a uniform sample preserves inclusion probabilities. Neither replaces an explicit tail or window contract.
+
+The runnable `examples/streaming.py` reference includes mergeable Welford moments and exact immutable-record top-k. Its tests compare moments against Python's independent statistics implementation and compare partitioned top-k against a full sort. The remaining algorithms below are derivations and illustrative excerpts, not implementations certified by that suite.
+
 ### Online mean and variance
 
 For observations `x_1, ..., x_n`, define:
@@ -311,6 +325,8 @@ because the cross term contains `sum_i (x_i - mu_n) = 0`. Adding the new observa
 `M2_n' = M2_n + delta * delta2`.
 
 That produces the stable update:
+
+Example status: Illustrative Python excerpt; not standalone.
 
 ```python
 def update(state, x):
@@ -392,6 +408,8 @@ The goal is a simple random sample without replacement of size `k` from a stream
 
 Algorithm R fills the reservoir with the first `k` items. For the item at one-based position `i > k`, draw `j` uniformly from `{1, ..., i}`. If `j <= k`, replace reservoir slot `j`; otherwise discard the item.
 
+Example status: Illustrative Python excerpt; not standalone.
+
 ```python
 def reservoir_sample(stream, k, rng):
     if k < 0:
@@ -457,6 +475,14 @@ The priority is composable across shards: keep local `k` smallest, then global `
 
 Sampling with replacement, weighted sampling, and time-decayed sampling have different distributions. Do not label them "reservoir sampling" without naming the target probability and random-priority construction.
 
+### Check your design: sampling and moments
+
+When merging two partitions, explain why averaging their means without counts is wrong. For sampling, explain why equal-size samples from unequal-size partitions cannot simply be concatenated and treated as uniform. The answer must weight observations by the populations represented, not by how many summary objects happen to arrive.
+
+## Heavy Hitters and Probabilistic Sketches
+
+LEAD: A sketch trades retained state for a precisely defined error. Frequency, cardinality, membership, and rank are different queries; their guarantees and merge operations cannot be interchanged.
+
 ### Deterministic heavy hitters with Misra-Gries
 
 For an insertion-only stream of length `N`, a `phi`-heavy hitter is a key with frequency greater than `phi N`. Exact counts may require one counter per distinct key. Misra-Gries provides deterministic candidates with bounded error.
@@ -484,6 +510,8 @@ because every ordinary increment increases counter mass by one, while a decremen
 Misra-Gries is excellent when a deterministic no-false-negative candidate guarantee matters. It does not directly retain the numerical top `k` under arbitrary signed updates or event-time expiration.
 
 #### Reference implementation and cost
+
+Example status: Illustrative Python excerpt; not standalone.
 
 ```python
 def misra_gries(stream, capacity):
@@ -788,6 +816,14 @@ Ordinary KLL and GK summaries support insertion, not arbitrary deletion. Sliding
 
 Do not use a histogram with arbitrary fixed buckets as if it were a general quantile sketch. Its value resolution is fixed by bucket boundaries, and distribution drift can make the approximation useless. Conversely, do not claim KLL bounds numerical interpolation error: it bounds rank.
 
+### Check your design: approximation
+
+Before choosing a sketch, state whether a false positive, a missed candidate, or a rank error is acceptable. Give the guarantee's failure probability and update model. A correct answer rejects using a membership filter as a frequency estimator, subtracting an insertion-only quantile sketch, or advertising a point-query guarantee as an unlimited simultaneous guarantee.
+
+## Building a Streaming Telemetry Service
+
+LEAD: A complete streaming service combines algorithms with event identity, expiration, partitioning, recovery, and versioned output. The final result is only as strong as the weakest of these contracts.
+
 ### Choosing the correct summary
 
 | Query | Representative state | Error contract | Merge operation |
@@ -808,6 +844,8 @@ For every summary, say what is approximated, the unit of error, whether the erro
 ### A complete event-time heavy-hitter design
 
 Consider a service that reports the top `k` error signatures per tenant for each five-minute event-time window. Traffic peaks at millions of events per second, events can arrive 20 minutes late, and results should update quickly.
+
+This is a hypothetical workload for design, not a measured deployment. The cumulative exercises at the end of this chapter review all four streaming chapters.
 
 #### 1. Identity and ingestion
 
@@ -913,6 +951,8 @@ Before shipping a streaming summary, verify:
 Maintain a min-heap ordered by `(score, stable_id)` with at most `k` records. The invariant after a prefix of length `i` is that the heap contains the best `min(i, k)` prefix records and its root is the worst retained record. If the heap is not full, insert. If it is full, a new record no better than the root has at least `k` records ahead of it and cannot qualify; a better record replaces exactly the old boundary item. That proves the update by induction.
 
 The implementation is:
+
+Example status: Illustrative Python excerpt; not standalone.
 
 ```python
 from heapq import heappush, heapreplace
@@ -1127,6 +1167,8 @@ LEAD: Production ML code turns mathematical assumptions into shapes, invariants,
 
 For examples `X`, labels `y`, and weights `w`, logits are `z = Xw`. Binary cross entropy should use a stable logits form rather than computing `log(sigmoid(z))` directly.
 
+Example status: Illustrative Python excerpt; not standalone.
+
 ```python
 def logistic_loss_and_grad(X, y, w, l2=0.0):
     z = X @ w
@@ -1155,6 +1197,8 @@ Depth, minimum leaf size, feature subsampling, and pruning trade fit against var
 
 ### Attention from primitives
 
+Example status: Illustrative Python excerpt; not standalone.
+
 ```python
 def attention(q, k, v, mask=None):
     scale = 1.0 / sqrt(q.shape[-1])
@@ -1165,24 +1209,34 @@ def attention(q, k, v, mask=None):
     return probs @ v
 ```
 
-Follow-ups include causal masks, padding, batched heads, mixed precision, stable softmax, dropout, KV caching, GQA, and memory-efficient attention. The concise code is a semantic reference, not a performant long-context implementation.
+Follow-ups include causal masks, padding, batched heads, mixed precision, stable softmax, dropout, KV caching, GQA, and memory-efficient attention. The concise code is a semantic reference, not a performant long-context implementation. It assumes at least one permitted key per query: a fully masked row otherwise feeds all negative infinities to softmax. The runnable single-head reference in `examples/attention.py` defines that case as a zero vector and tests dense versus chunked reduction. A production API may reject that input instead; the caller and kernel must agree.
 
 ### Beam search
 
-Beam search keeps the best partial sequences by cumulative log probability. Length normalization prevents systematic preference for short outputs. Finished beams must remain candidates without being expanded. Per-step top-k can be taken over `beam * vocabulary` scores.
+Beam search keeps the best partial sequences by cumulative log probability. Length normalization can reduce the preference for short outputs, but changes the ranking objective. Finished beams must remain candidates without being expanded. Per-step top-k can be taken over `beam * vocabulary` scores.
 
 Beam search is not sampling. It searches high-probability sequences under the model and may reduce diversity. Diverse beam variants, constraints, or stochastic beams modify the objective.
 
+Example status: Illustrative Python excerpt; not standalone.
+
 ```python
 for step in range(max_steps):
-    logits, state = model.step(beams.tokens, beams.state)
-    scores = beams.scores[:, None] + log_softmax(logits)
-    candidates = top_k(scores.reshape(-1), beam_width)
-    beams = gather_parent_state_and_append(candidates, state)
+    active, finished = partition_by_finished(beams)
+    if not active:
+        break
+    logits, next_state = model.step(active.tokens, active.state)
+    scores = active.scores[:, None] + log_softmax(logits, axis=-1)
+    # Each candidate retains its parent ID and proposed token.
+    expanded = candidates_with_parent_ids(active, scores, next_state)
+    # Finished sequences retain score, length, and state unchanged.
+    selected = select_best(finished + expanded, beam_width)
+    beams = materialize_selected_sequences_and_parent_states(selected)
     if beams.all_finished():
         break
 return rank_with_length_penalty(beams)
 ```
+
+The helpers above are schematic, not library APIs. Candidate materialization appends a token only for an expanded candidate, marks EOS as finished, and gathers every layer's cache from the same parent. Final length-penalty reranking does not make the intermediate raw-score pruning exact for the normalized objective.
 
 ### Nearest-neighbor search
 
@@ -1201,6 +1255,14 @@ Embedding normalization makes cosine similarity equivalent to inner product rank
 3. Implement beam search state gathering correctly.
 4. Explain why the reference attention code is memory-heavy.
 5. Choose an ANN index for high update rate and metadata filtering.
+
+### Worked answer criteria
+
+1. Use `max(z, 0) - y*z + log1p(exp(-abs(z)))` for binary cross entropy from logits, then average consistently with the gradient. Test large positive and negative logits and reject incompatible shapes.
+2. Reduce each cluster's count and vector sum across workers; divide only after the global reduction. Workers must share a centroid revision and an empty-cluster policy. Averaging local centroids without weighting their counts is wrong.
+3. Test two winning candidates from one parent, an EOS candidate, a retained finished beam, and reordered parents. Tokens, scores, lengths, and every layer's KV cache must follow the same ancestry.
+4. The dense reference materializes a query-by-key score matrix and usually probabilities of the same size. Chunked attention retains online normalization state instead; compare against the dense result within the declared dtype tolerance.
+5. Benchmark the actual update/delete workload and filtered recall, not only unfiltered search throughput. Keep an exact-search oracle for small partitions and test selective ACLs before committing to an ANN layout.
 
 ## An Engineering System Design Method
 
@@ -1243,7 +1305,7 @@ Apply load, skew, failure, change, and abuse:
 
 ### Step 6: close the loop
 
-Define metrics, alerts, experiments, rollback, and capacity planning. State unresolved risks and the next experiment. This is often where a good design becomes an operable system: the design becomes operable and evolvable.
+Define metrics, alerts, experiments, rollback, and capacity planning. State unresolved risks and the next experiment. Assign an owner to each release gate and specify what evidence would stop the rollout.
 
 :::callout decision|Name what you would not build yet
 Restraint is a design skill. Defer components whose complexity is not justified by the stated scale or risk, and identify the trigger that would cause you to add them.
@@ -1323,6 +1385,101 @@ For multi-region, decide whether indexes are replicated, partitioned by data res
 Providing evidence changes the model input; it does not force the output to follow that evidence. Measure faithfulness, citations, conflict handling, and abstention directly.
 :::
 
+### Worked service: a versioned documentation assistant
+
+The following workload is hypothetical; its budgets are design assumptions, not measured performance. A company wants employees to ask questions about product documentation and operating policies. There are 50,000 documents, roughly 200,000 searchable chunks, and separate public, employee, and administrator audiences. Typical traffic is 20 queries per second with bursts to 60. A document update should become searchable within five minutes. A permission revocation must stop new disclosures as soon as the authoritative access service commits it, even if the search index is behind.
+
+The product target is a p95 time to first token below 1.5 seconds and a p95 token gap below 100 ms, matching the serving objectives used in Part III. Correctness means answering from the current authorized evidence, with useful citations. A fluent answer from an obsolete policy is a failure. If current sources conflict and no explicit authority rule resolves them, the assistant should report the conflict or abstain rather than select whichever chunk ranks first.
+
+The first baseline is deliberately modest: a canonical document store, a revision/permission service, a lexical index, an optional dense index, a reranker, a bounded context builder, and the 7B generation service from Part III. [Retrieval-Augmented Generation](https://arxiv.org/abs/2005.11401) establishes the combination of model parameters and retrieved memory; [Dense Passage Retrieval](https://arxiv.org/abs/2004.04906) supplies a primary dual-encoder reference. Neither paper removes the need for the service's access and freshness contracts.
+
+#### Make revision and authority explicit
+
+A chunk should carry `document_id`, `revision_id`, `chunk_id`, source location, content hash, embedding version, permission scope, and effective time. Do not encode “latest” only as the largest timestamp: future-dated policies, backfills, and different authority domains can all invalidate that shortcut. Resolve current status from the source's revision semantics.
+
+Keep canonical text and its provenance independent of the search index. Build a new revision's chunks, check completeness, then atomically switch the active revision manifest. A failed embedding job must not make half an update appear current. An index row is a candidate pointer, not the authoritative document. At context assembly, resolve that pointer against the manifest and fetch the authorized revision.
+
+An ACL filter at search time reduces the candidate set, but permission must also be checked before content leaves the trusted retrieval service. If a user loses access between search and context assembly, discard the candidate. Permission-service failure should fail closed for protected data. Do not send restricted snippets to an external reranker, generator, trace collector, or user-visible explanation and rely on a final-output filter to undo the disclosure.
+
+Deletion has at least four surfaces: canonical access, index candidates, retrieval caches, and answer caches. The authoritative denial can take effect before background index cleanup completes. Cache keys need tenant/principal scope, query normalization, index and embedding versions, and the relevant permission/revision epoch. A fast cached answer that bypasses revocation is not a successful cache hit.
+
+#### Estimate before adding an ANN service
+
+At 768 float32 dimensions, 200,000 vectors require `200000 * 768 * 4 = 614400000` bytes, about 614 MB in decimal units before graph edges, identifiers, text, metadata, replication, and allocator overhead. That estimate does not prove that exact scanning meets latency; it only shows that a large distributed vector database is not forced by the raw vectors alone.
+
+Start with an exact-search oracle on the evaluation set. Compare candidate recall and stage latency for lexical, dense, and hybrid retrieval under real permission filters. A global recall score can look good while a small tenant with narrow filters receives no usable candidates. Report both overall and tenant/query-class results. Increasing candidate count is useful only while added reranking and context work remains affordable.
+
+Suppose the query is “How long do we keep logs?” An obsolete policy repeats “log retention” several times, while the current policy says “remove these records after thirty days.” A lexical baseline can favor the obsolete document; a dense retriever can still retrieve both and leave the error to the ranker. The repair is not necessarily a better embedding model. It is first to enforce current revision, then evaluate semantic recall among eligible documents.
+
+#### Allocate an end-to-end budget
+
+The table allocates the illustrative 1,500 ms first-token budget. It is a planning budget, not an assertion that stage p95 values add to the end-to-end p95; measure request traces to account for correlation, queueing, and overlap.
+
+| Stage | Planning allocation | First response to an overrun |
+| --- | ---: | --- |
+| Admission and authorization | 100 ms | Bound the queue; investigate access-service tails |
+| Candidate retrieval | 200 ms | Inspect filters, query class, and index choice |
+| Reranking | 150 ms | Reduce or batch candidates only after recall checks |
+| Revision checks and context assembly | 50 ms | Coalesce metadata fetches; reject stale pointers |
+| Model admission and prefill | 800 ms | Tune prompt budget and serving admission |
+| Transport and first flush | 100 ms | Trace buffering and network tails |
+| Reserve | 100 ms | Absorb measured variation, not permanent overload |
+
+The token budget also connects directly to the KV ledger. A 4,000-token prompt in the running model needs 500 MiB of logical KV before generated tokens and padding. Longer context can therefore lower generator batch capacity even if retrieval itself becomes more accurate. Track useful evidence per context token, not only the number of passages retrieved.
+
+For an API-priced generator, let `C_in` and `C_out` be the contracted cost per million input and output tokens. A 4,000-input/200-output request costs `0.004 * C_in + 0.0002 * C_out` for generation, before embeddings, reranking, retries, and infrastructure. These are symbolic prices, not a current vendor quote. For self-hosting, use reserved accelerator time and measured SLO-compliant throughput instead. Divide total service cost by successful authorized answers, counting failed attempts in the numerator.
+
+#### Reproduce a failure before replacing components
+
+Run `python -m examples.rag` from the repository root. The fixture has six synthetic documents and five queries. It includes a stale revision, a restricted administrator document, one ordinary answer, missing evidence, and conflicting current sources. The intentionally unsafe comparison searches every document and emits the top result. The guarded version filters permissions and current status, then applies a deterministic labeled-fact check.
+
+Example status: Runnable excerpt; execute from the repository root after checkout.
+
+```python
+from examples.rag import evaluate
+
+baseline = evaluate(safe=False)
+guarded = evaluate(safe=True)
+assert baseline["correct"] == 2
+assert baseline["acl_leaks"] == 1
+assert guarded["correct"] == 5
+assert guarded["acl_leaks"] == 0
+```
+
+The measured results of this fixture are:
+
+| Metric | Unsafe baseline | Guarded fixture |
+| --- | ---: | ---: |
+| Correct decisions, including abstention | 2 / 5 | 5 / 5 |
+| Queries exposing unauthorized retrieved content | 1 / 5 | 0 / 5 |
+| Queries retrieving an obsolete revision | 2 / 5 | 0 / 5 |
+| Answerable queries with all required evidence retrieved | 2 / 2 | 2 / 2 |
+| Correct abstentions on unanswerable/conflicting queries | 1 / 3 | 3 / 3 |
+
+Both versions retrieve the needed evidence for the answerable queries. That retrieval metric alone misses the baseline's wrong revision choice, unauthorized content, and unjustified answers. The table is useful precisely because it exposes different failure boundaries instead of compressing everything into one quality score.
+
+The fixture is not an LLM benchmark. Its `topic` and `answer` fields are hand-labeled ground truth, and equality of those labels is not a production contradiction detector. Five hand-built cases do not establish a population accuracy rate or resistance to prompt injection. They are deterministic regression tests for specific failures. A real generator needs separate evaluation of entailment, partial support, conflicting scope, and calibrated abstention.
+
+#### Build the evaluation set around decisions
+
+For the hypothetical service, begin with an adjudicated set of 200 queries drawn from real user needs with appropriate permission to use them. As an initial allocation, reserve 100 for ordinary answerable questions, 30 for recent updates, 30 for permission boundaries, 20 for missing evidence, and 20 for conflicting sources. These counts are a sampling plan, not existing collected data. Keep document revisions and access roles with each case, split by source/topic where possible, and retain a held-out set for changes to the retriever, prompt, or verifier.
+
+For each query, annotate required evidence, acceptable answers, unacceptable claims, and whether abstention is correct. Multi-hop questions may require several passages; retrieving one supporting sentence is not complete evidence coverage. Two reviewers should resolve ambiguous policy scope before the example becomes an automatic oracle. Do not use an LLM judge's preference as the sole definition of correctness.
+
+Report retrieval recall at k on answerable cases, answer correctness on all cases, and citation support/completeness only where an answer was emitted. Report abstention precision and recall separately so a model cannot earn a high safety score by refusing everything. Record ACL violations and stale disclosures as counts with their denominators, not as a tiny component of an average score. Keep paraphrase robustness, rare identifiers, multilingual inputs, and long documents as visible slices when they matter to users.
+
+An answer may be factually right from model memory but unsupported by the provided documents. It can pass answer correctness and fail citation grounding. Conversely, a quotation can faithfully repeat a document that is obsolete or outside the user's access scope. These are distinct errors with different fixes.
+
+#### Operate revisions and failures as part of retrieval
+
+Evaluate the exact-search oracle, the production retriever, and the generator separately, then join them in trace replay. Record the eligible corpus revision, candidate IDs and scores, authorization decision, selected context, model/prompt revision, citations, stage times, and cancellation outcome. Avoid storing protected document text in broad-access logs; log identifiers and controlled diagnostic samples instead.
+
+On an embedding migration, write the new index beside the old one and shadow queries with both embedding versions. Compare filtered recall, stale-pointer rate, cost, and latency before switching the routing manifest. Never compare old query embeddings with new document embeddings merely because their vector dimensions match. Keep the old compatible pair available for rollback while the new index proves stable.
+
+On retriever timeout, the safe fallback is an explicit retrieval-unavailable response or a policy-approved reduced service, not an answer presented as grounded without evidence. On reranker timeout, a lexical or hybrid ordering may be acceptable only if its quality was evaluated and the response remains inside policy. On conflicting evidence, show the permitted sources or abstain; do not silently choose based on recency when policy scope differs. On permission-service failure, protected retrieval is unavailable.
+
+Prompt injection belongs in a separate adversarial suite. Include documents that imitate system messages, request tool execution, or try to disclose other tenants' data. The generator must not gain capabilities from retrieved text. Restrict the service to answering unless an explicitly authorized workflow grants tools, and enforce those permissions outside the model. Passing the deterministic fixture is not evidence that these attacks have been handled.
+
 ### Design Exercises
 
 1. Design a secure RAG system for enterprise documents.
@@ -1330,3 +1487,11 @@ Providing evidence changes the model input; it does not force the output to foll
 3. What happens when an embedding model changes?
 4. How do ACL filters interact with approximate search?
 5. Design defenses against prompt injection in retrieved content.
+
+### Worked design answers
+
+1. **Secure enterprise retrieval:** resolve user scope, filter candidates, recheck current revision and authority before context leaves the retrieval service, and invalidate scoped caches on permission changes. Keep canonical ownership outside the index.
+2. **Separate evaluation:** use evidence recall to diagnose retrieval, correctness to score the decision, and citation support/completeness to score grounding. The fixture shows why identical recall can coexist with different answer quality.
+3. **Embedding migration:** maintain versioned query/index pairs, shadow against a fixed evaluation corpus and roles, then switch an atomic manifest with rollback. Dimension compatibility is not semantic compatibility.
+4. **ANN plus filters:** benchmark recall after access filtering, particularly for small or selective tenants; compare with an exact oracle and choose partitions or candidate budgets from measured tails.
+5. **Injection defense:** treat retrieved text as data, enforce capabilities outside the model, and test unauthorized side effects separately from benign task success. Do not use blanket refusal as the sole success metric.

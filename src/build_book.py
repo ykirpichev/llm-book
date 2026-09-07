@@ -351,7 +351,11 @@ class ChapterBand(Flowable):
         self.kicker = kicker
         self.title = title
         self.number = number
-        self.height = 158
+        self.raw_text = title
+        self.level = 2
+        self.toc = True
+        self.anchor = slugify(title)
+        self.height = 140
         self.width = PAGE_W - 2 * MARGIN_X
 
     def draw(self):
@@ -417,18 +421,29 @@ class BoxedFlowable(Flowable):
 
 
 class CodePanel(Flowable):
-    def __init__(self, code: str, language: str, width: float):
+    def __init__(self, code: str, language: str, width: float, display_lines=None):
         super().__init__()
         self.code = code.rstrip()
         self.language = language or "text"
         self.box_width = width
-        self.lines = self.code.splitlines() or [""]
-        self.line_h = 8.4
+        self.source_lines = self.code.splitlines() or [""]
+        self._display_lines = display_lines
+        self.lines = []
+        self.font_size = 8.5
+        self.line_h = 11.0
         self.header_h = 18
         self.padding = 9
 
     def wrap(self, availWidth, availHeight):
         self.width = min(availWidth, self.box_width)
+        columns = max(1, int((self.width - 2 * self.padding - 9)
+                            / pdfmetrics.stringWidth("M", "Courier", self.font_size)))
+        self.lines = self._display_lines if self._display_lines is not None else [
+            (line[start:start + columns], start > 0)
+            for raw in self.source_lines
+            for line in [raw.expandtabs(4)]
+            for start in range(0, max(1, len(line)), columns)
+        ]
         self.height = self.header_h + self.padding * 2 + len(self.lines) * self.line_h
         return self.width, self.height
 
@@ -436,29 +451,27 @@ class CodePanel(Flowable):
         max_lines = int((availHeight - self.header_h - 2 * self.padding) // self.line_h)
         if max_lines < 5 or max_lines >= len(self.lines):
             return []
-        first = CodePanel("\n".join(self.lines[:max_lines]), self.language, self.box_width)
-        rest = CodePanel("\n".join(self.lines[max_lines:]), f"{self.language} (continued)", self.box_width)
+        first = CodePanel("", self.language, self.box_width, self.lines[:max_lines])
+        rest = CodePanel("", f"{self.language} (continued)", self.box_width, self.lines[max_lines:])
         return [first, rest]
 
     def draw(self):
         c = self.canv
         c.saveState()
-        c.setFillColor(NAVY)
+        c.setFillColor(HexColor("#F0F4F8"))
         c.roundRect(0, 0, self.width, self.height, 7, fill=1, stroke=0)
         c.setFillColor(HexColor("#18284D"))
         c.roundRect(0, self.height - self.header_h, self.width, self.header_h, 7, fill=1, stroke=0)
         c.setFillColor(CYAN)
         c.setFont(FONT_BOLD, 6.8)
         c.drawString(self.padding, self.height - 12.2, self.language.upper())
-        c.setFillColor(HexColor("#D9E4F2"))
-        c.setFont("Courier", 6.55)
-        y = self.height - self.header_h - self.padding - 6.2
-        max_chars = max(36, int((self.width - 2 * self.padding) / 4.0))
-        for raw in self.lines:
-            line = raw.expandtabs(4)
-            if len(line) > max_chars:
-                line = line[: max_chars - 1] + "..."
-            c.drawString(self.padding, y, line)
+        c.setFillColor(INK)
+        c.setFont("Courier", self.font_size)
+        y = self.height - self.header_h - self.padding - self.font_size
+        for line, continued in self.lines:
+            if continued:
+                c.drawString(self.padding, y, ">")
+            c.drawString(self.padding + 9, y, line)
             y -= self.line_h
         c.restoreState()
 
@@ -482,7 +495,9 @@ def box(d: Drawing, x, y, w, h, label, fill=WHITE, stroke=TEAL, font=7.8, label_
 
 
 def diagram(name: str, width: float) -> Drawing:
-    w = min(width, 430)
+    # Author all diagrams on one fixed canvas; scale the whole drawing into
+    # the page instead of shrinking only its background around fixed nodes.
+    w = 430
     h = 190
     d = Drawing(w, h)
     d.add(Rect(0, 0, w, h, rx=9, ry=9, fillColor=PANEL, strokeColor=HexColor("#DCE3E8")))
@@ -741,6 +756,10 @@ def diagram(name: str, width: float) -> Drawing:
         d.add(String(center[0], center[1] - 3, "intent\n+ evidence", textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=TEAL))
     else:
         box(d, 36, 65, w - 72, 64, name.replace("_", " ").title(), fill=WHITE, stroke=TEAL, font=12)
+    scale = min(1.0, width / w)
+    d.scale(scale, scale)
+    d.width = w * scale
+    d.height = h * scale
     return d
 
 
@@ -749,9 +768,9 @@ class Meta:
     title: str = "Engineering Large Language Models"
     subtitle: str = "Training, Inference, CUDA, Distributed Systems, and Technical Leadership"
     author: str = "Yury Kirpichev"
-    edition: str = "First Edition - 2026"
+    edition: str = "Working Draft - September 2026"
     copyright_year: str = "2026"
-    publication_date: str = "August 2026"
+    publication_date: str = "September 2026"
     keywords: str = "large language models, LLM systems, model training, inference, CUDA, distributed systems"
 
 
@@ -872,7 +891,7 @@ class HandbookDocTemplate(BaseDocTemplate):
         canvas.restoreState()
 
     def afterFlowable(self, flowable):
-        if isinstance(flowable, Heading):
+        if isinstance(flowable, (Heading, ChapterBand)):
             key = flowable.anchor
             self.canv.bookmarkPage(key)
             if flowable.level <= 2:
@@ -1104,8 +1123,6 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
             story.extend([
                 ChapterBand(f"Chapter {chapter_no:02d}", title, str(chapter_no).zfill(2)),
                 Spacer(1, 16),
-                Heading(title, STYLES["h2"], 2),
-                Rule(TEAL, 42, 3),
             ])
             i += 1
             continue
@@ -1148,7 +1165,19 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
                 text = re.sub(r"^\d+\.\s+", "", lines[i].strip())
                 items.append(ListItem(Paragraph(inline_markup(text), STYLES["number"]), leftIndent=10))
                 i += 1
-            story.append(ListFlowable(items, bulletType="1", leftIndent=20, bulletFontName=FONT_BOLD, bulletColor=TEAL, spaceAfter=6))
+            numbered = ListFlowable(items, bulletType="1", leftIndent=20, bulletFontName=FONT_BOLD, bulletColor=TEAL, spaceAfter=6)
+            # Keep short exercise sets together rather than leaving the last
+            # question alone on an otherwise empty page.
+            if len(items) <= 8:
+                group = [numbered]
+                # Nest the heading in the same group: ReportLab's automatic
+                # keep-with-next handling does not reliably cross a nested
+                # KeepTogether, which can strand an exercise title.
+                if story and isinstance(story[-1], Heading):
+                    group.insert(0, story.pop())
+                story.append(KeepTogether(group))
+            else:
+                story.append(numbered)
             continue
         if stripped == "---":
             flush_paragraph(buffer, story)

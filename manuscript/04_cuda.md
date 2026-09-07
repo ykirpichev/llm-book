@@ -78,6 +78,8 @@ Divergence cost depends on three facts:
 
 Branch divergence is not the same as memory divergence. A uniform branch can still issue scattered loads. A divergent branch can be inexpensive if only a few predicated instructions differ.
 
+Example status: CUDA excerpt; not compiled or benchmarked.
+
 ```cuda
 // The boundary condition diverges only in the final block.
 int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -146,6 +148,8 @@ Shared memory is divided into banks. A common mapping for four-byte words is con
 If lanes access different addresses in the same bank, the access may be serialized into several transactions. If lanes read the same address, hardware can broadcast.
 
 A transpose tile often adds one padding column:
+
+Example status: CUDA excerpt; not compiled or benchmarked.
 
 ```cuda
 __shared__ float tile[32][33];
@@ -249,6 +253,8 @@ CUDA calls usually enqueue work into streams. Operations in one stream execute i
 
 An event records progress in a stream. Another stream can wait on that event without forcing the host to synchronize the whole device. This builds a dependency graph while preserving unrelated concurrency.
 
+Example status: CUDA excerpt; not compiled or benchmarked.
+
 ```cuda
 cudaEvent_t ready;
 cudaEventCreateWithFlags(&ready, cudaEventDisableTiming);
@@ -306,6 +312,8 @@ Graphs are less useful when the workload changes structure every iteration, grap
 
 In the decode regime of the running example, each step may launch several short kernels: RoPE or cache append, attention, MLP GEMMs, normalization, logits, and sampling. If each launch costs tens of microseconds and the GPU work is also short at small batch, CPU submission becomes visible. Graph capture amortizes that overhead for stable shape buckets.
 
+Example status: CUDA excerpt; not compiled or benchmarked.
+
 ```cuda
 cudaGraph_t graph;
 cudaGraphExec_t graph_exec;
@@ -344,6 +352,8 @@ For collectives, use a collective library rather than hand-rolled peer copies un
 ### End-to-end timing
 
 CPU wall-clock timing around an asynchronous launch measures submission, not completion. CUDA events measure elapsed device time between points in a stream. End-to-end latency should use the product boundary and include queueing, copies, and synchronization.
+
+Example status: CUDA excerpt; not compiled or benchmarked.
 
 ```cuda
 cudaEventRecord(start, stream);
@@ -407,6 +417,8 @@ The kernel must balance parallel output tiles against reuse along K.
 
 ### A correct scalar baseline
 
+Example status: CUDA excerpt; not compiled or benchmarked.
+
 ```cuda
 __global__ void gemm_naive(
     const float* A, const float* B, float* C,
@@ -426,6 +438,8 @@ __global__ void gemm_naive(
 This is a valuable oracle and a poor high-performance schedule. Neighboring threads reread A rows and B columns instead of explicitly sharing them.
 
 ### Cooperative shared-memory tiling
+
+Example status: CUDA excerpt; not compiled or benchmarked.
 
 ```cuda
 template<int TILE>
@@ -589,6 +603,8 @@ GEMM builds the large linear maps. Softmax, normalization, sampling, and expert 
 
 A reduction replaces a linear dependency with a tree. Within a warp, shuffle instructions exchange register values. Across warps, one common pattern writes a partial per warp to shared memory and lets the first warp finish.
 
+Example status: CUDA excerpt; not compiled or benchmarked.
+
 ```cuda
 __device__ float warp_sum(float x, unsigned mask) {
   int lane = threadIdx.x & 31;
@@ -644,6 +660,8 @@ Determinism may require a fixed partition and reduction order, which can reduce 
 An exclusive scan of `[a, b, c, d]` produces `[identity, a, a+b, a+b+c]`. An inclusive scan includes the current element. Scan powers stream compaction, radix sort, cumulative offsets, token packing, and sparse indexing.
 
 A work-efficient block scan has an upsweep that builds partial sums and a downsweep that propagates prefixes. Warp-shuffle scans reduce shared-memory traffic within warps; shared memory carries warp totals.
+
+Example status: CUDA excerpt; not compiled or benchmarked.
 
 ```cuda
 __device__ int warp_inclusive_scan(int x, unsigned mask) {
@@ -756,6 +774,8 @@ Subtracting the row maximum prevents overflow. A basic row kernel has three logi
 1. reduce to the row maximum;
 2. reduce the shifted exponentials to the denominator;
 3. normalize and write outputs.
+
+Example status: CUDA excerpt; not compiled or benchmarked.
 
 ```cuda
 float local_max = -INFINITY;
@@ -1108,6 +1128,8 @@ Rotary position embedding rotates pairs of query and key components. For pair `(
 The kernel can fuse RoPE into Q/K projection output handling or KV-cache write. Precomputed sine/cosine tables trade memory reads for transcendental arithmetic. Generate angles on the fly when table bandwidth or very long positions make it worthwhile.
 
 Layout must define whether paired dimensions are adjacent or split into halves. A mismatch can produce numerically plausible but incorrect results.
+
+Example status: CUDA excerpt; not compiled or benchmarked.
 
 ```cuda
 float2 pair = load_pair(q, token, head, pair_id);

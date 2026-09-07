@@ -54,6 +54,35 @@ class BuildBookTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertLessEqual(len(first), 60)
 
+    def test_code_wrap_preserves_all_characters(self) -> None:
+        source = "result = " + "abcdefghij" * 30
+        panel = build_book.CodePanel(source, "python", 200)
+        panel.wrap(200, 1000)
+        self.assertEqual("".join(line for line, _ in panel.lines), source)
+        self.assertTrue(panel.lines[1][1])
+        parts = panel.split(200, 100)
+        self.assertEqual(len(parts), 2)
+        for part in parts:
+            part.wrap(200, 1000)
+        self.assertEqual([line for part in parts for line in part.lines], panel.lines)
+
+    def test_chapter_band_owns_navigation_anchor(self) -> None:
+        band = build_book.ChapterBand("Chapter 1", "A chapter", "01")
+        self.assertEqual(band.anchor, build_book.slugify("A chapter"))
+        self.assertEqual(band.level, 2)
+        self.assertTrue(band.toc)
+
+    def test_diagram_content_stays_inside_canvas(self) -> None:
+        import re
+        source = (ROOT / "src" / "build_book.py").read_text()
+        for name in re.findall(r'name == "([a-z_]+)"', source):
+            drawing = build_book.diagram(name, 407)
+            x0, y0, x1, y1 = drawing.getBounds()
+            self.assertGreaterEqual(x0, -1, name)
+            self.assertGreaterEqual(y0, -1, name)
+            self.assertLessEqual(x1, drawing.width + 1, name)
+            self.assertLessEqual(y1, drawing.height + 1, name)
+
 
 if __name__ == "__main__":
     unittest.main()

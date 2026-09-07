@@ -14,7 +14,7 @@ LEAD: Recent frontier systems show that capability is increasingly a co-design p
 
 ### Sparse activation changes the economic unit
 
-DeepSeek-V3 reports 671 billion total parameters while activating 37 billion parameters per token. Its technical report describes 14.8 trillion pretraining tokens and 2.788 million H800 GPU-hours for the complete training run. The architecture combines a mixture-of-experts design, Multi-head Latent Attention, multi-token prediction, and an auxiliary-loss-free load-balancing strategy.
+[DeepSeek-V3](https://arxiv.org/html/2412.19437v2) reports 671 billion total parameters while activating 37 billion parameters per token. Its technical report describes 14.8 trillion pretraining tokens and 2.788 million H800 GPU-hours for the official training run, including context extension and post-training but excluding prior research and ablation experiments. This is not the total research-and-development cost. The architecture combines a mixture-of-experts design, Multi-head Latent Attention, multi-token prediction, and an auxiliary-loss-free load-balancing strategy.
 
 The system lesson is not that every model should copy one expert layout. Sparse activation separates three quantities that dense scaling often conflates:
 
@@ -42,7 +42,7 @@ Reward design must account for false acceptance, reward hacking, length incentiv
 
 ### Test-time scaling is a family of systems
 
-Recent reasoning systems spend variable inference compute rather than mapping every request to one fixed decode. A 2026 study formalizes three regimes:
+Recent reasoning systems spend variable inference compute rather than mapping every request to one fixed decode. [Test-Time Scaling in Reasoning LLMs, version 2](https://arxiv.org/abs/2608.04001v2), dated August 31, 2026, formalizes three regimes:
 
 - **single-trajectory scaling:** extend one sequential reasoning path;
 - **leaf-level scaling:** sample completed candidates and reduce them with voting, ranking, or verification;
@@ -74,7 +74,7 @@ LEAD: The recent inference frontier is defined less by one universal engine than
 
 ### Attention pipelines on newer accelerators
 
-FlashAttention-3 targets Hopper GPUs with warp specialization, asynchronous Tensor Memory Accelerator transfers, overlap between matrix multiplication and softmax, and an FP8 path with block quantization. The paper reports 1.5 to 2.0 times speedup over FlashAttention-2 on H100, up to 740 FP16 TFLOP/s, and nearly 1.2 PFLOP/s for FP8. It also reports lower numerical error than a baseline FP8 attention implementation.
+[FlashAttention-3](https://arxiv.org/abs/2407.08608) targets Hopper GPUs with warp specialization, asynchronous Tensor Memory Accelerator transfers, overlap between matrix multiplication and softmax, and an FP8 path with block quantization. The paper reports 1.5 to 2.0 times speedup over FlashAttention-2 on H100, up to 740 FP16 TFLOP/s, and nearly 1.2 PFLOP/s for FP8. These are attention-kernel results over the evaluated shapes, not whole-model or service speedups. It also reports lower numerical error than a baseline FP8 attention implementation.
 
 The durable mechanism is a deeper software pipeline. Once hardware exposes specialized asynchronous movement and matrix units, a kernel must schedule producer and consumer warps, manage barriers and buffers, and interleave non-matrix work so tensor cores remain fed. The optimization surface shifts from tile reuse alone to dependency timing.
 
@@ -82,7 +82,7 @@ The production acceptance test still needs ragged and causal shapes, head dimens
 
 ### KV-centric disaggregation
 
-Mooncake reports a disaggregated serving architecture that separates prefill and decode clusters and treats KV state as a distributed object across GPU memory, CPU memory, and SSD. Its scheduler chooses placement and admission under latency objectives. The paper reports up to 525 percent higher throughput than its baseline in selected simulations and 75 percent more handled requests on a production workload.
+[Mooncake](https://arxiv.org/abs/2407.00079) reports a disaggregated serving architecture that separates prefill and decode clusters and treats KV state as a distributed object across GPU memory, CPU memory, and SSD. Its scheduler chooses placement and admission under latency objectives. The paper reports up to 525 percent higher throughput than its baseline in selected simulations and 75 percent more handled requests on a production workload. A 525 percent increase means 6.25 times the baseline throughput; it is not the production-workload result and is not a matched comparison against every current serving engine.
 
 The general lesson is that disaggregation works only when state movement is first-class. A phase boundary needs:
 
@@ -96,7 +96,7 @@ Disaggregation can improve independent scaling and isolation while adding networ
 
 ### Long-context memory is becoming hierarchical
 
-Recent work explores two complementary ways to reduce long-context pressure. RocketKV combines coarse eviction with fine-grained sparse attention and reports up to 3 times end-to-end decode speedup and up to 31 percent peak-memory reduction on H100 with negligible loss on its evaluated tasks. SparseServe places unselected KV state in host memory, controls batch size from the active working set, and segments prefill by layer; it reports up to 9.26 times lower mean time to first token and up to 3.14 times higher generation throughput than its evaluated baselines.
+Recent work explores two complementary ways to reduce long-context pressure. [RocketKV](https://arxiv.org/abs/2502.14051) combines coarse eviction with fine-grained sparse attention and reports up to 3 times end-to-end decode speedup and up to 31 percent peak-memory reduction on H100 against a full-KV-cache baseline, with negligible loss on its evaluated tasks. [SparseServe](https://arxiv.org/abs/2509.24626v1) places unselected KV state in host memory, controls batch size from the active working set, and segments prefill by layer; it reports up to a 9.26-fold reduction in mean time to first token and up to 3.14 times higher generation throughput than its evaluated baselines. These maxima need not occur in the same configuration.
 
 These are paper-reported maxima, not portable constants. They do establish a broader systems pattern: when attention becomes sparse, the bottleneck can move from HBM bandwidth to HBM capacity, irregular selection, or host-device movement. A valid comparison must include retrieval quality, task accuracy, selection overhead, cache thrashing, tail latency, and worst-case dense fallbacks.
 
@@ -146,7 +146,7 @@ Evaluate task success together with invalid calls, unnecessary calls, side effec
 
 ### Prompt injection is a control-flow problem
 
-AgentDojo introduced 97 realistic tasks and 629 security test cases for agents operating over untrusted tool data. Its evaluation found that agents could fail ordinary tasks even without attacks and that then-current attacks and defenses had uneven coverage. ChatInject, published at ICLR 2026, reports that chat-template and multi-turn payloads substantially increased attack success over traditional prompt injection on AgentDojo and InjecAgent, including against prompt-based defenses.
+[AgentDojo](https://arxiv.org/abs/2406.13352) introduced 97 realistic tasks and 629 security test cases for agents operating over untrusted tool data. These counts describe the published benchmark, not every future repository version. Its evaluation found that agents could fail ordinary tasks even without attacks and that then-current attacks and defenses had uneven coverage. [ChatInject](https://arxiv.org/abs/2509.22830), published at ICLR 2026, reports that chat-template and multi-turn payloads substantially increased attack success over traditional prompt injection on AgentDojo and InjecAgent, including against prompt-based defenses.
 
 The engineering conclusion is stronger than "improve the system prompt." Natural-language instructions and retrieved data share a representation, so the model alone should not be the final authorization boundary. Use conventional controls:
 
@@ -243,7 +243,7 @@ At every layer, record negative results. A technique that loses under an importa
 - [Qwen2.5-VL Technical Report](https://arxiv.org/abs/2502.13923) - native-resolution vision, temporal encoding, document understanding, and visual agents.
 - [AgentDojo](https://arxiv.org/abs/2406.13352) - dynamic evaluation of indirect prompt injection in tool-using agents.
 - [ChatInject](https://openreview.net/forum?id=WVhgFSKniL) - ICLR 2026 evaluation of chat-template and multi-turn prompt injection attacks.
-- [Securing AI Agents with Information-Flow Control](https://openreview.net/forum?id=2FkswFYju5) - 2026 research on deterministic confidentiality and integrity enforcement for agent planners.
+- [Securing AI Agents with Information-Flow Control](https://arxiv.org/abs/2505.23643) - 2025 work introducing the Fides planner and deterministic confidentiality/integrity policies.
 
 ### Recent State-of-the-Art Principles
 

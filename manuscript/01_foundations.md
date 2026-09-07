@@ -124,6 +124,8 @@ These are not implementation details outside the algorithm. They determine the r
 
 ### Momentum and adaptive preconditioning
 
+The update rules below follow [Adam](https://arxiv.org/abs/1412.6980) and [decoupled weight decay](https://arxiv.org/abs/1711.05101). The systems tradeoffs that follow are engineering consequences, not a claim that either optimizer dominates every training regime.
+
 Momentum forms an exponentially weighted estimate of recent gradient direction:
 
 :::equation m_{t} = β_{1} m_{t-1} + (1 - β_{1}) g_{t}|The first moment suppresses high-frequency gradient noise and preserves directional persistence.
@@ -210,9 +212,13 @@ Pre-normalized blocks place normalization before attention or the feed-forward s
 
 LayerNorm controls mean and variance; RMSNorm controls root-mean-square magnitude without subtracting the mean. The FLOPs saved by RMSNorm are rarely the primary architectural reason, although simpler normalization can enable efficient fusion. The choice should be evaluated through training stability, quality, precision sensitivity, and kernel support.
 
+For the normalization mechanism and its evaluated benefits, see [Root Mean Square Layer Normalization](https://arxiv.org/abs/1910.07467); do not transfer its reported timings to another model without measurement.
+
 ### A training step is a distributed transaction
 
 A production step contains more state than parameters and gradients. It advances optimizer moments, learning-rate schedule, random streams, data-sampler position, loss scale, gradient accumulation counters, and monitoring windows. Checkpoint recovery must restore these surfaces consistently.
+
+Example status: Illustrative Python excerpt; not standalone.
 
 ```python
 def train_step(state, batch):
@@ -267,6 +273,8 @@ When loss diverges, locate the first inconsistent surface. Did the input distrib
 
 ## Transformer Architecture as Resource Allocation
 
+The core attention construction comes from [Attention Is All You Need](https://arxiv.org/abs/1706.03762). This chapter adapts that mechanism to a decoder-serving resource model; its byte and FLOP estimates are derivations under the stated assumptions, not measurements from that paper.
+
 LEAD: A transformer is a schedule for moving information among tokens and channels. Each architectural choice reallocates parameters, arithmetic, memory traffic, communication, and persistent state across training and inference.
 
 ### Follow one token through a decoder block
@@ -318,6 +326,8 @@ Standard multi-head attention uses one K/V head per query head. Multi-query atte
 | Multi-query attention | `H` | `1` | Minimum KV state and bandwidth |
 
 The quality effect is empirical and architecture-dependent. The systems consequence follows directly from the state equation. This is a recurring pattern: the model architecture fixes the lower-level resource problem that serving infrastructure must later solve.
+
+[GQA: Training Generalized Multi-Query Transformer Models](https://arxiv.org/abs/2305.13245) provides the primary evidence for the intermediate query/KV-head tradeoff. Its quality results depend on the evaluated checkpoints and uptraining recipe.
 
 ### Position and long-context behavior
 
@@ -415,6 +425,8 @@ Real LLM services are not M/M/1 queues. Service time depends on prompt and outpu
 Capacity should therefore be defined under an SLO and workload distribution. Maximum tokens per second at an overloaded steady state is not sellable capacity. Report the arrival rate or goodput maintained while meeting latency, quality, rejection, and fairness requirements.
 
 ### Use scaling laws as allocation models
+
+[Scaling Laws for Neural Language Models](https://arxiv.org/abs/2001.08361) and [Training Compute-Optimal Large Language Models](https://arxiv.org/abs/2203.15556) are empirical allocation studies, not universal constants. The latter revisits how a fixed training budget is divided between parameters and tokens. Serving cost, data quality, and reuse can change the economic optimum.
 
 Empirical scaling laws often approximate reducible loss with power-law relationships over a bounded regime. A schematic form is:
 
@@ -537,6 +549,8 @@ Record treatment assignment and exposure separately. A request assigned to a new
 ### Write the decision before running the experiment
 
 A concise experiment specification contains:
+
+Example status: Explanatory pseudocode.
 
 ```text
 Decision:     Which choice will this result change?

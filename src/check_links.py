@@ -52,7 +52,9 @@ def main() -> None:
         results = list(executor.map(check, urls))
 
     missing = [(url, status) for url, status in results if status.isdigit() and int(status) in CONFIRMED_MISSING]
-    unverified = [(url, status) for url, status in results if status.startswith("UNVERIFIED")]
+    unverified = [(url, status) for url, status in results
+                  if not (status.isdigit() and (200 <= int(status) < 300
+                          or int(status) in CONFIRMED_MISSING))]
     for url, status in results:
         print(f"{status:>12}  {url}")
     print(f"checked={len(results)} missing={len(missing)} unverified={len(unverified)}")

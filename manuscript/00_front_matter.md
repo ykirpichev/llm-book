@@ -2,9 +2,9 @@
 title: "Engineering Large Language Models"
 subtitle: "Training, Inference, CUDA, Distributed Systems, and Technical Leadership"
 author: "Yury Kirpichev"
-edition: "First Edition - 2026"
+edition: "Working Draft - September 2026"
 copyright_year: "2026"
-publication_date: "August 2026"
+publication_date: "September 2026"
 keywords: "large language models, LLM systems, model training, inference, CUDA, distributed systems, technical leadership"
 ---
 
@@ -18,7 +18,7 @@ The material follows the lifecycle of an LLM system: define the workload and evi
 
 ### A note on scope
 
-This first edition covers foundations, training, inference, CUDA, distributed systems, production algorithms, system design, recent systems research, and technical leadership. Its research snapshot is current through August 2026. Results identified as recent are reported by their source papers and should be revalidated on the reader's models, hardware, workloads, and quality constraints.
+This working draft covers foundations, training, inference, CUDA, distributed systems, production algorithms, system design, recent systems research, and technical leadership. Its research snapshot covers selected work through August 2026, with explicitly dated implementation checks where noted. It is not an exhaustive survey or a guarantee of production readiness. Results identified as recent are reported by their source papers and should be revalidated on the reader's models, hardware, workloads, and quality constraints.
 
 The examples assume transformer-style models and GPU-like accelerators, but the reasoning applies more broadly. Hardware names, model families, and framework APIs will evolve. Arithmetic intensity, dependency structure, failure isolation, data provenance, and organizational incentives will not.
 
@@ -39,8 +39,11 @@ A sound technical decision usually moves through six layers:
 
 ### Editorial conventions
 
+Every code block identifies whether it is an illustrative excerpt or pseudocode. The runnable CPU references live in the companion repository's `examples/` directory, with commands and expected results in `examples/README.md` and tests in `tests/test_examples.py`. They cover attention and partition merging, streaming summaries, and a small retrieval/evaluation fixture. `make test` checks these examples as well as the book builder. CUDA excerpts are not compiled or performance-validated by the CPU test suite.
+
 - Color-coded boxes separate a compact **Engineering Insight**, an attractive but incomplete **Common Pitfall**, and a governing **Engineering Decision**.
 - Display equations introduce important relationships with named variables and explicit boundaries. Code begins with the smallest correct mechanism, then expands into production concerns. Technical chapters close with design exercises and worked solutions or answer criteria.
+- A `>` in a code panel's left gutter marks a visual continuation of a long source line; it is not part of the code. The editable Markdown and runnable example files remain the source of truth.
 
 :::pagebreak
 
