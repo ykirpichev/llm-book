@@ -1,5 +1,12 @@
 # Working-draft release checks
 
+## Source revision after the published checkpoint
+
+[Part I review, September 8](part1-review-2026-09-08.md) records the subsequent
+independent-model review and fixes. The revised source passes 76 CPU tests.
+The release evidence below describes the immutable September 7 artifacts,
+not the newer locally rebuilt PDF.
+
 ## Current checkpoint: expanded end-to-end learning draft
 
 The current release is `draft-2026-09-07-expanded`. It preserves the earlier

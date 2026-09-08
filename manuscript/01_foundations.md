@@ -42,11 +42,13 @@ This contract is not a requirements form completed once. It is the shared model 
 
 Metrics become misleading when their denominator is vague. Training loss is measured per predicted token, but the product may care about successful tasks, accepted code changes, resolved support cases, or useful sessions. A cheaper token is not necessarily a cheaper outcome if quality declines and users require more attempts.
 
-Let `C_run` be the cost of a set of requests, `N_task` the number of attempted tasks, and `p_success` the probability that a task meets the declared quality bar. The expected cost per successful task is:
+Let `C_run` be the total cost of a representative run, `N_task` its attempted tasks, and `p_success` its task-success fraction. With at least one success, the observed cost per successful task is:
 
 :::equation C_{success} = C_{run} / (N_{task} p_{success})|Cost must be normalized by a useful outcome, not only by generated tokens.
 
-This simple normalization changes many decisions. A model that costs 20 percent more per token but raises task success from 40 to 55 percent can be cheaper per successful outcome. Conversely, an aggressive quantization that improves raw throughput may lose economically if retries, escalations, or human review increase.
+For planning, expected cost per attempt divided by success probability is a long-run ratio under a stable workload, not the expectation of a finite run's random cost/success ratio. A run with zero successes has no finite observed cost per success. Count failed attempts, retries, tools, and review in the numerator; do not silently count only the successful requests' costs.
+
+For example, at equal tokens per attempt and no change in other costs, a baseline costing $1 per attempt with success probability 0.40 costs $2.50 per success in the long run. An alternative costing $1.20 with probability 0.55 costs about $2.18. If its outputs become longer or require more review, those assumptions no longer hold. Conversely, aggressive quantization can improve raw throughput yet lose economically through retries or escalations.
 
 The same discipline applies to system throughput. Report **goodput**: work completed while satisfying quality and service constraints. Tokens produced after an SLO deadline, requests later discarded, and generations that fail validation consume capacity but do not count as useful output.
 
@@ -57,6 +59,8 @@ Averages erase the correlations that determine system behavior. Prompt length, o
 Represent the workload as a joint distribution over request attributes:
 
 :::equation W = P(S_{in}, S_{out}, A, Q, T, R)|A workload model preserves correlations among input length, output length, arrival process, quality class, tenant, and request type.
+
+Here `S_in` and `S_out` are input and output token counts, `A` records arrival timing or burst context, `Q` is the quality/service class, `T` is tenant identity, and `R` is request type. These symbols are local to this workload model; for example, `T` does not mean a token budget here. Preserve the time order of arrivals when replaying queueing behavior, not only their per-request attributes. For a mixed workload, estimate total costs and successful tasks from the same slice weights or representative replay.
 
 The model need not be analytically elegant. A versioned trace with privacy-safe fields is often more useful than independent parametric distributions. What matters is that benchmarks reproduce the shapes and correlations that influence queueing, memory, kernel efficiency, and quality.
 
@@ -136,6 +140,8 @@ The model emits one logit per vocabulary item. Softmax turns the logits into pro
 
 Compute log probabilities with log-sum-exp: subtract the maximum logit before exponentiating, then restore it in the logarithm. The reference `masked_token_loss` implements this calculation without depending on a deep-learning framework. It rejects a batch with no supervised targets rather than dividing by zero.
 
+The gradient connects this objective to learning. For one target `y` and logits `z`, differentiating `-z_y + log(Σ_i exp(z_i))` gives `p_i - indicator(i=y)` for logit `i`. With two zero logits and target 0, probabilities are `[0.5,0.5]` and the gradient is `[-0.5,0.5]`. An SGD step of size 0.1 on those logits gives `[0.05,-0.05]`, increasing the target probability to about 0.525. A real network propagates this logit gradient through its layers by the chain rule; it does not optimize each token's logits as free parameters.
+
 ### Three masks with different jobs
 
 | Mask | What it controls | A common mistake |
@@ -145,6 +151,8 @@ Compute log probabilities with log-sum-exp: subtract the maximum logit before ex
 | Loss mask | Which target predictions contribute to the objective | Training on user/tool text unintentionally |
 
 A loss-masked prompt still influences the assistant's hidden states through attention. Removing its loss does not remove it from context. Conversely, masking attention to a token does not automatically remove that position's target from the objective.
+
+Some loss APIs encode excluded targets with a sentinel such as `-100`, which is not a vocabulary ID. The CPU reference permits such a target only where its explicit loss mask is false; supervised targets must remain valid IDs. Its logits must still be finite even at ignored positions. That is a deliberate validation policy, not a substitute for defining the framework's ignore-index and reduction behavior.
 
 For assistant-only SFT, serialize roles and message boundaries using the model's template, then mark assistant target spans. Decide whether to learn end-of-turn markers and tool-call syntax. Keep a short hand-checked trace showing input IDs, decoded pieces, target IDs, attention visibility, and loss weights. This catches off-by-one labels and incorrect assistant spans before an expensive run.
 
@@ -197,7 +205,7 @@ Adam also tracks an elementwise second moment:
 
 :::equation v_{t} = β_{2} v_{t-1} + (1 - β_{2}) g_{t}^{2}|The second moment estimates a coordinate-wise scale for recent gradients.
 
-After bias correction, the adaptive step is approximately:
+With moments initialized at zero and the first update numbered `t=1`, bias correction divides by the accumulated averaging weight: `m_t^c=m_t/(1-β_1^t)` and `v_t^c=v_t/(1-β_2^t)`. For the constant first gradient 2, `β_1=0.9`, and `β_2=0.99`, the raw moments are 0.2 and 0.04, but the corrected moments are 2 and 4. The adaptive step is:
 
 :::equation θ_{t+1} = θ_{t} - η_{t} m_{t}^{c} / (√v_{t}^{c} + ε)|The superscript c denotes bias-corrected first and second moments.
 
@@ -209,7 +217,7 @@ That distinction matters because adaptive scaling would otherwise make the effec
 
 ### Matrix-aware updates: what Muon changes
 
-AdamW scales gradient coordinates using elementwise moment estimates. Muon instead uses a momentum matrix and approximately orthogonalizes its update direction for selected matrix-shaped parameters. If a momentum matrix has singular-value decomposition `M=UΣV^T`, the idealized direction `UV^T` removes the relative singular-value magnitudes. Practical implementations approximate that transformation with matrix iterations rather than computing a full SVD every step. Rectangular matrices, update scale, momentum, and numerical precision all matter.
+AdamW scales gradient coordinates using elementwise moment estimates. Muon instead uses a momentum matrix and approximately orthogonalizes its update direction for selected matrix-shaped parameters. Using a compact singular-value decomposition over the nonzero singular directions, `M=UΣV^T`, the idealized direction `UV^T` removes their relative magnitudes. This produces orthonormal columns for a full-column-rank tall matrix, or rows for a full-row-rank wide matrix, not necessarily a square orthogonal matrix. Rank-deficient directions need a convention; this idealization leaves zero directions at zero, including an all-zero update. Practical matrix iterations approximate the transformation rather than computing a full SVD each step. Update scale, momentum, and numerical precision all matter.
 
 [Muon is Scalable for LLM Training](https://arxiv.org/abs/2502.16982) studies weight decay and update-scale choices for large-model use. It does not establish one universal optimizer setting for every architecture. Embeddings, output heads, vectors, and matrix parameters need an explicit optimizer assignment; a hybrid optimizer configuration is not an implementation error.
 
@@ -223,7 +231,9 @@ The global batch combines microbatching, gradient accumulation, and data-paralle
 
 :::equation B_{global} = B_{micro} × N_{accum} × N_{data}|Equal global batch does not imply equal execution behavior.
 
-Increasing `B_micro` usually raises activation memory and can improve local matrix shapes. Increasing `N_accum` delays synchronization and parameter updates while preserving more local work between collectives. Increasing `N_data` expands communication and changes how examples are partitioned. The same global batch can therefore have different throughput, numerical behavior, and failure exposure.
+Here batch sizes count sequences of a declared shape; with ragged sequences, also count supervised tokens. Increasing `B_micro` usually raises activation memory and can improve local matrix shapes. Increasing `N_accum` delays parameter updates; it reduces gradient communication only if intermediate microbatches suppress synchronization, for example with a framework's no-sync path. Increasing `N_data` expands communication and changes how examples are partitioned. The same global batch can therefore have different throughput, numerical behavior, and failure exposure.
+
+Equal weighting of rank-local means is not a global token mean when supervised counts differ. If rank A has one target with loss 4 and rank B has three targets with loss 0, the mean of local means is 2, but the global token mean is 1. With R replicas whose gradients are averaged, each rank should backpropagate `R * local_loss_sum / global_target_count` to recover the global token-mean gradient. Sum the count over the complete accumulation window; do not independently average differently sized microbatches. A rank with zero targets must still participate in collectives, and a globally empty window needs a coordinated no-update policy. The [DDP reduction documentation](https://docs.pytorch.org/docs/2.14/generated/torch.nn.parallel.DistributedDataParallel.html) specifies the averaging assumption; custom reduction hooks can change it.
 
 Batch size also changes the number of updates performed for a fixed token budget. If total training tokens are `T` and the global batch contains `B_tokens` tokens, then the number of optimizer steps is approximately:
 
@@ -245,9 +255,11 @@ The stochastic gradient can be decomposed into a population component and sampli
 
 Global norm clipping applies a scale factor when the gradient norm exceeds threshold `c`:
 
-:::equation g' = g × min(1, c / norm_{2}(g))|Clipping bounds update magnitude while preserving direction below the threshold.
+:::equation g' = g × min(1, c / norm_{2}(g))|For c > 0, clipping caps gradient norm and preserves the direction of a nonzero finite gradient.
 
-In a sharded run, `norm_2(g)` is a global quantity. Clipping each shard independently implements a different rule. The reduction order and accumulation precision also affect the norm. Log the unclipped norm, clipped fraction, update norm, and loss-scale state so that clipping does not silently hide instability.
+Define the zero-gradient result as zero rather than evaluating `c/0`. A gradient `[3,4]` has norm 5; with threshold 2 it becomes `[1.2,1.6]`. For plain SGD without other update terms, this also bounds parameter motion by `learning_rate * 2`. AdamW's moment history, adaptive scaling, and weight decay mean gradient clipping alone does not impose that same bound on the final parameter update.
+
+In a sharded run, `norm_2(g)` counts each logical gradient element once. Sum squared norms over disjoint shards, then take one square root; do not sum identical data-parallel replicas as though they were distinct shards. Clipping each shard independently implements a different rule. Unscale before computing the norm, reject non-finite values before clipping, and accumulate norm statistics safely enough to avoid overflow. Log the unclipped norm, clipped fraction, update norm, and loss-scale state so that clipping does not silently hide instability.
 
 Clipping is a safety mechanism, not a substitute for diagnosing repeated spikes. Persistent clipping can indicate a learning-rate problem, corrupted data, an unstable loss term, or a precision failure.
 
@@ -270,7 +282,7 @@ Consider loss scaling. Multiplying the loss by scale `s` multiplies gradients by
 Sensitive reductions often remain in FP32 even when operands are lower precision. Softmax normalization, variance estimates, gradient norms, and optimizer updates have error structures that differ from matrix multiplication. Precision should be assigned by numerical role, not by a global toggle.
 
 :::callout pitfall|Fast steps can create a slower training run
-A lower-precision configuration is valuable only if it preserves the convergence trajectory. A run that is 20 percent faster per step but requires 30 percent more steps to recover quality is not an optimization.
+A lower-precision configuration must be compared at matched quality. If step duration falls by 20 percent but reaching the quality target requires 30 percent more steps, total time is `0.80 * 1.30 = 1.04` times the baseline: four percent slower.
 :::
 
 ### Residual scale, normalization, and depth
@@ -291,36 +303,37 @@ For the normalization mechanism and its evaluated benefits, see [Root Mean Squar
 
 A production step contains more state than parameters and gradients. It advances optimizer moments, learning-rate schedule, random streams, data-sampler position, loss scale, gradient accumulation counters, and monitoring windows. Checkpoint recovery must restore these surfaces consistently.
 
-Example status: Illustrative Python excerpt; not standalone.
+The following is an execution contract, not a framework API or a crash-atomic transaction. It assumes a replay-on-overflow policy and an update-based schedule; another valid design can discard an overflowing batch, but must record that choice and distinguish consumed tokens from committed-update tokens. Accumulation, loss scaling, and finiteness decisions apply to the whole effective batch.
 
-```python
-def train_step(state, batch):
-    state.optimizer.zero_grad(set_to_none=True)
+Example status: Explanatory pseudocode; framework integration and recovery are not implemented.
 
-    with autocast(dtype=state.compute_dtype):
-        logits = state.model(batch.tokens)
-        token_loss = cross_entropy(
-            logits[:, :-1], batch.tokens[:, 1:], reduction="none"
-        )
-        loss = masked_mean(token_loss, batch.loss_mask[:, 1:])
-
-    state.scaler.scale(loss).backward()
-    state.scaler.unscale_(state.optimizer)
-
-    grad_norm = distributed_global_norm(state.model.parameters())
-    clip_by_global_norm_(state.model.parameters(), state.clip_threshold)
-    all_ranks_finite = distributed_finite_check(state.model.parameters())
-
-    if all_ranks_finite:
-        state.scaler.step(state.optimizer)
-        state.scheduler.step()
-        state.data_cursor.commit(batch.cursor)
-
-    state.scaler.update(all_ranks_finite)
-    return {"loss": loss.detach(), "grad_norm": grad_norm}
+```text
+Reserve the effective batch; retain its replay identity.
+Count supervised targets over all ranks and microbatches.
+If the global count is zero: record an empty window; skip it.
+Zero gradients; keep one loss scale for this window.
+For each microbatch:
+    Predict shifted targets with causal visibility.
+    Normalize the local loss sum by the global token count.
+    Compensate for gradient averaging, if the reducer averages.
+    Backpropagate; defer collectives only where supported.
+Finish gradient reduction; unscale exactly once.
+Agree globally that gradients and the logical norm are finite.
+If not finite:
+    Clear gradients; lower the shared loss scale if applicable.
+    Replay the reserved batch, or stop after a bounded retry.
+Else:
+    Clip the unscaled logical gradient with one global factor.
+    Apply the optimizer update consistently on all ranks.
+    Advance the update-based schedule and committed cursor.
+    Update the shared scale policy; record the step outcome.
 ```
 
-The exact framework API will differ, but the invariants should be visible: loss normalization is explicit, gradient norm is global, every rank agrees on finiteness, and schedule plus data position advance only with a committed update.
+When implementing token loss in PyTorch, logits shaped `[B,S,V]` cannot be passed unchanged to a class-dimension-one loss. For shifted predictions, flatten `logits[:, :-1, :]` to `[B*(S-1), V]` and targets to `[B*(S-1)]`, or move the vocabulary axis into the required position. Apply the matching shifted target mask to unreduced losses. See [CrossEntropyLoss shapes](https://docs.pytorch.org/docs/2.14/generated/torch.nn.CrossEntropyLoss.html).
+
+[PyTorch's AMP examples](https://docs.pytorch.org/docs/2.14/notes/amp_examples.html) show unscaling before clipping and `scaler.update()` after stepping. A Boolean finite flag is not that API's scale-update argument. Sharded execution needs a compatible distributed overflow/scaler mechanism; a local optimizer or scaler must not independently override the agreed step decision. Do not advance an update-based schedule when the optimizer actually skipped.
+
+Agreement does not make a crash halfway through optimizer writes atomic. On a partial failure, fence the affected run and restore a consistent checkpoint rather than keeping some ranks' advanced parameters. Replay also needs the appropriate RNG, sampler, accumulation, and optimizer state. Distributed Checkpoints, Recovery, and Elasticity develops that recovery protocol.
 
 ### Diagnose the trajectory, not one metric
 
@@ -340,7 +353,7 @@ When loss diverges, locate the first inconsistent surface. Did the input distrib
 
 1. Explain why two runs with the same global batch can have different numerical and performance behavior.
 2. Design a precision policy for FP8 training, naming the values retained in BF16 or FP32 and the evidence required for rollout.
-3. A configuration is 18 percent faster per step but needs 25 percent more tokens to reach target loss. Construct an honest comparison.
+3. A configuration shortens step duration by 18 percent but needs 25 percent more tokens to reach target loss. At unchanged tokens per step, construct an honest comparison.
 4. Design a recovery invariant for skipped steps in a 256-worker job.
 5. A run clips 40 percent of steps while validation improves. What evidence distinguishes a useful safety bound from concealed instability?
 
@@ -372,6 +385,29 @@ The equations specify semantics, not an efficient execution plan. Materializing 
 
 With row-vector tokens, a projection is `Q = X W_q`: `X` is `S × D`, and `W_q` maps channels into query heads. Split its last dimension into heads, apply the position transformation, and calculate one `S × S` score matrix per head. Causal masking sets scores for future keys to negative infinity **before** softmax. Concatenate the head outputs and apply `W_o` before the residual addition. Batch dimensions repeat this computation; they must never become another attention axis.
 
+For GQA with `H` query heads and `G` KV heads of width `d`, the reshaped tensors are `Q: [B,H,S,d]` and `K,V: [B,G,S,d]`. In the usual evenly grouped layout, `H` is divisible by `G`; each group of `H/G` query heads reads the same KV head. Scores and softmax still have one row per query head and query position. Softmax normalizes over eligible **key positions**, not heads or batch entries. The per-head outputs concatenate back to `[B,S,H*d]` before the output projection.
+
+### Trace one attention row
+
+Use a one-dimensional head so the scaling factor is one. Let query `q=[1]`, keys be `[[0],[log(3)],[100]]`, and scalar values be `[[2],[6],[999]]`. At the second causal position, only the first two keys are visible. Their scores are `[0,log(3)]`; softmax weights are `[1/4,3/4]`, so the output is `2/4 + 18/4 = 5`. The future key contributes nothing despite its enormous score. Masking it after normalization would be wrong because it would already have consumed probability mass.
+
+Example status: Runnable excerpt; execute from the repository root.
+
+```python
+from math import log
+from examples.attention import attention
+
+q, keys = [1.0], [[0.0], [log(3.0)], [100.0]]
+values, visible = [[2.0], [6.0], [999.0]], [True, True, False]
+for partition in [1, 2, 3]:
+    out = attention(q, keys, values, visible, partition)
+    assert abs(out[0] - 5.0) < 1e-12
+```
+
+The same reference merges separately scaled partial softmax statistics from key partitions; Part IV derives the stable merge. An all-masked row has no mathematical softmax distribution. This fixture returns zero by convention, while a model integration must explicitly reject the row or define a compatible output policy.
+
+### Channel mixing, normalization, and rotations
+
 In a gated feed-forward block, two projections serve different roles:
 
 :::equation MLP(X) = (SiLU(X W_{g}) ⊙ (X W_{u})) W_{d}|The gate and up projections have width F; the down projection returns to width D.
@@ -392,9 +428,11 @@ The exact constants matter for capacity planning, but the scaling terms provide 
 
 For a sequence of length `S`, projection and MLP work scale linearly with `S` and quadratically with width. Attention score and value products scale quadratically with `S` and linearly with `D`:
 
-:::equation FLOPs_{attention-pairs} ≈ 4S^{2}D|Two matrix products account for score construction and weighted value reduction.
+:::equation FLOPs_{attention-pairs} ≈ 4S^{2}D|Dense all-pairs score and value products, counting a multiply-add as two FLOPs.
 
-At modest context length, dense projections and the MLP can dominate total FLOPs. At sufficiently long context, pairwise attention becomes controlling. The crossover depends on width, MLP ratio, kernel efficiency, causal masking, and whether attention intermediates are materialized.
+This estimate is for all `S²` pairs; an implementation that skips the masked causal triangle has roughly half the pair-product work at long S, plus tile-boundary overhead. Softmax, projections, normalization, and the output vocabulary head are separate costs. For the stated dense MHA block, projections plus the gated MLP require about `8SD² + 6SDF` forward FLOPs. With `F=4D`, the all-pairs term equals that linear-in-S work at `S≈8D`; skipping the causal triangle moves the arithmetic crossover toward `16D`. These are toy FLOP crossovers, not latency predictions. GQA changes projection constants, and real MLP widths and kernel efficiencies change the comparison.
+
+At modest context length, dense projections and the MLP can dominate total FLOPs. At sufficiently long context, pairwise attention becomes controlling. Materializing intermediates can make attention a memory bottleneck before that FLOP crossover.
 
 During training, activation storage and backward work matter as much as forward FLOPs. During serving prefill, long sequences expose substantial parallelism. During autoregressive decode, only one new query position is processed at a time while weights and the accumulated KV cache are repeatedly read. The same architecture therefore presents different bottlenecks across its lifecycle.
 
@@ -418,7 +456,7 @@ The quality effect is empirical and architecture-dependent. The systems conseque
 
 ### Position and long-context behavior
 
-Attention without positional information is permutation equivariant. Position mechanisms introduce order through embeddings, transformations, or score biases. Rotary position embeddings rotate query and key components as a function of position, causing their dot product to depend on relative displacement. ALiBi adds head-specific distance penalties directly to attention logits.
+Unmasked, content-only self-attention is permutation equivariant: permuting the input rows permutes the output rows. With a structural mask, this statement requires permuting the mask's rows and columns too. A causal decoder's fixed triangular mask already imposes an order through visibility, so arbitrary input permutations with that mask held fixed do not preserve the claim. Positional mechanisms add explicit location or distance signals through embeddings, transformations, or score biases. Rotary position embeddings rotate query and key components as a function of position; ALiBi adds head-specific distance penalties to attention logits.
 
 Increasing a configured maximum position does not create long-context capability. A model must encounter relevant long-range structure during training, and its position representation must behave sensibly outside the original distribution. Extension methods trade properties: interpolation can preserve phase behavior while reducing local positional resolution; frequency-aware changes may protect high-frequency components differently from low-frequency ones.
 
@@ -510,9 +548,9 @@ Test repeated identifiers, many similar distractors, multiple required passages,
 
 ### From an attention history to a matrix memory
 
-A simple linear associative memory stores a matrix `S` with shape `[value_dim, key_dim]`. At each position, it adds an outer product `v k^T`; a query reads `S q`. Expanding the recurrence gives a weighted sum of past values, with weights `k_i^T q`. Unlike softmax attention, these weights need not be positive or sum to one. A fixed-size matrix also cannot retain arbitrarily many independent associations without interference.
+A simple unnormalized linear associative memory stores a matrix `S` with shape `[value_dim, key_dim]`. At each position, it adds an outer product `v k^T`; a query reads `S q`. Expanding the recurrence gives a weighted sum of past values, with weights `k_i^T q`. In this raw-dot-product example the weights need not be positive or sum to one; some other linear-attention formulations add positive feature maps and a normalizing state. A fixed-size matrix also cannot retain arbitrarily many independent associations without interference.
 
-For example, two identical keys with values 2 and 5 produce a readout of 7 under a plain additive update, not the latest value 5. The delta rule corrects what the memory already predicts for the incoming key instead of repeatedly adding the whole value.
+For example, start at zero and write scalar values 2 and 5 with the same unit-norm key. Reading with that key gives 7 under a plain additive update, not the latest value 5. The delta rule corrects what the memory already predicts for the incoming key instead of repeatedly adding the whole value.
 
 ### Gated DeltaNet: forget globally, correct selectively
 
@@ -566,15 +604,17 @@ LEAD: Quantitative reasoning turns architecture into a falsifiable resource plan
 
 Every estimate should carry units. FLOPs, bytes, tokens per second, seconds, watts, and dollars are not interchangeable. Dimensional consistency catches many errors before benchmarking.
 
-If an accelerator sustains `R` FLOPs per second on the relevant operation and a workload requires `F` FLOPs, the compute-only lower bound is `F/R` seconds. If it moves `M` bytes through a memory path sustaining `BW` bytes per second, the bandwidth-only lower bound is `M/BW` seconds. A roofline lower bound takes the larger:
+Choose attainable throughput ceilings `R` FLOPs per second and `BW` bytes per second for the operation, dtype, and memory path. If a workload requires `F` FLOPs and moves `M` bytes through that path, the idealized compute and bandwidth time floors are `F/R` and `M/BW`. A roofline model takes the larger:
 
-:::equation t_{lower} ≥ max(F / R, M / BW)|Runtime cannot beat either the compute or data-movement requirement.
+:::equation t_{actual} ≥ t_{lower} = max(F / R, M / BW)|The actual runtime cannot beat either requirement under the chosen throughput ceilings.
 
 Arithmetic intensity is the ratio of work to bytes transferred:
 
 :::equation I = F / M|Arithmetic intensity is measured in FLOPs per byte.
 
-The ridge point `R/BW` separates operations that can become compute-bound from those whose intensity is too low to use peak arithmetic throughput. This is a model, not a guarantee. Dependencies, launch overhead, occupancy, layout, and communication can keep measured performance below both ceilings.
+The ridge point `R/BW` separates operations that can become compute-bound from those whose intensity is too low to reach the arithmetic ceiling. A throughput measured on an unrelated inefficient workload is not an upper ceiling and cannot establish a strict lower time bound. Dependencies, launch overhead, occupancy, layout, and communication can keep measured performance below both ceilings.
+
+For example, with `F=1e12` FLOPs, `M=1e11` bytes, `R=1e14` FLOPs/s, and `BW=1e12` bytes/s, the floors are 0.01 and 0.10 seconds. The roofline time floor is 0.10 seconds, not their sum; the model permits compute and transfer to overlap. Doubling arithmetic throughput alone leaves this floor unchanged. A dependency that forces phases to run serially can make actual time larger, so apply the model to phases with compatible overlap assumptions.
 
 ### Distinguish storage from traffic
 
@@ -593,9 +633,11 @@ A rough mixed-precision AdamW configuration can require far more than the low-pr
 
 ### Understand queueing before saturation
 
-Service latency rises nonlinearly as utilization approaches one because variability creates queues. In an idealized M/M/1 queue with arrival rate `λ` and service rate `μ`, utilization is `ρ = λ/μ`, and expected time in the system is:
+Service latency rises nonlinearly as utilization approaches one because variability creates queues. An idealized M/M/1 queue has Poisson arrivals, independent exponential service times, one server, and an unlimited waiting room. With arrival rate `λ` and service rate `μ`, utilization is `ρ = λ/μ`. A stationary mean exists only when `λ < μ`; in that regime, expected waiting plus service time is:
 
 :::equation E[T] = 1 / (μ - λ)|Even a simple queue shows why latency diverges as offered load approaches service capacity.
+
+For capacity `μ=10` requests/s, raising arrivals from 5 to 9 requests/s raises mean system time from 0.2 to 1.0 seconds, although mean service time stays 0.1 seconds. At or above capacity there is no finite steady-state mean under this unlimited-queue model; do not substitute `λ>μ` and interpret the negative algebraic result as latency.
 
 Real LLM services are not M/M/1 queues. Service time depends on prompt and output lengths; batching couples requests; decode reveals work one token at a time; priorities and memory admission change scheduling. The formula is useful because it establishes direction, not because it predicts p99 latency.
 
@@ -611,7 +653,9 @@ Empirical scaling laws often approximate reducible loss with power-law relations
 
 If dense training compute is approximately proportional to `ND`, a fixed compute budget creates a constrained allocation between model size and data. The value of the model is not the exact fitted exponent. It is the ability to ask whether the next unit of compute has higher marginal return in parameters, tokens, data quality, or experimentation.
 
-To solve the toy allocation, write the fixed budget as `ND = K`, substitute `D=K/N`, and differentiate `A N^(-α) + B K^(-β) N^β` with respect to N. At its interior optimum, `α A N^(-α) = β B D^(-β)`: the marginal benefit of spending on model size balances that of spending on data. With equal exponents and equal fitted coefficients in consistent units, the toy optimum splits scaling symmetrically. In real fits the constants, exponents, units, and architecture matter; the derivation does not justify a universal tokens-per-parameter ratio.
+To solve the toy allocation, write the fixed budget as `ND = K`, substitute `D=K/N`, and differentiate `A N^(-α) + B K^(-β) N^β` with respect to N. At its interior optimum, `α A N^(-α) = β B D^(-β)`: marginal returns to model size and data balance under the constraint. For positive fitted coefficients and exponents, `N* = (α A / (β B))^(1/(α+β)) * K^(β/(α+β))`, then `D*=K/N*`. Thus parameter and token counts grow with equal exponents in the budget only when `α=β`; their absolute ratio still depends on the fitted constants and units.
+
+For a dimensionless toy problem, let `n` and `d` be parameter and token counts divided by fixed reference scales. Minimize `4/n + 1/d` with `n*d=16`. The optimum is `n=8, d=2`, giving loss contribution 1; choosing `n=d=4` gives 1.25. Equal exponents do not imply equal counts. With equal exponents the optimum balances the two reducible-loss contributions, not necessarily raw parameters and tokens. This derivation does not justify a universal tokens-per-parameter ratio.
 
 Extrapolation is dangerous. The fitted data distribution, architecture family, tokenizer, optimization recipe, and evaluation metric define the regime. Data exhaustion, repeated examples, context changes, and capability thresholds can break the curve. Always retain uncertainty bands and validate intermediate scales before committing a frontier run.
 
@@ -619,7 +663,7 @@ The compute-optimal training point may also differ from the lifetime product opt
 
 ### Connect utilization to economics
 
-Let `C_fleet` be fleet cost per hour, `G` the goodput in successful tasks per hour, and `C_other` the variable cost of retrieval, tools, storage, and network. A first-order serving cost is:
+Let `C_fleet` be fleet cost per hour, `G` the goodput in successful tasks per hour, and `C_other` the retrieval, tool, storage, and network cost allocated **per successful task**, including those resources spent on failed attempts. A first-order serving cost is:
 
 :::equation C_{task} = C_{fleet} / G + C_{other}|Economic efficiency follows constrained goodput, not nominal accelerator utilization.
 
@@ -701,7 +745,7 @@ Define the measurement boundary: client-to-client, gateway-to-gateway, engine-on
 - end-to-end completion time;
 - cancellation and retry behavior.
 
-A closed-loop load generator that waits for one response before sending the next reduces offered load when the system slows. This coordinated omission hides the queueing collapse users would experience. Open-loop generation schedules arrivals independently of completions and records rejection as an outcome.
+A closed-loop load generator waits for completion before issuing replacement work, so offered load falls when the system slows. That can accurately model a fixed population of sequential clients. It becomes misleading when used to represent externally scheduled arrivals: omitted requests and their waiting times hide the queueing collapse those users would experience. Open-loop generation schedules arrivals independently of completions and records rejection as an outcome. Choose the model to match the workload, and verify that the load generator itself can sustain the intended arrival schedule.
 
 Report latency conditional on prompt length, output length, request class, and load. A single p99 across a shifting traffic mix cannot distinguish a slower system from a harder workload.
 
@@ -714,6 +758,8 @@ For an estimated `mean(x)` with sample standard deviation `s` and sample size `n
 Independence matters. Multiple turns from one user, repeated prompts, or correlated benchmark variants reduce effective sample size. Bootstrap procedures should resample at the unit of independence, such as user, repository, or conversation, rather than blindly resampling rows.
 
 Statistical significance does not establish practical importance. Predefine the minimum effect that changes the decision. Guardrails may use asymmetric standards: a small uncertain regression on a critical safety slice can block launch even when the primary average improves.
+
+For a concrete paired comparison, run both systems on the same 100 independent tasks. Suppose the new system alone succeeds on 15 and the baseline alone succeeds on 5. Define each paired difference as +1, -1, or 0. The mean improvement is 0.10; its sample standard deviation is `sqrt((20 - 100*0.10²)/99)`, about 0.438, giving standard error about 0.0438. A rough normal 95 percent interval is `0.10 ± 1.96*0.0438`, or about 1.4 to 18.6 percentage points. That uncertainty matters even though the point estimate is ten points. This approximation is not a guarantee for small or highly unbalanced samples; use an appropriate paired analysis, and resample repositories or users instead if those are the independent units. To establish a minimum useful improvement of five points, this interval is not yet convincing.
 
 Inspecting many slices creates multiple-comparison risk. Organize metrics into declared primary outcomes, hard guardrails, and exploratory diagnostics. Exploratory findings generate hypotheses for confirmation; they should not be presented as if they were pre-registered conclusions.
 
@@ -736,7 +782,7 @@ Decision:     Which choice will this result change?
 Mechanism:    Why should the proposed change affect the outcome?
 Population:   Which workload and users does the evidence represent?
 Treatment:    What exactly differs, and how is exposure recorded?
-Metrics:      Primary outcome, system constraints, guardrails, diagnostics.
+Metrics:      Outcome, system constraints, guardrails, diagnostics.
 Sensitivity:  What minimum effect can the design reliably detect?
 Execution:    Assignment, duration, ramp, stop, and rollback rules.
 Analysis:     Segments, uncertainty, interference, and missing data.
@@ -752,8 +798,6 @@ Systems improve only through failures they can observe and decisions they can re
 ### Worked decision: a new KV-cache layout
 
 Suppose a new layout is expected to reduce decode memory transactions by 18 percent. The component claim is lower bytes per token with identical numerical output. The product claim is higher goodput or lower latency under representative workloads.
-
-The evidence ladder is:
 
 1. property tests confirm logical indexing, masking, sharing, and cancellation invariants;
 2. numerical comparison covers dtypes, lengths, page boundaries, and ragged batches;
@@ -772,6 +816,8 @@ If profiler bytes fall but end-to-end latency does not, the result is not a fail
 3. Choose a randomization unit for comparing two continuous-batching schedulers.
 4. A kernel is 25 percent faster in isolation and has no measurable service effect. List the most likely missing mechanisms.
 5. Turn “the new model feels better” into an experiment with a decision threshold and guardrails.
+
+:::pagebreak
 
 ### Foundation Exercise Answer Criteria
 

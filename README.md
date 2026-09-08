@@ -8,6 +8,8 @@ The expanded versioned PDF is attached to the [September 2026 end-to-end learnin
 
 The [chapter coverage audit](docs/coverage-audit-2026-09.md) records the expanded pass, with a September 7, 2026 research cutoff. Core mechanisms are explained in the book with examples and failure boundaries; references provide supporting evidence. The book does not claim to catalogue every paper or reproduce frontier training runs.
 
+The [September 8 Part I review](docs/part1-review-2026-09-08.md) records a subsequent GPT-5.5 review, implemented corrections, and 76 passing CPU tests. Rebuild from these sources for the revisions; the September 7 release PDF remains an unchanged historical checkpoint.
+
 ## Read the draft
 
 | Part | Manuscript |
