@@ -912,7 +912,7 @@ def parse_table(lines: Sequence[str]) -> list[list[str]]:
     return rows
 
 
-def table_flowable(rows: list[list[str]], width: float) -> Flowable:
+def table_flowable(rows: list[list[str]], width: float, leading: Flowable | None = None) -> Flowable:
     if not rows:
         return Spacer(1, 1)
     cols = max(len(r) for r in rows)
@@ -941,7 +941,7 @@ def table_flowable(rows: list[list[str]], width: float) -> Flowable:
         ("TOPPADDING", (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ]))
-    return KeepTogether([table, Spacer(1, 7)])
+    return KeepTogether(([leading] if leading is not None else []) + [table, Spacer(1, 7)])
 
 
 def callout_flowable(kind: str, title: str, body_lines: Sequence[str], width: float) -> Flowable:
@@ -1106,7 +1106,10 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
             while i < len(lines) and lines[i].strip().startswith("|"):
                 table_lines.append(lines[i])
                 i += 1
-            story.append(table_flowable(parse_table(table_lines), width))
+            # A heading's automatic keepWithNext does not reliably cross the
+            # table's KeepTogether wrapper. Put both in the SAME group.
+            leading = story.pop() if story and isinstance(story[-1], Heading) else None
+            story.append(table_flowable(parse_table(table_lines), width, leading))
             continue
         if stripped.startswith("# "):
             flush_paragraph(buffer, story)

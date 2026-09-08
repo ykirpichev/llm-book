@@ -18,9 +18,15 @@ The material follows the lifecycle of an LLM system: define the workload and evi
 
 ### A note on scope
 
-This working draft covers foundations, training, inference, CUDA, distributed systems, production algorithms, system design, recent systems research, and technical leadership. Its research snapshot covers selected work through August 2026, with explicitly dated implementation checks where noted. It is not an exhaustive survey or a guarantee of production readiness. Results identified as recent are reported by their source papers and should be revalidated on the reader's models, hardware, workloads, and quality constraints.
+This working draft covers foundations, training, inference, CUDA, distributed systems, production algorithms, agents, multimodal systems, recent research, and technical leadership. Its research cutoff is September 7, 2026, with explicitly dated implementation checks where noted. It explains the central mechanisms in the text; primary-source links supply evidence and further detail rather than replacing the explanation. It is not an exhaustive survey of every paper or a guarantee of production readiness. Recent preprints are treated as provisional evidence, and reported results must be revalidated on the reader's models, hardware, workloads, and quality constraints.
 
-The examples assume transformer-style models and GPU-like accelerators, but the reasoning applies more broadly. Hardware names, model families, and framework APIs will evolve. Arithmetic intensity, dependency structure, failure isolation, data provenance, and organizational incentives will not.
+The examples develop transformer, recurrent/hybrid, and diffusion-style models, with GPU-like accelerators as the main execution setting. Hardware names, model families, and framework APIs will evolve. Arithmetic intensity, dependency structure, failure isolation, data provenance, and organizational incentives remain useful across those changes.
+
+### Prerequisites and learning path
+
+The book assumes basic Python, vectors and matrix multiplication, probability distributions, logarithms, and derivatives. It develops the LLM-specific uses of those ideas from token targets and optimization through architecture, training, serving, and applications. Read Parts I–III in order on a first pass. Parts IV–V explain how the same computations map to accelerators and clusters; Part VI builds retrieval and agents; Part VII extends the mechanisms to current research and multimodal generation. Part VIII turns the technical evidence into operating decisions.
+
+Use the **End-to-End Learning Lab and Capstone** in Part IX to connect the parts. It includes a complete miniature model-training/checkpoint/generation loop, an ordered path through the tested references, and a full documentation-service design exercise. The miniature model is deliberately a bigram model, not a miniature claim of frontier capability. It makes the lifecycle inspectable before larger models make the details expensive.
 
 :::callout insight|How to use this book
 Begin each part with its conceptual model, then work through the derivations, implementation examples, and production consequences. Use the design exercises to test whether you can transfer the reasoning to a new workload rather than merely recall the conclusion.
@@ -39,7 +45,7 @@ A sound technical decision usually moves through six layers:
 
 ### Editorial conventions
 
-Every code block identifies whether it is an illustrative excerpt or pseudocode. The runnable CPU references live in the companion repository's `examples/` directory, with commands and expected results in `examples/README.md` and tests in `tests/test_examples.py`. They cover attention and partition merging, streaming summaries, and a small retrieval/evaluation fixture. `make test` checks these examples as well as the book builder. CUDA excerpts are not compiled or performance-validated by the CPU test suite.
+Every code block identifies whether it is runnable, an illustrative excerpt, or pseudocode. The runnable CPU references live in the companion repository's `examples/` directory, with commands and expected results in `examples/README.md` and tests in `tests/`. They cover tokenization/loss, a trainable bigram model, recurrent state, post-training arithmetic, speculative sampling, quantization, attention, streaming summaries, retrieval, and a bounded agent loop. `make test` checks these examples as well as the book builder. CUDA excerpts are not compiled or performance-validated by the CPU test suite; the agent fixtures are deterministic program tests, not measurements of an LLM's autonomous performance.
 
 - Color-coded boxes separate a compact **Engineering Insight**, an attractive but incomplete **Common Pitfall**, and a governing **Engineering Decision**.
 - Display equations introduce important relationships with named variables and explicit boundaries. Code begins with the smallest correct mechanism, then expands into production concerns. Technical chapters close with design exercises and worked solutions or answer criteria.

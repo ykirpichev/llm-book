@@ -656,6 +656,18 @@ Stable ordering may be needed for reproducibility or exact checkpoint replay. An
 
 Padding, duplicate expert choices, masked tokens, and zero-token experts are edge cases. Test them directly; they often expose mismatched counts that hang all-to-all.
 
+### Communication kernels are part of the compute schedule
+
+Packing tokens, sending them, running grouped expert GEMMs, and combining results form a dependency graph. Reducing all-to-all time in isolation is not enough if communication kernels reserve SMs that the GEMMs need. Conversely, a transfer path that minimizes SM use can require larger buffers or a different transport protocol. Large training batches favor bandwidth amortization; small decode batches expose setup and tail latency.
+
+The [DeepEP repository](https://github.com/deepseek-ai/DeepEP), checked September 7, 2026, documents a V2 `ElasticBuffer` interface and NCCL Gin backend, while keeping NVSHMEM-based V1 behavior in legacy documentation. Its current description also identifies increased buffer consumption and distinguishes experimental features from the EP path. This matters when reading older optimization accounts: do not combine a V1 latency claim, a V2 API, and a third configuration's memory budget into an imaginary implementation. Pin the actual revision used in an experiment.
+
+For an original example, four tokens choose two experts each: token 0 chooses `[0, 1]`, token 1 `[1, 2]`, token 2 `[1, 3]`, and token 3 `[0, 1]`. The assignment counts are `[2, 4, 1, 1]`, not the uniform expectation of two. Dispatch must retain each token's original index and routing weight. Combine scatters expert outputs back and sums both weighted contributions; sorting by expert without an inverse mapping corrupts results. If experts 1 and 3 share a rank, that rank receives five of eight assignments and can control latency even with perfect network bandwidth.
+
+Overlap requires finer dependencies than “launch communication and compute together.” A GEMM can begin for a received expert tile when that tile is complete; combine can begin when an output tile is final. Do not reuse a dispatch buffer while its remote consumer is still reading it. The same ownership reasoning used for asynchronous CUDA buffers applies across ranks, with completion and failure now distributed.
+
+[DualPipe](https://github.com/deepseek-ai/DualPipe) is a primary example of a bidirectional training pipeline designed around computation/communication overlap. It does not abolish dependencies or make every collective invisible. Sketch the actual forward, backward-input, backward-weight, and communication intervals, and include the activation/parameter memory required by the schedule. More overlap can lose when it displaces useful compute or makes the plan too memory-constrained.
+
 ### Expert replication
 
 Replicating a hot expert increases memory but splits its tokens across copies. A placement policy needs:
@@ -940,6 +952,66 @@ Treat a model-parallel group as one service unit whose admissible memory is cons
 #### 6. Rank failure during streaming
 
 Abort and quarantine the whole synchronized group. Identify the last token committed by the model and acknowledged by the transport. Resume on a compatible spare only if prompt, accepted tokens, distributed KV or deterministic recompute, RNG, adapter, constraints, and model version reconstruct exactly, with duplicate suppression by token sequence. Otherwise end the stream with a clear partial-response failure and release all sharded state idempotently.
+
+## Distributed Reinforcement Learning and Policy Freshness
+
+LEAD: RL training is a changing model that manufactures its own next dataset. A correct distributed design must preserve both physical tensor ownership and the identity of the policy that produced each action.
+
+### Assign roles before choosing parallel degrees
+
+| Role | Main work and state | Typical pressure |
+| --- | --- | --- |
+| Rollout workers | Actor weights, sampling, KV or recurrent state, tool interaction | Decode bandwidth, long-tail outputs, active sessions |
+| Learner workers | Differentiable actor, gradients, optimizer, activations | Training memory, GEMMs, gradient collectives |
+| Reference / critic, if used | Fixed reference log probabilities or learned value estimates | Extra forward passes or training state |
+| Verifier / environment | Tests, rewards, tool state, timeout and resource policy | CPU, sandbox capacity, external latency |
+| Coordinator | Policy versions, queues, batch membership, publication and recovery | Backpressure and semantic consistency |
+
+A PPO setup may need all these roles; a critic-free GRPO setup removes the learned critic, not the verifier, behavior-policy identity, or learner optimizer. Some roles share hardware sequentially; others use disjoint pools. Rollout TP can differ from learner TP/FSDP because decode and backward have different local shapes and memory needs. The weight-transfer path must reshard the same logical parameters rather than assume shard files are interchangeable. [HybridFlow](https://arxiv.org/abs/2409.19256) studies the orchestration and resharding problem across these RL computations.
+
+### Trace one synchronous update
+
+Publish actor version 40 with a checksum and tokenizer/precision configuration. Generate a declared group of responses per prompt using that version. Store sampled token IDs, action masks, behavior log probabilities, end reasons, and verifier results. Calculate advantages, then perform the declared number of learner updates against that fixed batch. Publish version 41 only after the learner update is committed.
+
+The behavior log probability is the probability under the policy that **actually sampled** the token, with the recorded temperature and sampling transformations when required by the chosen estimator. A log probability recomputed from version 41 is not a replacement. If an inference backend quantizes or truncates the sampling distribution, training must explicitly account for that policy mismatch rather than silently treating it as identical to the unmodified learner.
+
+Within a response, a synchronous design uses one weight version. An asynchronous design may pause or refresh generation, but then it needs the algorithm's explicit per-segment or per-token policy semantics. “Latest weights” is not a sufficient provenance field.
+
+### What asynchrony buys and what it changes
+
+Suppose four generation jobs take 2, 2, 3, and 20 seconds. A batch barrier waits for 20 seconds before it can finish. Continuous scheduling can put new work on the first three workers while the long job continues. It improves utilization, but the resulting queue now contains trajectories generated under different learner ages and a length-dependent arrival order.
+
+[AReaL](https://arxiv.org/abs/2505.24298) separates ongoing generation from training and controls stale data with workload balance and an adapted optimization method. [StreamRL](https://arxiv.org/abs/2504.15930) likewise examines disaggregated stream generation. These systems are evidence for particular designs, not proof that removing a barrier from an arbitrary GRPO loop preserves its objective.
+
+For a hypothetical learner updating every four seconds, a trajectory that spends 20 seconds in generation plus eight seconds waiting can be roughly seven updates old. An age limit of two updates will discard it. That limit is a policy, not a theorem: a small learning rate can make seven updates less different than one large update. Monitor version lag **and** distribution drift, ratio statistics, task/length slices, and independent evaluation.
+
+Importance ratios correct a sampling-distribution mismatch only under the estimator's assumptions, including adequate support. Long products of ratios can have extreme variance. Clipping improves stability but introduces bias; it is not a magic conversion of any stale dataset into on-policy data.
+
+:::equation ESS = (Σ_{i} w_{i})^{2} / Σ_{i} w_{i}^{2}|For nonnegative importance weights, effective sample size diagnoses weight concentration; it is not a count of independent tasks.
+
+Four equal weights have ESS four. Weights `[1, 1, 1, 9]` have ESS `144/84 ≈ 1.71`: a nominal batch of four is dominated by one sample. The 2026 [Stable Asynchrony](https://arxiv.org/abs/2602.17616) study uses this variance perspective, proposing ESS-aware learning-rate control and an off-policy baseline. Treat its tested lag regimes as experimental results, not a universal safe queue depth.
+
+### Backpressure must preserve the dataset contract
+
+A bounded queue prevents unbounded memory use and policy age. When it fills, choose explicitly among pausing rollout admission, canceling old jobs, dropping stale completed trajectories, or slowing updates. Each changes cost or data selection. Dropping long trajectories preferentially can teach a different length distribution; accepting only quickly verified successes can bias the reward signal.
+
+For GRPO, preserve prompt-group identity. Do not calculate group statistics from whichever two of eight responses returned first and pretend they were a complete random group. Define how timeout and canceled members enter the objective. A verifier crash is missing evidence, not automatically a wrong model answer. Keep infrastructure failures distinct from valid negative outcomes.
+
+An original capacity calculation: if rollout workers produce 120,000 action tokens per second and the learner consumes 100,000, queued tokens grow by 20,000 per second before filtering. A two-million-token reserve fills in 100 seconds. Adding a faster learner may help; adding rollout workers makes the queue problem worse. For highly variable sequence lengths, cap both tokens and trajectory counts, and reserve verifier capacity separately.
+
+### Publication, replay, and recovery
+
+Publish weights through a manifest only after every required shard is available and validated. Rollout workers finish or invalidate incompatible in-flight state before acknowledging a version switch. Retain immutable behavior metadata even after an old weight checkpoint is garbage-collected. Store enough information to distinguish replay of an optimizer batch from regeneration of its samples; regeneration may produce different data.
+
+Checkpoint learner/optimizer state, consumed trajectory IDs, batch/group membership, policy publication state, and the disposition of in-flight work. A repeated learner batch doubles its influence. A repeated tool action can have an external effect. Exactly-once progress therefore cannot be achieved merely by saving model weights. Use committed batch IDs and an explicit replay policy; use tool-side idempotency where supported.
+
+### Exercises and worked answers
+
+1. **Can rollout TP=2 and learner TP=4 be valid?** Yes, with compatible logical weights, correct resharding, and separately validated numerical/sampling behavior. Physical shard identity need not match.
+2. **Can you recompute old log probabilities with current weights?** No. That erases the denominator's behavior-policy identity.
+3. **Does a larger queue improve throughput?** It can absorb bursts, but cannot fix a persistent production/consumption imbalance and increases staleness.
+4. **What does low ESS suggest?** A few samples dominate the weighted update. Investigate drift, ratio tails, and estimator stability rather than counting the nominal batch as fully useful.
+5. **What must survive recovery besides weights?** Optimizer and schedule state, consumed data/batch IDs, behavior versions and log probabilities, group membership, reward/verifier identity, and committed external-action state.
 
 ## Distributed Checkpoints, Recovery, and Elasticity
 

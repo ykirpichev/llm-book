@@ -2,6 +2,68 @@
 
 The appendices are field references for design, implementation, debugging, and incident response. Each item is a retrieval cue; return to the chapter when assumptions or derivations are not obvious.
 
+## End-to-End Learning Lab and Capstone
+
+LEAD: Learning the field means connecting the boundaries. A tokenization choice changes targets; a target changes training; a checkpoint changes serving; a tool changes what counts as success. This lab makes one small lifecycle executable, then uses the book's running service to connect the larger pieces.
+
+### Run a complete miniature model lifecycle
+
+The module `examples/tiny_lm.py` trains a character bigram model with only Python's standard library. A bigram model predicts the next character from the current character alone. It is deliberately not a transformer and cannot learn general reasoning. Its small size makes every parameter, gradient, checkpoint field, and generation decision inspectable.
+
+For vocabulary size V, parameters form a V × V table of logits. Row a defines the next-character distribution after character a. For target b, the gradient of cross-entropy with respect to a row logit is `p(j) - indicator(j=b)`. Accumulate this over observed transitions, divide by the total number of targets, and subtract a learning-rate-scaled gradient. No automatic differentiation or hidden optimizer is involved. Tests compare the analytic gradient with finite differences.
+
+Example status: Runnable excerpt; execute from the repository root.
+
+```python
+from examples.tiny_lm import Bigram
+
+training = ["ababa", "babab"]
+model = Bigram(sorted(set("".join(training))))
+initial_loss, _ = model.loss_and_gradient(training)
+model.fit(training, steps=200, learning_rate=2.0)
+final_loss, _ = model.loss_and_gradient(training)
+assert final_loss < 0.01 < initial_loss
+
+checkpoint = model.to_json()
+restored = Bigram.from_json(checkpoint)
+assert restored.generate("a", max_new_tokens=6) == "abababa"
+```
+
+Run `python -m examples.tiny_lm` to see the loss decrease and generated sequence. Training data defines the vocabulary; the checkpoint stores both vocabulary order and logits. The decoder uses greedy selection and a hard generation bound, with no learned end token. The examples never join separate documents to create an artificial cross-document training pair.
+
+This experiment proves optimization and serialization behavior on a tiny fixture, not generalization. Evaluating more alternating characters repeats the same transition rule. A real validation split must challenge the intended capability without duplicating training examples, and a real tokenizer needs a declared unknown/byte-fallback policy. Here unknown characters raise an error so the limitation is visible.
+
+### Connect the references in learning order
+
+| Step | Do this in the repository | Explain before moving on |
+| --- | --- | --- |
+| Targets and state | Run sequence-model tests and the tiny LM | Token IDs, masked loss, gradient, checkpoint identity |
+| Attention | Run the attention reference and partition tests | Stable softmax, masking, merge statistics, numerical tolerance |
+| Adaptation and RL | Run post-training tests | DPO margin, advantage sign, clipping, group normalization, pass-at-k |
+| Inference | Run inference-mechanism tests | Acceptance plus residual correction; quantization range and scale |
+| Retrieval | Run the RAG fixture and ranking tests | Authorized current evidence versus mere semantic similarity |
+| Agents | Run the bounded agent fixture | Capabilities, observations, unknown write outcome, budgets |
+
+The CPU references teach and test semantics. They do not benchmark a model server, train a transformer, or validate CUDA programs. The hardware chapters explain how to move from semantic references to profiled implementations; their GPU acceptance checks remain work to perform on the actual target system.
+
+### Design the complete documentation service
+
+Use the running 7B documentation assistant as a capstone. Start with the hypothetical workload and budgets in the RAG chapter, not a preferred framework. Deliver the following artifacts in order; each should be understandable by someone who has not watched the experiments.
+
+1. **Contract and data manifest:** define supported tasks, document owners, permissions, revisions, language slices, freshness, quality, latency, and failure outcomes. Separate development and held-out evaluation before tuning.
+2. **Unadapted baseline:** serve an existing compatible checkpoint with a bounded retrieval workflow. Record tokenizer/template, precision, context budget, and generation policy. Measure retrieval and generation separately.
+3. **Adaptation decision:** use SFT/LoRA only for demonstrated behavior gaps; use retrieval for changing facts. Require an independent verifier and enough interaction data before adding RL. Compare against the unadapted baseline at the same workload boundary.
+4. **Capacity ledger:** calculate weights, layer-specific state, workspaces, reserved memory, phase compute, and transfer budgets. A hybrid model requires a new state ledger; copying the dense transformer's KV formula is not a migration plan.
+5. **Performance experiment:** identify the measured bottleneck, then change one relevant mechanism—batching, quantization, speculation, attention, or placement. Keep correctness, quality, and SLO gates fixed.
+6. **Bounded agent extension:** permit only the tools the task requires. Define action identity, timeout/reconciliation, memory provenance, stopping conditions, and final-state verification. Compare completed authorized tasks per budget with the fixed workflow.
+7. **Operational release:** bind model/data/index/harness versions, canary, inject failures, rehearse rollback, and assign ownership. Preserve both positive and negative results.
+
+### What a good capstone answer contains
+
+A strong answer can explain why the next proposed technique should affect the actual bottleneck, calculate its resource tradeoff, name a plausible failure, and describe a test that would reject it. It does not need to use every advanced method. If the task is solved by a small model and a fixed workflow, adding MoE, distributed RL, and several agents is not evidence of mastery.
+
+As a self-check, change one assumption at a time: double input length; revoke a document permission mid-request; replace attention layers with recurrent layers; lose the reply after a successful tool write; or make rollout production faster than the learner. Trace which state, budget, and acceptance rule changes. The relevant derivations and failure protocols are developed in the preceding parts; the reference sheets below help locate them.
+
 ## Formula and Capacity Sheet
 
 ### Training
@@ -27,6 +89,28 @@ Always specify which bytes are sharded, replicated, offloaded, or temporarily ga
 `attention_scores = O(sequence^2)` values if materialized
 
 FlashAttention preserves `O(sequence^2)` arithmetic for dense attention while reducing HBM materialization.
+
+### Hybrid and recurrent state
+
+For a hybrid, add the KV of attention layers, recurrent state for recurrent layers, local-convolution history, and allocator/workspace overhead. Do not multiply full-attention KV by the total layer count.
+
+`matrix_state_bytes = recurrent_layers * batch * heads * value_dim * key_dim * state_bytes_per_element`
+
+The expression assumes one matrix state per listed head and omits model-specific auxiliary state. MLA stores a compressed representation plus required positional state; sparse selection does not necessarily reduce stored history unless the architecture or cache policy also compresses/evicts it.
+
+### Adaptation and reinforcement learning
+
+`LoRA_parameters = rank * (input_width + output_width)` for one adapted matrix.
+
+`DPO_loss = softplus(-beta * (policy_preference_logratio - reference_preference_logratio))`
+
+`PPO_surrogate = min(ratio * advantage, clip(ratio, 1-eps, 1+eps) * advantage)`
+
+`group_advantage = (reward - group_mean) / group_std` for the stated standardized GRPO variant; zero-variance groups require a defined policy.
+
+`ESS = sum(weights)^2 / sum(weight^2)` for nonnegative weights with a positive total.
+
+Reference-policy KL, behavior-policy ratios, and a learned value baseline have different roles. Clipping or low version lag does not establish on-policy equivalence.
 
 ### Speculative decoding
 
@@ -206,7 +290,7 @@ It reduces KV heads and cache bandwidth while retaining more K/V diversity than 
 
 #### What does FlashAttention approximate?
 
-Nothing in dense attention semantics. It changes the IO schedule using tiling and online normalization.
+The algorithm preserves dense attention semantics through tiling and online normalization rather than dropping keys. Finite-precision arithmetic, low-bit operands, approximate exponentials, and implementation-specific numerical policies still introduce error. Exact attention semantics is not bitwise equality to every reference.
 
 #### Why is decode sequential?
 
@@ -306,6 +390,34 @@ Contain harm, state new evidence, reopen the choice, preserve trust by owning th
 
 **Time to first token:** latency from the declared request boundary until the first output token is available.
 
+### Modern architecture and training terms
+
+**BPE:** byte-pair encoding; a tokenizer family that repeatedly merges units under learned merge rules. Its vocabulary and normalization are part of checkpoint compatibility.
+
+**SFT:** supervised fine-tuning on selected response targets. The loss mask and chat template define what the model is trained to predict.
+
+**LoRA / QLoRA:** low-rank adaptation; QLoRA trains such adapters through a frozen quantized base. Reduced trainable parameters do not equal the same reduction in all training memory.
+
+**DPO:** direct preference optimization using chosen/rejected responses and a reference policy, without an online rollout loop in the basic objective.
+
+**GRPO:** group-relative policy optimization; response groups provide reward-relative advantage estimates instead of a learned value critic in the basic formulation.
+
+**Behavior policy:** the distribution that actually sampled an action. It may differ from both the current learner and a fixed reference model.
+
+**MLA:** Multi-head Latent Attention; compressed cached representations and projection algebra reduce attention-state storage under a specific architecture.
+
+**Gated DeltaNet:** recurrent matrix memory that combines decay with an error-correcting write along the current key direction.
+
+**Selective SSM:** a structured state-space model whose retention/write/read behavior depends on inputs; not an exact substitute for arbitrary full attention.
+
+**TMEM / TMA:** tensor memory is an architecture-specific on-chip matrix storage resource; Tensor Memory Accelerator handles supported asynchronous transfers. Neither term means ordinary global-memory caching.
+
+**Late interaction:** retrieval that precomputes document-token representations and combines them with query-token representations at query time.
+
+**Denoising language model:** a model trained to reconstruct corrupted token sequences; its generation schedule may refine several positions at once.
+
+**Idempotency key:** a stable operation identity allowing a service to reconcile repeated delivery of the same request without duplicating its effect, subject to that service's transaction guarantees.
+
 ### Decision index
 
 | If the symptom is... | First model | Likely chapters |
@@ -320,6 +432,12 @@ Contain harm, state new evidence, reopen the choice, preserve trust by owning th
 | MoE slowdown | All-to-all and expert imbalance | Transformers, distributed systems |
 | Platform not adopted | Migration cost and ownership | Strategy and leadership |
 | Recurring disagreement | Goal, facts, risk, or incentives | Executive communication |
+| Hybrid cache estimate is wrong | Layer-specific attention/recurrent state | Compressed, Sparse, and Recurrent Model State |
+| More rollout GPUs hurt training | Queue growth, policy age, ratio variance | Distributed Reinforcement Learning and Policy Freshness |
+| Fluent but unsupported answers | Eligible evidence, ranking, generation | RAG, Vector Search, and Evaluation Pipelines |
+| Repeated or unauthorized actions | Capabilities, receipts, host-owned budgets | Building and Evaluating a Bounded Agent Loop |
+| Fast text but slow speech | Encoder, alignment, codec, playback queues | Multimodal Representations: Images, Video, and Speech |
+| Fewer generation calls but no gain | Positions per call, cache validity, quality | Diffusion and Block-Parallel Language Generation |
 
 ### Final principle
 

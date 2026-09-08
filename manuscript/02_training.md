@@ -1025,6 +1025,14 @@ A reasonable pilot might:
 
 Calling this mixture "representative" would be inaccurate. It is deliberately risk-adjusted, and the rationale should be part of the release manifest.
 
+### Language-aware curation and a fixed-budget ablation
+
+A quality threshold learned on English web text can reject useful text in another writing system. Token fertility, punctuation, document length, and repeated boilerplate have language-dependent distributions. Language identification should therefore route to an appropriate quality policy, with an explicit mixed-language path, rather than serve only as a final reporting label. [FineWeb2](https://arxiv.org/abs/2506.20920) studies language-adapted filtering and deduplication, and combines duplication counts with quality when rebalancing the resulting corpus. Its lesson is to evaluate the curation pipeline through trained models across languages, not just retained bytes.
+
+Consider an original experiment with a 10-billion-token budget. Recipe A spends 8 billion tokens on English and 2 billion on other languages. Recipe B uses 6 and 4 billion. Train both with the same architecture, optimizer, total tokens, and evaluation checkpoints. Report English regression as well as gains by language; an average weighted by the new training mixture would move the goalposts. If B's tokenizer produces twice as many tokens per document for a target language, doubling tokens may not double semantic coverage. Track documents, bytes, unique content, and tokens separately.
+
+To isolate filtering from mixture changes, first hold per-language sampling proportions fixed while varying the filter. Then hold the chosen filter fixed while varying the mixture. Preserve an untouched evaluation set and check contamination before either experiment. A synthetic-data generator must use the training pool, not read held-out questions and paraphrase them into the corpus. The acceptance rule is useful generalization per training budget, not agreement with the quality classifier that produced the data.
+
 ## Training Data Platform and Release Engineering
 
 LEAD: A data pipeline becomes a training platform when it can reproduce releases, absorb partial failure, enforce policy, explain examples, and connect every selected sequence to the models and evaluations that consumed it.
@@ -1576,9 +1584,66 @@ A rigorous framing is a threat model: attacker access, budget, query adaptivity,
 4. When can a 3B draft outperform a 1B draft end to end?
 5. What defenses against extraction preserve normal user quality?
 
+## Supervised Adaptation and Low-Rank Training
+
+LEAD: A useful fine-tuning run begins with a reproducible data-to-gradient path. Understand which targets are learned, which parameters move, and which evaluation would reveal that the adaptation damaged the base model.
+
+### Choose between continued pretraining and instruction learning
+
+Continued pretraining learns from the next-token structure of a domain corpus. SFT learns from demonstrations of desired responses under an explicit interaction format. They can use the same cross-entropy machinery while supervising different targets. A repository dump does not automatically teach a model to follow a debugging request; a short answer demonstration does not expose the full distribution of a technical domain.
+
+For a documentation assistant, distinguish domain knowledge from current facts. Fine-tuning can teach terminology, tool-call syntax, and answer conventions. Frequently changing permissions and policies should remain in a governed retrieval system. Putting them into weights does not create reliable deletion or authorization semantics.
+
+Begin with a base or instruction model that already fits the required language and task family. Establish a no-training baseline with the intended prompt and retrieval. If the failure is a missing document or a wrong access filter, model training attacks the wrong layer. If examples consistently show a learnable output or decision pattern, adaptation becomes a testable intervention.
+
+### Make one supervised batch completely visible
+
+Take a serialized exchange containing a user question, an assistant tool call, a tool result, and a final assistant answer. For assistant-only supervision, mark target positions belonging to the two assistant messages, including whichever delimiters the deployment must generate. Leave user and tool-result targets unscored while keeping them visible as context. The exact template and token spans come from Part I's text-interface contract.
+
+For each batch, retain the number of valid target tokens. Across unequal microbatches, accumulate the sum of token losses and divide by the global supervised-token count. Averaging each microbatch mean equally implements a different weighting when the target counts differ. For example, a two-target microbatch and a 100-target microbatch should not receive equal weight under a token-mean objective.
+
+Inspect a tiny overfitting test before a full run: can the model drive loss down on a handful of valid demonstrations, and does decoded behavior match the target format? If not, first check token shifts, masks, frozen parameters, optimizer membership, and gradient flow. Success on this test establishes plumbing, not generalization. A held-out split must separate related documents, templates, or tasks to avoid measuring memorized variants.
+
+### LoRA reduces trainable state, not all training memory
+
+[LoRA](https://arxiv.org/abs/2106.09685) freezes a base matrix and learns a low-rank update. Using the book's row-vector convention, let `W` have shape `[d_in,d_out]`, `A` shape `[d_in,r]`, and `B` shape `[r,d_out]`:
+
+:::equation Y = X W + s (X A) B|Only the low-rank matrices are trained when the base weight W is frozen.
+
+The adapter contains `r(d_in+d_out)` parameters instead of `d_in*d_out`. For a 4096-by-4096 matrix and rank 16, that is 131,072 versus 16,777,216 parameters: 128 times fewer trainable parameters for this matrix. This does not mean 128 times less total GPU memory. The frozen weights still reside somewhere; activations must support backward; temporary GEMMs and communication buffers still exist.
+
+A common initialization sets one factor randomly and the other to zero so the initial update is zero. If both factors were zero, their product's gradients would also be zero and the adapter would not begin learning. Scaling conventions vary, so record the actual scale rather than assuming the rank alone defines the update.
+
+Target-module selection matters. Attention-only adapters and adapters on all large linear layers have different capacity and memory cost. Increase rank only after separating underfitting from poor data or incorrect targets. Measure broad capability and domain behavior, not only training loss. Adapter merging forms `W+sAB` for a fixed adapter; serving many adapters simultaneously generally preserves the factors instead.
+
+### QLoRA separates storage precision from the gradient path
+
+[QLoRA](https://arxiv.org/abs/2305.14314) combines a frozen quantized base with trainable low-rank adapters, including NF4 storage, quantized scale metadata, and memory-management techniques. It does not backpropagate updates into the packed four-bit base weights as if those integers were ordinary trainable floating-point parameters.
+
+The layer reconstructs or otherwise consumes the base weights in the supported compute path, adds the adapter contribution, and propagates gradients to the adapter and required activations. Four-bit storage therefore does not imply every multiplication or gradient uses four bits. NF4 is a nonuniform quantization codebook, not the same format as hardware FP4.
+
+A memory ledger needs packed base weights, scales and metadata, adapters, their gradients and optimizer states, activations, temporary dequantization/workspaces, and allocator reserve. On a nominal 7B model, ideal four-bit weight payload is 3.5 GB before metadata. Use that only as a lower bound; it is not a promised device-memory requirement.
+
+Merging a trained adapter into a low-bit checkpoint requires care. Forming a higher-precision merged matrix and requantizing can introduce a different error from serving the unmerged quantized base plus adapter. Evaluate the exact deployment artifact, not just the training-time representation.
+
+### A controlled adaptation experiment
+
+Use an illustrative 2,000-example domain task set with a separate held-out group split. Compare the unchanged model, prompt/retrieval-only improvements, SFT with LoRA, and full fine-tuning if resources permit. Keep the source corpus, serialization, target masks, evaluation prompts, and generation policy fixed. Sweep a small learning-rate/rank grid instead of changing every variable together.
+
+Report target-task accuracy, schema validity, unsupported claims, broad-capability retention, and training/serving cost. Add early stopping based on validation, but do not repeatedly tune against the final test set. Test multiple random seeds when differences are small. These are experiment instructions and illustrative counts, not results already measured for a particular model.
+
+If the adapter improves answer style while factuality is unchanged, say so. If a full fine-tune improves the domain but loses multilingual behavior, the release decision must include that regression. Parameter efficiency is useful only when the retained behavior meets the product contract.
+
+### Exercises and worked answers
+
+1. **Why not update only an embedding table for every adaptation?** The failure may require changed transformations or decisions, not just different token vectors; choose trainable modules from the task and compare controls.
+2. **Why can a frozen base still require activations for backward?** Gradients must traverse its operations to reach earlier trainable adapters even though the base's own weights are not updated.
+3. **What breaks when loss is averaged by microbatch?** Unequal supervised-token counts receive unintended equal weight. Accumulate numerators and denominators consistently with the intended objective.
+4. **When is retrieval preferable to memorizing documents?** When evidence changes frequently, must be cited, or has deletion/access requirements that weights cannot enforce reliably.
+
 ## Post-Training and Alignment
 
-LEAD: Post-training chooses behavior among capabilities the base model can express. The objective, data, and evaluation must agree on what "better" means.
+LEAD: Post-training changes a model's behavior using demonstrations, preferences, and interaction. Its gains depend on the starting model, exploration, data, and objective; it is not limited to formatting, nor does a higher reward establish general reasoning improvement.
 
 ### Start with a behavior specification
 
@@ -1620,7 +1685,23 @@ Do not choose by acronym. Ask:
 - Is an explicit reward model useful for analysis or reuse?
 - How much divergence from the base model is safe?
 
-The KL constraint or reference policy is not merely a mathematical convenience. It defines how far optimization may move into regions where the reward model has little evidence. Monitor divergence by task slice and response length; a single aggregate can hide a policy that changes radically on rare but important prompts.
+The KL constraint or reference policy is not merely a mathematical convenience. It discourages large changes into regions where the reward model has little evidence, without guaranteeing safety there. Monitor divergence by task slice and response length; a single aggregate can hide a policy that changes radically on rare but important prompts.
+
+### Derive the DPO training signal
+
+For one prompt, let `y+` be the preferred answer and `y-` the rejected answer. Compute each answer's log probability as the sum over its scored response tokens, conditioned on the same prompt. Let `pi` be the policy being trained and `pi_ref` the frozen reference. Define:
+
+:::equation Δ = (log π(y^{+}) - log π(y^{-})) - (log π_{ref}(y^{+}) - log π_{ref}(y^{-}))|The margin compares the policy's preference with the reference's preference for the same pair.
+
+:::equation L_{DPO} = -log σ(β Δ)|Beta sets the scale of the relative log-probability margin; sigma is the logistic function.
+
+This is the core objective from [Direct Preference Optimization](https://arxiv.org/abs/2305.18290). The prompt is omitted from the notation but remains part of every conditional probability. The reference contributes fixed log probabilities and receives no gradient. The loss is a binary preference objective, not next-token imitation of the preferred answer alone.
+
+Suppose the current model's chosen/rejected log probabilities are `-2` and `-4`, while the reference's are `-3` and `-4`. The relative margin is one. With `beta=0.5`, the loss is about `0.474`; if the policy matches the reference's relative preference, the loss is `log(2)`, about `0.693`. Moving probability toward the chosen answer relative to the rejected one lowers the loss. The scalar reference in `examples/post_training.py` tests this direction and numerical stability.
+
+The reference is not the policy that generated the pair unless the experiment chose it that way. Keep those identities separate. Standard sequence log probabilities sum over tokens; replacing the sum with a length average changes the objective. A model can also improve the pairwise margin while lowering both candidates' absolute probabilities. Monitor held-out generation behavior and likelihood, not only training pair accuracy.
+
+Preference labels may be wrong or weakly ordered. Ties, contradictory rubrics, long-versus-short confounds, and judge familiarity can all drive a clean mathematical objective toward undesirable behavior. DPO removes an explicit online rollout stage during each training update; it does not remove the need for representative candidate generation, evaluation, or a reliable preference dataset.
 
 ### Verifiable reward and reasoning
 
@@ -1659,3 +1740,115 @@ Post-training often produces improvements that are easy to notice and regression
 3. How do you audit a model judge for verbosity bias?
 4. What belongs in an atomic rollback for an aligned assistant?
 5. Explain why preference optimization can reduce capability even as reward rises.
+
+### Worked answer criteria
+
+1. DPO is attractive when fixed, trustworthy comparisons cover the desired change and online exploration is not essential. Compare it with SFT and an unchanged-policy baseline.
+2. Run generated code in an isolated environment with protected tests and bounded resources; distinguish wrong answers from infrastructure errors and test for attempts to tamper with the checker.
+3. Randomize candidate order, stratify by length, use expert-adjudicated ties, and compare judges against a held-out rubric. Do not silently equate verbosity with correctness.
+4. Roll back the compatibility set: weights, tokenizer, template, tool policy, serving/sampling configuration, and relevant reward/evaluation versions.
+5. Reward is a proxy. Distribution shift, biased labels, overoptimization, and loss of rare capabilities can all coexist with a rising proxy score.
+
+## Reinforcement Learning for Reasoning and Tool Use
+
+LEAD: Reinforcement learning adjusts the probability of actions using outcomes from sampled trajectories. To understand current reasoning training, follow one trajectory from generation through reward, advantage, policy update, and a fresh held-out evaluation.
+
+### Tokens are actions; the conversation is state
+
+For text generation, the state includes the prompt and previously generated tokens. An action is the next token. For a tool-using agent, external observations and environment state also influence future decisions. A trajectory ends at an answer, failure, timeout, or explicit task boundary. Rewards may arrive at intermediate steps or only at the end.
+
+A policy-gradient update increases log probability for actions with positive advantage and decreases it for actions with negative advantage. Advantage means outcome relative to an appropriate baseline, not simply “the answer was correct.” Subtracting a baseline can reduce estimator variance, but the baseline and normalization determine how prompts are weighted.
+
+Terminal reward offers weak credit assignment: every sampled action may inherit a signal from the final result, including unnecessary prose and accidental shortcuts. A process reward can give finer feedback but may itself be incorrect. Neither establishes that a visible chain of thought faithfully describes the computation that produced an answer.
+
+### PPO: distinguish the old policy from the reference
+
+[PPO](https://arxiv.org/abs/1707.06347) uses a clipped surrogate to limit incentives for large policy changes on sampled actions. Let `r_t` be the new policy's probability of the sampled action divided by its probability under the behavior policy that collected the rollout. A simplified term to maximize is:
+
+:::equation J_{t} = min(r_{t} A_{t}, clip(r_{t}, 1-ε, 1+ε) A_{t})|Clipping limits the benefit of moving a sampled action too far in the advantageous direction.
+
+For advantage `+2`, ratio `1.4`, and epsilon `0.2`, the clipped term is `2.4`, not `2.8`. For advantage `-2` and ratio `0.6`, it is `-1.6`, not `-1.2`. The minimum matters for both signs. This does not guarantee a hard bound on policy divergence; other actions and shared parameters also move.
+
+The **old/behavior policy** supplies the sampling probabilities for the ratio. The **reference policy** supplies a regularization anchor, often an SFT checkpoint. A **critic** estimates future return or a value baseline. A **reward model or verifier** scores outcomes. These roles can share architectures but are not interchangeable. Classic actor-critic PPO usually trains a value estimator and may use generalized advantage estimation; omitting it changes how advantage is obtained.
+
+### GRPO: use a group of outcomes as the baseline
+
+[DeepSeekMath](https://arxiv.org/abs/2402.03300) introduced Group Relative Policy Optimization. Sample several responses to the same prompt, evaluate their rewards, and obtain a relative advantage from the group's mean and, in the normalized form, standard deviation. This avoids a separate learned critic for that baseline, but still requires policy, rollout, and reward computation.
+
+For rewards `[1,1,0,0]`, the mean is `0.5` and population standard deviation is `0.5`; standardized advantages are `[1,1,-1,-1]`. For `[1,1,1,1]`, there is no within-group contrast. A safe implementation assigns zero contrast instead of dividing by zero. The group therefore needs useful diversity: all-correct and all-wrong groups carry little or no relative reward signal.
+
+This creates an important data tradeoff. Easy prompts can become uninformative, while very hard prompts may never yield a successful trajectory. Increasing group size can expose contrast but consumes more rollout tokens and verifier calls. Filtering zero-variance groups changes the effective training distribution; record attempted prompts and discarded groups, not just the accepted training batch.
+
+Reward normalization is a choice, not a harmless cosmetic step. Dividing by group standard deviation changes the scale across prompts; averaging each response's token loss can change length weighting. An implementation must specify reward normalization, token/sequence normalization, response masks, KL placement, and clipping. Two programs both called GRPO can optimize measurably different objectives.
+
+### What newer variants are trying to repair
+
+| Approach | Mechanism-level change | Decision to inspect |
+| --- | --- | --- |
+| DAPO | Decoupled clipping, dynamic sampling, token-level loss aggregation, and explicit treatment of overlong responses | Are entropy collapse, uninformative groups, or truncation dominating? |
+| GSPO | A length-normalized sequence likelihood ratio and sequence-level clipping/optimization | Is token-level importance weighting unstable for the model and rollout distribution? |
+| Outcome/process reward mixtures | Add signals at different parts of the trajectory | Does finer credit improve held-out success, or only reward the checker's preferred style? |
+| On-policy distillation | Train on states visited by the student using teacher feedback | Is teacher-forced training missing the student's actual error distribution? |
+
+The primary descriptions are [DAPO](https://arxiv.org/abs/2503.14476) and [GSPO](https://arxiv.org/abs/2507.18071). These methods should be compared as concrete objectives and pipelines, not stacked as independent switches. A wider upper clipping range, for example, changes the incentive to increase low-probability successful actions; it is not a universal fix for poor exploration.
+
+For GSPO's normalized sequence ratio, average token log-probability differences and exponentiate. If two token probability ratios are 2 and 0.5, their geometric mean is 1, while their arithmetic mean is 1.25. Using the latter implements the wrong quantity. Length normalization helps control scale but is not the full trajectory importance ratio, which would multiply all token ratios. The scalar reference checks this distinction.
+
+For truncation, distinguish a genuinely wrong completed answer from a trajectory cut off by a budget or failed environment. Giving every timeout the same semantic reward as an invalid solution can teach the wrong lesson. Conversely, dropping all failures without reporting them hides the true cost and can bias training toward easy tasks. Define the censoring and reward policy before interpreting improvements.
+
+### Rich feedback and self-distillation: a 2026 direction
+
+A scalar failure says little about which action to change. [Self-Distillation Policy Optimization](https://arxiv.org/abs/2601.20802v2), a 2026 study, conditions a self-teacher on feedback and distills its feedback-informed predictions into the policy. The teaching idea is to turn information such as a compiler error into a richer learning signal rather than reducing every failed attempt to the same zero reward.
+
+For an original toy task, suppose a model writes a function with the wrong argument order. A trusted error message identifies the mismatch. A feedback-conditioned teacher distribution may put more mass on the corrected call, while the student must learn to make that call without seeing the future error at deployment. The training pipeline must keep teacher-only feedback out of the student's evaluation input and detach the target distribution appropriately. Otherwise it measures access to an answer hint, not learning.
+
+This is not a license to trust every self-generated correction. The July 2026 preprint [Denser Is Not Better](https://arxiv.org/abs/2607.01763) reports forgetting and drift in its continual post-training experiments. The September 2 preprint [Learn from Whoever Is Right](https://arxiv.org/abs/2609.02548) explores answer-verified multi-teacher distillation. These are emerging findings with different experimental settings, not a settled ranking of RL objectives.
+
+When studying this family, track who supplies feedback, which tokens the teacher sees, which distribution supplies student trajectories, which parameters are updated, and whether old capabilities survive. An external teacher, a self-teacher with privileged context, and an outcome verifier supply different information even if all produce a training target.
+
+### Verifiable reward needs an independently protected verifier
+
+RL with verifiable rewards is useful when outcomes can be checked: execution tests, formal proof checking, exact structured answers, or environment success conditions. [DeepSeek-R1](https://arxiv.org/abs/2501.12948) is an important example of reasoning-oriented reinforcement learning, but its reported results do not imply that any base model becomes broadly capable from a sparse binary reward alone.
+
+Consider a code task with visible examples and hidden tests. The model receives a sandbox with source files and a way to submit a patch. Hidden tests and the scoring program live outside its writable scope. The verifier distinguishes compilation failure, test failure, infrastructure failure, timeout, and valid success. Network, filesystem, subprocess, and resource permissions are enforced by the environment, not by an instruction asking the model to behave.
+
+Protect the held-out task set from prompt generation, selection, reward tuning, and synthetic-data construction. Generate adversarial verifier tests: empty output, fake success logs, modified tests, hardcoded examples, and attempts to read the checker. A rising training reward accompanied by unchanged hidden-test success is a reward-model problem until shown otherwise.
+
+### From one batch to the next
+
+Example status: Explanatory pseudocode.
+
+```text
+publish immutable actor snapshot v
+sample prompt groups from a versioned task mixture
+generate trajectories with v; save behavior log probabilities
+run protected verifiers; distinguish failures from missing labels
+compute advantages under the declared normalization policy
+recompute current-policy log probabilities on scored action tokens
+apply clipped objective and any explicit reference regularizer
+check finite gradients; update actor and optimizer consistently
+evaluate on independent tasks at a fixed sampling/token budget
+publish v+1 only after release checks; retain rollback snapshot
+```
+
+Tool-result tokens are observations, not actions sampled from the actor, and normally should not enter the actor's action log-probability objective. Store token/action masks explicitly. For multi-turn trajectories, preserve tool versions, environment seeds, reset state, and termination reasons; replaying only the visible final answer is insufficient.
+
+Suppose 128 prompts receive eight rollouts each, averaging 1,024 generated tokens. That is 1,048,576 generated tokens before verification and training. At an illustrative aggregate rollout rate of 20,000 tokens per second, generation alone takes at least 52.4 seconds. If optimization takes 12 seconds, making the optimizer twice as fast saves only six seconds from a serial cycle dominated by generation. This calculation explains why inference kernels and rollout scheduling are part of training research.
+
+[HybridFlow](https://arxiv.org/abs/2409.19256) addresses the interaction between model roles and distributed execution. The architectural lesson is to plan training and generation layouts together. Their best parallel groups and memory allocations can differ, and switching representations or moving weights has a cost. Part V follows the ownership and staleness consequences rather than treating the RL library as a black box.
+
+### Measure learning, not only pass at a larger budget
+
+Report single-sample success under a fixed generation budget, success with multiple candidates, the selection rule, and total inference/verifier cost. The probability that at least one candidate is correct is not the same as the ability to choose that candidate without an oracle. Majority voting, a learned judge, and executable selection have different failure modes.
+
+For `n` independent identically sampled candidates containing `c` correct ones, the common pass-at-k estimator is `1 - choose(n-c,k)/choose(n,k)`, with result one when fewer than `k` candidates are wrong. The reference `pass_at_k(10,2,3)` returns about `0.533`. It estimates an at-least-one-success event under the sampling assumptions, not the quality of the model's first answer. Correlated task variants and repeated tuning on a benchmark require separate caution.
+
+Track answer length, entropy, group reward variance, discarded prompts, clipping fraction, KL estimates, verifier error rates, and behavior-policy age. Separate gains from better reasoning, more sampling, different tools, and relaxed time budgets. A shorter iteration loop is valuable only if it produces valid evidence about learning.
+
+### Exercises and worked answers
+
+1. **Why is a reference model not the PPO denominator?** The denominator is the policy that sampled the action. The reference is a regularization choice and may remain fixed across many updates.
+2. **What happens to an all-wrong binary-reward group?** Its within-group contrast is zero. Resampling or changing task difficulty may help, but changes the compute cost and training distribution.
+3. **Can pass-at-8 rise while pass-at-1 falls?** Yes. Distributional changes can improve coverage while hurting the most likely or typical answer. Report both and the actual selection mechanism.
+4. **What is wrong with rewarding a process's printed `PASS`?** The actor can print it. The trusted verifier must inspect independently protected execution results, not accept self-reported success.
+5. **Which first optimization fits the numerical cycle above?** Improve valid rollout throughput or overlap before assuming optimizer speed dominates; include verifier capacity and policy staleness in the measurement.

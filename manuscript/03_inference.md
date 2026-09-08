@@ -716,14 +716,17 @@ Example status: Illustrative Python excerpt; not standalone.
 
 ```python
 def verify_token(proposed, p, q, uniform):
-    qx = max(q[proposed], 1e-30)
-    accept = min(1.0, p[proposed] / qx)
-    if uniform <= accept:
+    # Validates normalized distributions and rejects q[proposed] == 0.
+    accept, residual = acceptance_and_residual(p, q, proposed)
+    if uniform < accept:  # uniform is in [0, 1)
         return proposed, True
-    residual = maximum(p - q, 0.0)
-    residual = residual / residual.sum()
+    assert residual is not None
     return sample(residual), False
 ```
+
+`acceptance_and_residual` is the tested CPU helper in `examples/inference_mechanisms.py`; `sample` remains a caller-supplied categorical sampler. A proposed token with `q=0` is inconsistent with the claimed proposal distribution and should be rejected as an input error, not silently repaired by clamping its probability. When `p=q`, acceptance is one and no residual distribution is needed.
+
+For target `[0.5,0.3,0.2]` and proposal `[0.2,0.7,0.1]`, accepted probability mass is the elementwise minimum `[0.2,0.3,0.1]`, totaling `0.6`. Rejection occurs with probability `0.4`. The positive residual is `[0.3,0,0.1]`, normalized to `[0.75,0,0.25]`. Adding the rejected branch's mass back gives exactly the target. The tests enumerate this mass directly, including disjoint support, rather than relying only on a noisy histogram.
 
 Top-k, top-p, temperature, penalties, and constraints define the target distribution. Applying them differently in draft and verification can be legal if the exact acceptance/correction construction uses the resulting `p` and `q`, but it changes acceptance and implementation complexity. An approximation that skips correction must be declared and evaluated as a quality change.
 
@@ -761,9 +764,31 @@ A tree proposes alternatives at several future positions so target verification 
 
 The scheduler sees a variable number of verification tokens per request. Grouping incompatible trees can waste padding, while separating every shape fragments batches and graph caches. Restrict to a small family of supported tree shapes unless telemetry justifies more variants.
 
+### Feature drafts and parallel block drafts
+
+The draft need not be a separate small autoregressive model trained only on text. [EAGLE-3](https://arxiv.org/abs/2503.01840) uses target-model features and training-time simulation of the draft's own execution. The useful intuition is distribution matching: a drafter should learn under the states and self-generated inputs it will actually encounter, not only under ideal teacher-forced prefixes.
+
+[DFlash](https://arxiv.org/abs/2602.06036) uses a lightweight block-diffusion drafter to propose multiple positions in parallel from target context features. This removes some serial draft steps; the target still verifies the proposal. It is different from replacing the target with a standalone diffusion language model. Its published acceleration results are measurements for the reported models, workloads, and decoding setup, not a prediction for every batched service.
+
+| Proposal mechanism | Main cost removed | New dependency |
+| --- | --- | --- |
+| Standalone autoregressive draft | Several expensive target steps | Separate weights, serial draft steps, tokenizer compatibility |
+| Feature-conditioned draft | Recomputing information already available in the target | Feature taps, model-specific training, feature/KV lifetime |
+| Multi-token prediction heads | Repeated full draft forwards | Head accuracy, correlated proposals, verification packing |
+| Parallel block/diffusion draft | Serial dependence inside the draft block | Block shape, masks, proposal semantics, target verification |
+| N-gram/prompt lookup | Learned draft computation | Repeated text and a safe fallback when matches disappear |
+
+For an original scheduling example, suppose a target step takes 6 ms. A serial four-token draft costs 4 ms and verification plus bookkeeping costs 7 ms. At three committed tokens per cycle, cost is `11/3=3.67 ms` per token. A parallel draft costing 1 ms with the same verification and progress yields `8/3=2.67 ms`. If its lower-quality proposals commit only 1.5 tokens, cost becomes `8/1.5=5.33 ms`. Faster drafting and better acceptance must be evaluated together.
+
+Greedy equality, stochastic distribution preservation, and same-seed output equality remain different contracts. A parallel proposal must expose whatever joint or conditional probabilities its verifier requires, or use another proven target-preserving construction. Independent per-position logits are not automatically the conditional distribution of an arbitrary tree or iterative sampler. Validate the exact deployed verification algorithm, including grammar masks and temperature, before calling it lossless.
+
+Feature extraction can extend activation lifetimes and add cross-device traffic. A method that works well on a colocated target/draft pair may become unattractive if features cross a slow boundary. Measure the full cycle with the production batch, not only an unloaded single-stream demonstration.
+
 ### Interaction with batching and KV
 
 Different sequences accept different prefix lengths, so they advance unevenly. Commit accepted KV, discard or recycle rejected branch state, update logical positions, and ensure random streams follow logical output rather than physical verification slots.
+
+Hybrid models add recurrent and short-convolution state to this transaction. A draft block can mutate that state beyond the accepted prefix even if attention KV is truncated correctly. Save a boundary snapshot or use a verified replay/rollback path. Test accepting zero, one, and all proposal tokens, and compare continuation logits with ordinary decode after each case. A cache-length assertion alone will miss recurrent-state corruption.
 
 At high target batch, ordinary decode may already reuse weights well. Draft compute can contend with the target or reduce its resident batch because of extra weights and KV. At low-latency batch, eliminating target synchronization steps is often more valuable. Benchmark the joint scheduler with real arrival pressure.
 
@@ -998,6 +1023,33 @@ Common families include:
 
 The format name alone does not determine speed. Group size, packing order, scale placement, padding, and fused epilogue support can decide whether the kernel reaches the intended hardware path.
 
+### Work one quantization group by hand
+
+For signed symmetric b-bit integer quantization, choose `Q=2^(b-1)-1` and scale `s=max(abs(x))/Q` for a nonzero group. Store `q=round(x/s)` clipped to `[-Q,Q]`, and reconstruct `x_hat=s*q`. This symmetric convention leaves one signed integer code unused; asymmetric formats instead introduce a zero point and a different range. The stored format must specify which convention it uses.
+
+With four bits and group maximum 7, the step size is one. Values `[0.2,0.8,7]` become `[0,1,7]`. The maximum rounding error inside the range is half a step, but the output error of a matrix multiply also depends on the activation values multiplying those errors. A rare large outlier can enlarge the scale enough to erase many small values. Smaller groups reduce that effect while adding scale traffic.
+
+The payload is not the whole checkpoint. Four-bit values with one FP16 scale per 128 weights use `4+16/128=4.125` bits per weight before padding and other metadata. One byte of scale per 16 four-bit values gives `4.5` bits per value. On a nominal 7B weights, those idealized layouts require about 3.61 GB and 3.94 GB respectively, rather than exactly 3.5 GB. Embeddings or sensitive layers retained at higher precision add more.
+
+The runnable `symmetric_quantize` reference demonstrates rounding, the zero-group convention, and outlier damage. It is not GPTQ, AWQ, or a hardware FP4 encoder. Its tests establish the stated scalar error bound, not model quality after quantization.
+
+### Why quantization algorithms look at activations
+
+A layer's useful objective is often output reconstruction, such as minimizing `norm(XW-XW_hat)²` on calibration activations `X`, rather than minimizing unweighted weight error. An error in a weight multiplying a nearly inactive feature can matter less than the same error on a frequently large feature.
+
+| Method | Core intervention | What it does not establish |
+| --- | --- | --- |
+| GPTQ | Use approximate second-order reconstruction information while quantizing weights and compensating remaining error | A universally optimal rounding or a fast runtime for every layout |
+| AWQ | Use activation statistics to choose channel scaling that protects salient weight directions | Immunity to calibration or domain shift |
+| SmoothQuant | Redistribute scale between activation and weight channels to make activation quantization easier | Elimination of quantization error in both operands |
+| Rotation methods such as SpinQuant | Change equivalent internal bases to distribute outliers before low-bit quantization | Free rotations through arbitrary nonlinearities or guaranteed speedup |
+
+Primary references are [GPTQ](https://arxiv.org/abs/2210.17323), [AWQ](https://arxiv.org/abs/2306.00978), [SmoothQuant](https://arxiv.org/abs/2211.10438), and [SpinQuant](https://arxiv.org/abs/2405.16406). The methods target different constraints; do not infer that a newer publication dominates all older formats and kernels.
+
+For the scale-redistribution idea, insert an invertible diagonal matrix `D`: `XW=(XD^-1)(DW)`. The full-precision product is unchanged, while the operands' quantization ranges change. This identity does not say the quantized product is unchanged. Likewise, an orthogonal rotation can preserve a compatible linear computation while changing rounding error. Nonlinear activations and normalization require a valid placement or compensation; rotate every tensor arbitrarily and the original model is lost.
+
+Calibrate on the target input distribution, then evaluate on a held-out distribution. Long reasoning, code, vision tokens, and rare languages can produce ranges missing from short generic prose. If the quantization method is tuned repeatedly on one calibration benchmark, retain an untouched quality set. Compare against a simple round-to-nearest baseline and report both quality and deployed kernel time.
+
 ### Weight-only quantization
 
 In small-batch decode, weight reads often dominate dense linear layers. Weight-only quantization stores packed low-bit weights, loads scales, reconstructs or directly consumes low-precision values, and multiplies by higher-precision activations.
@@ -1022,6 +1074,16 @@ Quantizing activations can unlock lower-precision matrix instructions and reduce
 Dynamic scaling adds reductions, metadata, and synchronization. Offline scaling depends on calibration coverage. Per-tensor scales are cheap but sensitive to outliers; per-channel, row, or block scales track range better but increase metadata and may complicate kernels.
 
 Accumulate sensitive reductions in an appropriate wider type. Protect normalization, logits, embeddings, or selected layers when evidence shows they dominate error. "Everything at one dtype" is an implementation convenience, not a quality principle.
+
+### MXFP8 and NVFP4: scales are hardware operands
+
+Blackwell-era low-precision paths use block scales to preserve useful local range. In the documented [Transformer Engine FP8/FP4 recipes](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/fp8_primer.html), MXFP8 groups 32 values with a power-of-two scale, while NVFP4 uses E2M1 four-bit values with finer blocks and additional scaling. Exact training recipes include operation-specific choices; consult the pinned runtime when selecting a layout rather than treating a format name as the complete recipe.
+
+The [NVFP4 recipe documentation](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/features/low_precision_training/nvfp4/nvfp4.html) describes block-scale layout requirements and safeguards such as transformations and rounding choices for training. A packed checkpoint, the matrix instruction's operand layout, and the training quantizer are separate artifacts. In particular, quantizing a matrix by rows and then transposing its codes does not generally produce the same result as transposing the original matrix and quantizing its new rows.
+
+For a small original example, imagine one row containing values `[1,1,1,100]`. A shared row scale sacrifices resolution for the three small values. After transposition into a different block grouping, those values may share scales with different neighbors. Both orientations may be required by forward and backward GEMMs. The extra representation and conversion work belongs in the memory/time ledger.
+
+Separate three experiments: post-training quantization of frozen weights, quantization-aware fine-tuning, and low-precision pretraining. Passing the first does not validate gradients in the third. Training must preserve convergence across many steps, not just one layer's output error. Keep sensitive statistics and state wider where required, test scale updates after outliers, and compare quality at equal compute as well as equal step count.
 
 ### KV-cache quantization
 

@@ -1,5 +1,29 @@
 # Working-draft release checks
 
+## Current checkpoint: expanded end-to-end learning draft
+
+The current release is `draft-2026-09-07-expanded`. It preserves the earlier
+checkpoint below and keeps the repository private. See
+[release notes](release-notes-2026-09-07-expanded.md) and the
+[chapter coverage ledger](coverage-audit-2026-09.md).
+
+| Check | Result and limit |
+| --- | --- |
+| Coverage | 68 chapters across nine parts; ten new chapters and targeted expansions in every part. The ledger distinguishes added, expanded, retained, and corrected chapters. |
+| CPU tests | 66 passing tests, including all explicitly runnable manuscript Python blocks and finite-difference checks for the miniature model. |
+| PDF | 402 pages, 78 outline entries, 159 external link annotations; structural checks pass with no suspiciously empty pages. |
+| Source reachability | 145 unique manuscript URLs; zero reported missing pages (404/410). Four publisher access blocks and one ACL Anthology DNS failure remain unverified by the automated checker. |
+| Visual review | All pages reviewed at contact-sheet scale; changed sheets rechecked after pagination fixes. Enlarged checks cover equations, code, tables, chapter openers, and the capstone. This is not a word-by-word copy edit. |
+| Experimental scope | CPU mechanism fixtures are tested. CUDA snippets, frontier training, distributed RL, and real-model agent robustness were not experimentally reproduced. |
+
+The additional unverified URL is `https://aclanthology.org/D18-2012/`.
+The four publisher URLs are listed in the historical evidence below. No
+unverified response is counted as a successful content verification.
+
+Final local review images are in `output/previews/coverage-release/` and
+`tmp/pdfs/coverage-release/`. Superseded coverage-review renders are kept in
+the ignored, recoverable `.local-archive/book-expansion-review-2026-09-07/`.
+
 ## Repository boundary and rights
 
 The release consists of the book branch and its ancestors, not every local Git
@@ -29,7 +53,7 @@ remains in private history; no force-push or history rewrite was performed.
 The public university URL containing `/home/` was a false positive and the
 scanner now distinguishes such URL paths from local filesystem paths.
 
-## Release evidence
+## Historical release evidence: original September checkpoint
 
 Checked September 7, 2026, for the `draft-2026-09-07` private review release.
 
@@ -47,7 +71,7 @@ The four access-blocked links are DOI `10.1080/00031305.1983.10483115`, DOI
 identifier `S002001900500298X`. A 403 does not show that the citation is broken,
 but the automated check cannot validate its content.
 
-## Deliverables and rebuild
+## Historical checkpoint deliverables and rebuild
 
 - Editable Markdown, figures/typesetter source, fixtures, tests, pinned Python
   requirements, and build instructions are versioned in the book repository.

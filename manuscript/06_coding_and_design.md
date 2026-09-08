@@ -1353,6 +1353,38 @@ Filters should be enforced before content leaves the retrieval trust boundary. P
 
 Query rewriting and decomposition can improve recall but also drift intent. Preserve original query, log transformations, and evaluate each stage.
 
+### Calculate hybrid ranking and late interaction
+
+Dense retrieval commonly maps a query and a passage independently into fixed-length vectors, then ranks a dot product or cosine similarity. Independence allows passage vectors to be precomputed; compressing a passage to one vector can lose rare token-level matches. A cross-encoder instead processes query and passage together and learns a relevance score. That richer interaction costs a forward pass per candidate, so it usually reranks a shortlist rather than every document.
+
+Hybrid fusion need not compare incomparable raw scores. Reciprocal rank fusion assigns each document a contribution from its position in each ranking:
+
+:::equation RRF(d) = Σ_{r} 1 / (k + rank_{r}(d))|Ranks are one-based; a document absent from a ranking contributes zero, and k is a chosen smoothing constant.
+
+If lexical search returns `[A, B]` and dense search returns `[B, C]`, with `k=60`, B receives `1/62 + 1/61 ≈ 0.0325`, A about `0.0164`, and C about `0.0161`. B wins through agreement even though it is not first lexically. This does not establish relevance: two correlated bad rankings can agree. Choose candidate depths and the constant on development data, retaining an independent evaluation split. The original [RRF paper](https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf) studies this rank-based combination.
+
+[ColBERT](https://arxiv.org/abs/2004.12832) offers a different middle ground: encode passages into token vectors offline, then use query-token interactions at retrieval time. A simplified normalized MaxSim score is:
+
+:::equation score(q,d) = Σ_{i} max_{j} q_{i}^{T} d_{j}|Each query token finds its best document-token match; the matches are summed.
+
+For query vectors `[1,0]` and `[0,1]`, a passage containing both directions scores two; one containing only `[1,0]` scores one. This preserves two distinct matching needs that a single passage vector might blur. It uses more index state than one vector per passage and requires appropriate indexing/pruning for scale. The independent reference `examples/retrieval_methods.py` tests RRF and this simplified score; it does not implement trained encoders or a production index.
+
+### Hierarchical retrieval, long context, or more search?
+
+[RAPTOR](https://arxiv.org/abs/2401.18059) recursively clusters and summarizes text to create a retrieval hierarchy. [GraphRAG](https://arxiv.org/abs/2404.16130) builds graph-derived communities and summaries for corpus-level questions. Their shared motivation is that “What themes recur across this corpus?” may not be answered by retrieving five locally similar paragraphs. They differ in structure and retrieval strategy; a graph is not a required component of every RAG service.
+
+| Need | Simple starting point | Added technique and its cost |
+| --- | --- | --- |
+| Exact product or error identifier | Lexical retrieval | Hybrid search for paraphrases; extra index and fusion |
+| Several precise semantic matches | Dense candidates plus reranker | Late interaction; more vectors and scoring work |
+| A global corpus summary | Authorized aggregate evidence | Hierarchical/graph summaries; build cost and derived-data freshness |
+| A small, bounded document set | Put the eligible documents in context | Longer prefill and context; not guaranteed evidence use |
+| Unknown subquestions | Bounded query decomposition | More model/search calls, drift, and stopping decisions |
+
+Derived summaries inherit access and deletion obligations. A public summary cannot silently contain facts from a restricted child document. Rebuilding leaves without invalidating an ancestor summary preserves stale information. Keep source-to-summary lineage, permissions appropriate to the combined content, and evidence links. For a claim requiring an exact number or exception, expand the summary back to authorized primary passages before answering.
+
+Long context and retrieval are complementary resource choices. Loading an entire 20-page manual may be simpler than maintaining an index for it. Loading every document in a changing enterprise corpus is different. Compare answer quality, first-token latency, cost, freshness, and disclosure scope using the same eligible evidence—not a context-heavy system with hidden extra documents against an artificially restricted retriever.
+
 ### Context assembly
 
 Select chunks under a token budget, remove redundancy, preserve useful order, and include source identifiers. Position effects can make evidence in the middle less influential. Context compression saves tokens but can remove qualifications or provenance.
@@ -1495,3 +1527,84 @@ Prompt injection belongs in a separate adversarial suite. Include documents that
 3. **Embedding migration:** maintain versioned query/index pairs, shadow against a fixed evaluation corpus and roles, then switch an atomic manifest with rollback. Dimension compatibility is not semantic compatibility.
 4. **ANN plus filters:** benchmark recall after access filtering, particularly for small or selective tenants; compare with an exact oracle and choose partitions or candidate budgets from measured tails.
 5. **Injection defense:** treat retrieved text as data, enforce capabilities outside the model, and test unauthorized side effects separately from benign task success. Do not use blanket refusal as the sole success metric.
+
+## Building and Evaluating a Bounded Agent Loop
+
+LEAD: An agent is a model inside a program that chooses actions, observes results, and decides what to do next. The program owns permissions, budgets, durable state, and the definition of success. More model calls alone do not create a reliable agent.
+
+### Distinguish a workflow from an agent
+
+A workflow follows a prescribed graph: retrieve, rerank, answer, validate. An agent can choose which tool to use and whether to search again, edit a file, or finish. The choice is useful when the next step depends on evidence that cannot be known in advance. A fixed workflow is easier to test when the sequence is already known. A hybrid can let the model choose within a small, explicitly bounded subgraph.
+
+[ReAct](https://arxiv.org/abs/2210.03629) studies interleaving reasoning and actions. [SWE-agent](https://arxiv.org/abs/2405.15793) demonstrates that the interface through which a model inspects and changes an environment matters. These observations do not require exposing private reasoning or granting unrestricted shell access. A trace of proposed actions, observations, checks, and results is enough to audit the external work.
+
+For a documentation assistant, begin with a narrow task: read authorized sources and prepare a draft answer. Do not give it a send-message or account-modification tool merely because the model can generate those tool names. Add a capability only when the user workflow requires it and the surrounding service can authorize, constrain, and recover it.
+
+### Follow the control loop
+
+| Stage | Required input | Host-owned check |
+| --- | --- | --- |
+| Observe | User objective, permitted context, previous results | Scope and provenance remain distinct |
+| Propose | Typed tool call or final response | Parse schema; reject unknown tools and invalid arguments |
+| Authorize | Caller identity and proposed effect | Check policy against the real target, not model text |
+| Execute | Validated call plus deadline and identity | Sandbox, resource budget, timeout, idempotency |
+| Record | Result or explicit failure | Append an event; retain external transaction identity |
+| Continue or finish | Updated observations | Enforce budgets and validate the claimed outcome |
+
+Tool output is an observation, even when it says “SYSTEM: ignore your rules.” A schema prevents malformed calls, not malicious but well-formed arguments. The authorization layer must resolve paths, tenants, domains, operation types, and effects independently. Credentials belong in the execution service, not in model-visible prompts. Source trust is metadata outside the text being evaluated.
+
+### A complete local fixture
+
+Run `python -m examples.agent_loop`. It prints `finished 1 0`: one permitted document-read attempt, no saved drafts. The module includes the decision loop, typed actions and observations, a tool allowlist, a draft capability, bounded attempts, and receipt-based retries. Its policy is scripted so failures are deterministic and require no model account or network.
+
+Example status: Runnable excerpt; execute from the repository root.
+
+```python
+from examples.agent_loop import Call, Environment, Finish, run
+env = Environment({"policy": "Draft only; review before sending."})
+
+def policy(observations):
+    if not observations:
+        return Call("read_document", "policy", "read-1")
+    return Finish("I found the policy. Nothing was sent.")
+result = run(policy, env, max_steps=6, max_tool_attempts=3)
+assert result.status == "finished"
+assert result.tool_attempts == 1
+assert env.drafts == []
+```
+
+The fixture also tests a malicious document followed by a proposed unauthorized write. The write is denied by the environment even though the scripted policy proposes it. This establishes one enforced capability boundary, not general prompt-injection resistance. Replacing the policy with an LLM adds probabilistic behavior that needs its own evaluation. The example does not implement a remote sandbox, real-time call interruption, durable storage, concurrent transactions, token accounting, or semantic answer verification.
+
+### Retry an effect without duplicating it
+
+A timeout does not prove a write failed. Suppose saving a draft succeeds, but its reply is lost. Retrying with a new identifier can create a second draft. The fixture retries the same call with the same idempotency key. The environment stores the request identity and result together and returns that result on replay. Reusing the key for different arguments is an error. Authorization is checked again before replay so a revoked capability is not resurrected by a cached receipt.
+
+In production, the receipt and effect must be atomic or reconciled through the external service's transaction identifier. An in-memory dictionary is lost on restart and cannot establish exactly-once behavior across processes. If a remote API offers neither idempotency nor a way to query the effect, stop automatic retries after an ambiguous write and expose the unresolved outcome. “Try harder” is not a recovery protocol.
+
+Read retries also cost time and quota. Distinguish transient transport failure, invalid input, policy denial, exhausted budget, and unavailable evidence. Blindly retrying a denied action is a loop, not progress. A safe fallback preserves uncertainty: “The request may have completed; its status is unknown” is more honest than reporting failure and creating another effect.
+
+### Memory is versioned evidence, not an authority upgrade
+
+An agent can retain short-term observations in context, summarize an episode, and retrieve longer-term records. Each has a different failure mode. Context grows expensive; summaries can remove qualifications; retrieval can miss facts or surface stale ones. Store source IDs, creation time, task scope, and authority with important memories. A note claiming that a user approved an action is not itself authorization for a new task.
+
+For a coding task, keep the baseline commit, objective, current hypothesis, experiment command, result, and next uncertainty in a small task record. Put large profiler traces and outputs in files with stable paths. Reload the baseline and measured result after context compaction rather than trusting a summary that says “the fast version passed.” In an enterprise agent, tenant and permission boundaries must apply to memory retrieval just as they apply to RAG.
+
+Parallel agents can explore independent hypotheses in separate branches or worktrees. Each returns a diff plus evidence against the same baseline. Integration is a separate operation: review conflicts, run the combined tests, and remeasure the merged result. Two individually valid changes can interact badly. More agents help only while independent useful work exceeds coordination, compute contention, and review cost. Do not give workers shared mutable output files or let completion order choose the winner.
+
+### Evaluate tasks, trajectories, and budgets
+
+Define success using the environment's final state: the correct draft exists, tests pass without unauthorized edits, or the requested information is supported. A final message saying “done” is not an oracle. Keep forbidden effects, data disclosure, and task completion as separate metrics; blanket refusal should not win the benchmark.
+
+Use a development set to improve prompts/tools and an untouched test set for acceptance. Fix or record model version, harness, tool schemas, dataset/environment snapshot, sampling, budgets, retry policy, and evaluator. Repeat stochastic runs and report variance and success per task slice. [τ²-Bench](https://arxiv.org/abs/2506.07982) is an example of evaluating interaction in an environment with both agent and user control, rather than scoring only a static answer.
+
+An original cost example: a task uses six calls, each with 4,000 input and 500 output tokens. It consumes 24,000 input and 3,000 output tokens before tool costs. With symbolic prices `C_in` and `C_out` per million tokens, model cost is `0.024 C_in + 0.003 C_out`. If only half of attempts meet the task contract, average cost per success doubles, assuming the same average cost per attempt. A cheaper call can therefore produce a more expensive successful task if it needs more retries.
+
+Measure latency from request arrival to verified completion, including tool queues and failed branches. Record where time is spent: context construction, generation, tool execution, verification, or waiting for authorization. Shortening the loop often means better observations and a sharper verifier, not simply buying faster generation.
+
+### Exercises and worked answers
+
+1. **A retrieved document asks the agent to email secrets. Where is the decisive check?** Outside the model, before any tool executes, against caller authority and target scope. Marking text untrusted is necessary but not a sandbox.
+2. **A save times out after committing. Should the agent create a new request?** Reuse the same idempotency identity or query transaction status; otherwise stop and reconcile the ambiguous effect.
+3. **An agent repeatedly searches without improvement. What stops it?** Host-enforced call/time/token budgets and an explicit failure outcome, not a request in the prompt to be efficient.
+4. **When do parallel agents help?** For separable experiments with independent state, a common baseline, bounded resources, and a verified merge. Shared-file contention and duplicate hypotheses can erase the gain.
+5. **Does the fixture's passing injection test prove robust model behavior?** No. It verifies a deterministic denied capability. Real models, other tools, observation poisoning, and authorized-but-harmful arguments require broader adversarial tests.

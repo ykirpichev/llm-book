@@ -40,6 +40,16 @@ class BuildBookTests(unittest.TestCase):
         )
         self.assertEqual(rows, [["A", "B"], ["one", "two"]])
 
+    def test_table_heading_shares_its_keep_group(self) -> None:
+        from unittest.mock import Mock
+        source = Mock()
+        source.read_text.return_value = "### Three masks\n\n| A | B |\n| --- | --- |\n| one | two |\n"
+        _, story = build_book.build_story([source], 400)
+        group = story[-1]
+        self.assertIsInstance(group, build_book.KeepTogether)
+        self.assertIsInstance(group._content[0], build_book.Heading)
+        self.assertIsInstance(group._content[1], build_book.Table)
+
     def test_inline_code_preserves_multiplication_and_emphasis(self) -> None:
         rendered = build_book.inline_markup("`B * H` and `S * d` with **bold**")
         self.assertIn('<font name="Courier">B * H</font>', rendered)

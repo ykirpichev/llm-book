@@ -6,6 +6,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ManuscriptTests(unittest.TestCase):
+    def test_chapter_coverage_ledger_is_complete(self):
+        ledger = (ROOT / "docs" / "coverage-audit-2026-09.md").read_text()
+        chapters = [line[3:] for path in sorted((ROOT / "manuscript").glob("*.md"))
+                    for line in path.read_text().splitlines() if line.startswith("## ")]
+        self.assertEqual(len(chapters), len(set(chapters)), "Duplicate chapter title")
+        for chapter in chapters:
+            self.assertEqual(ledger.count(f"| {chapter} |"), 1, chapter)
+
+    def test_display_equations_have_one_caption_separator(self):
+        for path in sorted((ROOT / "manuscript").glob("*.md")):
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if line.startswith(":::equation "):
+                    self.assertEqual(line.count("|"), 1, f"{path.name}:{number}")
+
     def test_code_blocks_have_status_and_are_closed(self):
         for path in sorted((ROOT / "manuscript").glob("*.md")):
             inside = False

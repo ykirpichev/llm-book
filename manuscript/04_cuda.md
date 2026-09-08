@@ -1095,6 +1095,93 @@ Fusion can increase registers and shared memory, reduce resident blocks, prevent
 
 Training/prefill has many query rows and large tiles, enabling compute reuse and tensor-core efficiency. Decode has one new query per active sequence, streams a long and often paged KV cache, and is commonly bandwidth- and latency-bound. Its schedule emphasizes KV layout, vectorized loads, batch mapping, and low launch overhead rather than quadratic-score avoidance.
 
+## Blackwell Pipelines and Modern Attention Kernels
+
+LEAD: Faster matrix units do not automatically make a compound kernel faster. On modern GPUs, the main problem is often keeping several asynchronous engines supplied while preserving the lifetime and numerical meaning of every intermediate.
+
+### Separate the hardware resources
+
+The earlier tiled GEMM explains reuse. A Blackwell data-center implementation adds another question: which engine owns each stage, and how does another engine know that it has completed? The architecture-specific discussion here concerns the SM100 family, not a promise that every product carrying the Blackwell name supports the same instructions.
+
+| Resource | What belongs there | What it does not imply |
+| --- | --- | --- |
+| Global memory / HBM | Persistent weights, activations, KV, outputs | A value is not on chip merely because its address is known |
+| Shared memory | Cooperatively staged operand tiles | A normal thread barrier is not every asynchronous engine's completion event |
+| Registers | Thread-local indices and scalar/vector work | More live values can reduce occupancy or spill |
+| Tensor memory, TMEM | Architecture-defined matrix accumulators and supported intermediates | It is not a general replacement for shared memory or the KV cache |
+| TMA and tensor-core engines | Asynchronous transfers and matrix operations | Issuing an operation does not make its result ready |
+
+CUTLASS documents SM100 GEMM organization and supported instruction/layout combinations. PTX specifies the actual `tcgen05` operations, memory ordering, and completion mechanisms. A framework may call these matrix operations UMMA; use the architecture and compiler documentation when choosing legal operand layouts, synchronization, and CTA grouping. See [CUTLASS Blackwell SM100 GEMMs](https://docs.nvidia.com/cutlass/latest/media/docs/cpp/blackwell_functionality.html) and the [PTX instruction reference](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html).
+
+### Derive a two-buffer ownership protocol
+
+Start with a portable dependency model before writing architecture-specific instructions. Buffer zero carries even tiles; buffer one carries odd tiles. Each reuse has a generation number so completion of an old tile cannot satisfy a wait for a new tile. The valid lifetime is `FREE → FILLING → READY → IN_USE → FREE`.
+
+| Event | Producer permission | Consumer permission |
+| --- | --- | --- |
+| Buffer free for generation g | Begin filling the entire required tile | None |
+| Transfer complete for g | Do not overwrite the tile | Read the tile or issue its matrix operation |
+| Matrix operation issued | Still cannot overwrite an asynchronously consumed operand | Wait before reading unfinished results |
+| Last consumer complete | Reuse for generation g+1 | No further access to generation g |
+
+Example status: Explanatory pseudocode; this describes dependencies, not a CUDA API implementation.
+
+```text
+producer, for each tile j:
+    slot = j % 2
+    generation = j // 2
+    wait_until_free(slot, generation)
+    start_transfer(slot, tile=j, generation=generation)
+    publish_ready_after_transfer_completion(slot, generation)
+
+consumer, for each tile j:
+    slot = j % 2
+    generation = j // 2
+    wait_until_ready(slot, generation)
+    operation = issue_matrix_work(slot)
+    wait_for_last_read_of_slot(operation)
+    release_slot(slot, generation + 1)
+wait_for_all_result_writes_before_epilogue()
+```
+
+The real implementation may use phase bits rather than unbounded counters, and may prove an operand is released before the full output operation finishes. That optimization requires the documented lifetime rule; it cannot be inferred from host submission order. A missing completion wait can pass tests when the producer is slow and fail once transfer overlap improves. A partial final tile must also obey the transfer's expected byte count or padding protocol; a wait for bytes that will never arrive can hang forever.
+
+Use a simple original timing model. Loading one tile takes 3 microseconds and consuming it takes 5. Four serial tiles take `4 × (3 + 5) = 32` microseconds. With independent engines, sufficient buffering, and negligible synchronization cost, the overlapped schedule takes `3 + 4 × 5 = 23` microseconds. It does not take 12: the consumer remains the bottleneck. If both operations saturate the same memory path, the independence assumption fails. Extra buffers then consume capacity without achieving the predicted overlap.
+
+### What FlashAttention-4 changes
+
+The [FlashAttention-4 paper](https://arxiv.org/abs/2603.05451), released in March 2026, targets Blackwell's imbalance between matrix throughput, non-matrix work, and data movement. Its forward pipeline overlaps matrix work and softmax; its backward design uses tensor memory and cooperative CTA execution to reduce traffic and reduction overhead. It also supports a deterministic execution mode. These are changes to the schedule and numerical implementation of attention, not permission to omit attended keys.
+
+The [authors' implementation explanation](https://tridao.me/blog/2026/flash4/) describes alternating query tiles, a separate correction stage, distributing exponential work between special-function and FMA units, conditional rescaling, and tensor-memory reuse. The important learning step is to connect each optimization to a resource: distributing exponentials relieves a specialized unit; moving an intermediate reduces shared-memory traffic; changing tile ownership changes reduction and synchronization cost. None promises the same speedup for short decode, every head dimension, or a whole service.
+
+Conditional rescaling is easiest to understand independently of a particular kernel. Softmax can accumulate numerator and denominator relative to **any** shared reference `r`, provided intermediate exponentials remain representable:
+
+:::equation o = Σ_{j} exp(s_{j} - r) v_{j} / Σ_{j} exp(s_{j} - r)|The common factor exp(-r) cancels; choosing a stable reference is a numerical requirement.
+
+With scores `[0, 1]`, reference zero gives unnormalized weights `[1, e]`. Reference one gives `[1/e, 1]`. Both normalize to the same probabilities. Therefore a small increase in the observed maximum does not mathematically require immediate rescaling if the old reference is retained consistently. Changing the reference for new terms while forgetting to rescale old terms is wrong. A large positive score jump can overflow, so a real implementation needs a safe threshold, consistent numerator/denominator bookkeeping, and a final normalization. An approximate exponential adds a separate numerical error that this identity does not remove.
+
+### Low-bit attention is a numerical experiment
+
+Weight-only quantization, low-bit `QK` multiplication, and low-bit probability/value multiplication are separate choices. Softmax probabilities can contain many small values, and errors in the probability/value product affect a weighted sum, not just a single matrix element. Scale selection, accumulation, backward recomputation, and layer-wise drift all matter.
+
+A September 3, 2026 [hardware-aware FP4 FlashAttention-4 preprint](https://arxiv.org/abs/2609.04105) illustrates the boundary: it reports benefits in selected kernels, while its evaluated distributed training keeps an FP8 probability/value path after tested MXFP4 alternatives diverged. This is early, workload-specific evidence, not a conclusion that FP4 attention is either universally safe or universally unusable.
+
+An acceptance ladder is: compare against an FP32 reference on adversarial rows; check full-layer outputs and gradients; run a short matched training trajectory; then evaluate convergence and deployment metrics. Include all-masked rows, large score differences, long reductions, and non-power-of-two dimensions. A maximum error from random Gaussian inputs is not a substitute for these cases.
+
+### Choose the implementation boundary
+
+Use a library when its supported operation matches the contract. Use a kernel language or template system when fusion, a layout, or a workload specialization creates a measurable opportunity. Use hand-written low-level instructions only when their extra control addresses an observed limit and the team can maintain synchronization and architecture-specific tests. CuTe DSL and Triton change how schedules are expressed; they do not remove tile lifetimes, register pressure, or numerical obligations.
+
+Compare three baselines explicitly: a readable mathematical reference for semantics, a production implementation for performance, and the current deployed end-to-end path for value. A scalar CUDA loop is an excellent correctness starting point and usually an inappropriate headline performance denominator.
+
+### Exercises and worked answers
+
+1. **When can a staging buffer be reused?** After its last asynchronous reader completes, not merely after the instruction is issued or producer threads synchronize.
+2. **What happens if loading becomes 7 microseconds and consumption remains 5?** The ideal four-tile pipeline takes `4 × 7 + 5 = 33` microseconds; transfer now controls steady state.
+3. **May a softmax kernel skip every rescale?** Only under a proven representability bound with consistent reference bookkeeping. Arbitrary scores defeat that bound.
+4. **Why can faster matrix instructions fail to improve attention?** Exponentials, layout conversion, shared-memory traffic, synchronization, or insufficient parallel work can control the critical path.
+5. **Does a forward FP4 benchmark justify training deployment?** No. Backward behavior, accumulated numerical drift, convergence, and matched quality remain untested by that result.
+
 ## CUDA Kernels for LLM Inference
 
 LEAD: LLM serving kernels operate on dynamic batches, ragged state, low precision, and strict token cadence. Layout and scheduler contracts are part of kernel design.

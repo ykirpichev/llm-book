@@ -100,6 +100,69 @@ Write down the prediction before measuring. When observation disagrees, the resi
 3. Identify three invariants for a service that streams model output while executing tools.
 4. Explain why independent prompt-length and output-length histograms can produce a misleading capacity forecast.
 
+## From Text to Tokens, Targets, and Loss
+
+LEAD: Before a model can learn or generate, text must become a sequence of discrete decisions. Tokenization, conversation serialization, and loss masking define those decisions; they are part of the model, not interchangeable preprocessing.
+
+### Why a token is not a word
+
+A vocabulary maps integer IDs to pieces of text or bytes. A word-level vocabulary handles frequent words cheaply but needs a policy for unseen names. Character or byte vocabularies avoid many unknown-token problems but lengthen sequences. Subword vocabularies trade these costs: common strings use fewer positions while rare strings remain representable through smaller pieces.
+
+The [subword BPE paper](https://arxiv.org/abs/1508.07909) adapts repeated pair merging to language segmentation. In a small byte-level example, start with the bytes of `low low`. A merge table first combines `l` with `o`, then `lo` with `w`, giving the pieces `[low, space, low]`. Training the merge table counts pairs in a corpus; encoding new text applies learned merge ranks. Encoding does not retrain the vocabulary on each request. Real tokenizers also specify normalization, pretokenization boundaries, reserved symbols, and decoding rules.
+
+Unigram tokenization instead starts from candidate pieces with probabilities and chooses a segmentation according to their scores. Training removes less useful candidates while retaining coverage. [SentencePiece](https://aclanthology.org/D18-2012/) is a tokenizer implementation framework supporting subword models directly over raw text, not a synonym for one segmentation algorithm. Neither BPE nor a unigram model guarantees that linguistic words, numbers, or code identifiers occupy one token.
+
+In a byte-level scheme, one token can end halfway through a multibyte Unicode character. Decode the accumulated bytes with a streaming decoder rather than decoding every token independently and inserting replacement characters. Normalization can also change the original byte sequence. If exact copying of source code, identifiers, or signed text matters, specify which transformations are permitted and test round trips on those inputs.
+
+The tiny `bpe_pieces` reference in `examples/sequence_models.py` deliberately omits normalization and pretokenization. Its purpose is to make ranked merging and byte reconstruction inspectable, not to reproduce a production tokenizer.
+
+### Vocabulary size moves cost rather than removing it
+
+For vocabulary size `V` and hidden width `D`, an embedding table holds `V*D` parameters. The output projection has the same shape transposed; weight tying shares the parameters but does not remove output-projection computation. A larger vocabulary may shorten a sequence, while increasing the table, logits, and sampling work.
+
+Consider an illustrative model with `D=4096`. Increasing a tied vocabulary from 32,000 to 128,000 entries adds `96000*4096=393216000` parameters, or about 786 MB at two bytes each. If token count falls by 20 percent on a fixed raw-text workload, projection/MLP work per document roughly falls with sequence length, while full attention's pair count falls toward `0.8²=0.64` of the original. These are separate effects; output-head cost and changed language coverage can reverse the overall choice.
+
+Measure tokens per byte or character by language and domain, not only on English prose. A tokenizer that fragments one script heavily imposes a shorter effective context and more generation steps on those users. Compare models on the same raw evaluation text and task outcomes. Per-token perplexities under different tokenizers are not directly comparable because the prediction units differ. Bits per byte can help when normalization and byte accounting are also fixed.
+
+### Autoregression is a factorization, not a decoding trick
+
+A causal language model represents a sequence probability as a product of next-token conditional probabilities. Taking logs converts that product into a sum:
+
+:::equation log p(x_{1:S}) = Σ_{t=1}^{S} log p(x_{t} given x_{<t})|The prediction at position t must not observe its own target or a later token.
+
+Teacher forcing supplies the known prefix during training. For tokens `[BOS, A, B, EOS]`, the three input positions `[BOS, A, B]` predict `[A, B, EOS]`. A causal mask permits each input position to read itself and earlier input positions, but not later ones. Training evaluates many such predictions in parallel because the true prefix is known. Generation must obtain the next token before it knows the next prefix.
+
+The model emits one logit per vocabulary item. Softmax turns the logits into probabilities, and cross entropy for the observed target is the negative log of its probability. If three valid targets receive probabilities `0.5, 0.25, 0.5`, the mean loss is about `0.924` nats and perplexity is about `2.52`. Perplexity is the exponential of mean negative log probability, not the fraction of correct answers or a calibrated confidence in an entire response.
+
+Compute log probabilities with log-sum-exp: subtract the maximum logit before exponentiating, then restore it in the logarithm. The reference `masked_token_loss` implements this calculation without depending on a deep-learning framework. It rejects a batch with no supervised targets rather than dividing by zero.
+
+### Three masks with different jobs
+
+| Mask | What it controls | A common mistake |
+| --- | --- | --- |
+| Causal/attention mask | Which positions may influence a hidden state | Letting an earlier prediction see a later answer |
+| Padding mask | Which positions are real sequence data | Reading padded keys or scoring padding as text |
+| Loss mask | Which target predictions contribute to the objective | Training on user/tool text unintentionally |
+
+A loss-masked prompt still influences the assistant's hidden states through attention. Removing its loss does not remove it from context. Conversely, masking attention to a token does not automatically remove that position's target from the objective.
+
+For assistant-only SFT, serialize roles and message boundaries using the model's template, then mark assistant target spans. Decide whether to learn end-of-turn markers and tool-call syntax. Keep a short hand-checked trace showing input IDs, decoded pieces, target IDs, attention visibility, and loss weights. This catches off-by-one labels and incorrect assistant spans before an expensive run.
+
+When packing independent documents into one tensor, decide whether to permit cross-document attention. A block-diagonal causal mask preserves independent examples; plain concatenation changes the training distribution by exposing one document to another. Reset or preserve positions consistently with that policy. Mask the artificial next-document transition if it is not a desired target. Packing is not only a padding optimization.
+
+### A checkpoint includes its text interface
+
+An integer ID has meaning only under the matching vocabulary and embedding row. Reordering IDs while retaining the same tensor shape silently corrupts a model. Adding special tokens requires corresponding embedding/output rows and training for their use. Changing a chat template can alter behavior without touching weights.
+
+Version tokenizer files, normalization, special-token policy, template, stopping rules, and weights together. Test an ordinary conversation, an empty message, a tool exchange, Unicode, code whitespace, and literal strings that resemble control markers. Treat untrusted text as message content; do not let it create privileged roles merely by containing a delimiter.
+
+### Exercises and worked answers
+
+1. **Why can a bigger vocabulary make serving slower?** It adds embedding/logit bytes and output-head work. Measure any sequence shortening against those costs at the actual batch and language mix.
+2. **Does masking prompt loss hide the prompt from the model?** No. Attention visibility and supervision are different masks. Prompt tokens can remain the entire conditioning signal.
+3. **How do you compare loss across tokenizers?** Use an identical raw-text corpus and a compatible byte-normalized measure, then compare task behavior. Equal per-token loss does not imply equal text likelihood.
+4. **What is the minimum packing regression test?** Compare two examples run separately with their packed block-diagonal version, checking valid-position logits and summed loss under the same position policy and numerical tolerance.
+
 ## Optimization as a Coupled Dynamical System
 
 LEAD: Training is not an optimizer acting on a fixed objective. It is a coupled dynamical system whose trajectory depends on data order, batch construction, numerical representation, distributed execution, and the rules used to recover from failure.
@@ -143,6 +206,16 @@ AdamW applies weight decay as a separate shrinkage term rather than inserting an
 :::equation θ_{t+1} = (1 - η_{t} λ) θ_{t} - η_{t} m_{t}^{c} / (√v_{t}^{c} + ε)|Decoupled decay preserves a clearer distinction between optimization and parameter shrinkage.
 
 That distinction matters because adaptive scaling would otherwise make the effective regularization coordinate-dependent. It does not imply that AdamW is universally superior. The optimizer trades memory, communication, convergence behavior, and robustness. Optimizer states may consume more memory than the parameters themselves; sharding or quantizing those states changes the execution plan.
+
+### Matrix-aware updates: what Muon changes
+
+AdamW scales gradient coordinates using elementwise moment estimates. Muon instead uses a momentum matrix and approximately orthogonalizes its update direction for selected matrix-shaped parameters. If a momentum matrix has singular-value decomposition `M=UΣV^T`, the idealized direction `UV^T` removes the relative singular-value magnitudes. Practical implementations approximate that transformation with matrix iterations rather than computing a full SVD every step. Rectangular matrices, update scale, momentum, and numerical precision all matter.
+
+[Muon is Scalable for LLM Training](https://arxiv.org/abs/2502.16982) studies weight decay and update-scale choices for large-model use. It does not establish one universal optimizer setting for every architecture. Embeddings, output heads, vectors, and matrix parameters need an explicit optimizer assignment; a hybrid optimizer configuration is not an implementation error.
+
+An original two-dimensional example makes the distinction concrete. For diagonal momentum `diag(100, 1)`, an unnormalized momentum step is dominated by the first direction. Ideal orthogonalization yields `diag(1, 1)` before the chosen overall scale. This balances directions, but also discards magnitude information that might be useful. The method is not equivalent to normalizing the whole matrix by its norm.
+
+Compare optimizers at matched data, model, validation targets, and compute accounting. Include matrix-iteration time and any momentum all-gathers needed by sharded training. A lower number of tokens to reach a loss can coexist with a more expensive optimizer step. Checkpoint the optimizer assignment and states, and rerun learning-rate/decay sweeps rather than copying an AdamW recipe unchanged.
 
 ### Batch size changes statistics and execution
 
@@ -295,6 +368,20 @@ For `H` query heads and head dimension `d = D / H`, the projections form query, 
 
 The equations specify semantics, not an efficient execution plan. Materializing the full `S × S` score and probability matrices creates quadratic memory traffic. IO-aware kernels tile the computation, retain partial softmax statistics on chip, and avoid writing those intermediates to high-bandwidth memory.
 
+### Expand the operations, not only the block names
+
+With row-vector tokens, a projection is `Q = X W_q`: `X` is `S × D`, and `W_q` maps channels into query heads. Split its last dimension into heads, apply the position transformation, and calculate one `S × S` score matrix per head. Causal masking sets scores for future keys to negative infinity **before** softmax. Concatenate the head outputs and apply `W_o` before the residual addition. Batch dimensions repeat this computation; they must never become another attention axis.
+
+In a gated feed-forward block, two projections serve different roles:
+
+:::equation MLP(X) = (SiLU(X W_{g}) ⊙ (X W_{u})) W_{d}|The gate and up projections have width F; the down projection returns to width D.
+
+Here `SiLU(z) = z / (1 + exp(-z))`, and the circled multiplication symbol means elementwise multiplication. The nonlinear gate controls how much of each up-projected channel reaches the down projection. It is not an expert router: every token still executes these dense projections. For a scalar gate input zero, the gated intermediate is zero regardless of the up value; for gate input two and up value three, it is about `1.762 × 3 = 5.285` before the down projection. This explains why a gated MLP has three weight matrices rather than the two of a conventional activated MLP. See [GLU Variants Improve Transformer](https://arxiv.org/abs/2002.05202) for the architectural comparison.
+
+RMSNorm also has a concrete reduction. For channels `[3, 4]`, unit learned gains, and negligible epsilon, the denominator is `sqrt((9 + 16)/2) = 3.536`, giving approximately `[0.849, 1.131]`. Normalization happens along channels within each token, not across the batch. An epsilon protects a zero input, and production reductions generally accumulate more accurately than their stored operands.
+
+For one two-channel pair, RoPE applies the rotation `R(θ) = [[cos θ, -sin θ], [sin θ, cos θ]]`. Since `R(a)^T R(b) = R(b-a)`, the rotated query/key dot product depends on their relative angle. A vector `[1, 0]` at angle zero dotted with the same vector at angle `π/2` gives zero, not one. Different pairs use different frequencies, and implementations differ in whether pairs are adjacent or split across the head. Loading the right weights with the wrong pairing convention silently changes the model. See [RoFormer](https://arxiv.org/abs/2104.09864).
+
 ### Account for parameters, FLOPs, and activation state
 
 In a dense decoder block, attention projections contribute on the order of `4D²` parameters when query, key, value, and output widths all equal `D`. A gated MLP with intermediate width `F` contributes roughly `3DF` parameters because it commonly uses two input projections and one output projection.
@@ -381,6 +468,96 @@ This review prevents local optimization. An MoE model can be compute-efficient a
 4. Design a long-context evaluation that includes both capability and system constraints.
 5. Review an architectural proposal whose training FLOPs fall by 15 percent but whose serving kernel support is immature.
 
+## Compressed, Sparse, and Recurrent Model State
+
+LEAD: Modern language models do not all retain one explicit key and value per head per token. To compare architectures, ask what information is stored, how a new token reads it, and which approximation or learned bottleneck makes the state cheaper.
+
+### Start from the dense attention contract
+
+For one query, softmax attention compares that query with every permitted key and returns a normalized weighted sum of values. GQA shares K/V heads but retains token-addressable history. FlashAttention changes the execution schedule while preserving this mathematical operator, up to floating-point differences. Sparse attention, latent compression, and recurrent state change different parts of that contract.
+
+| Family | Persistent history | New-query work | What must be evaluated |
+| --- | --- | --- | --- |
+| GQA | Explicit K/V for each token and KV head | Read all allowed history | Head-sharing quality and KV traffic |
+| Latent attention | Learned compressed token state plus position state | Read compressed history; transform query/output | Compression capacity and efficient absorbed projections |
+| Sparse attention | Token states plus a selection/index mechanism | Select and read a subset | Evidence missed by selection and index cost |
+| Recurrent/linear mixer | Fixed-size state per layer/head | Update/read state | Interference, forgetting, and long-range retrieval |
+| Hybrid | A mixture of growing caches and fixed states | Depends on layer schedule | Combined memory, rollback, and quality |
+
+The table is a map of mechanisms, not a quality ranking. A hybrid can use several rows simultaneously, and the training recipe determines whether the cheaper state learns useful behavior.
+
+### Multi-head Latent Attention: compress before caching
+
+[DeepSeek-V2](https://arxiv.org/abs/2405.04434) introduced Multi-head Latent Attention, or MLA, as a learned low-rank representation of K/V history with a separate position-handling path. Its serving attraction is avoiding storage of the fully expanded per-head keys and values. The low-rank representation is learned with the model; it is not a lossless compressor applied afterward to an arbitrary GQA checkpoint.
+
+The underlying algebra can be understood with a simplified single-head, position-free example. Let a token's latent vector be `c` of width `r`, with `k=W_k c` and `v=W_v c`. Its score against query `q` is `q^T W_k c`, which equals `(W_k^T q)^T c`. Transform the query once, then compare it with cached latent vectors. Likewise, `Σ a_i W_v c_i = W_v(Σ a_i c_i)`: aggregate latents first and expand the output afterward. This avoids reconstructing every old value on every step.
+
+These equalities require compatible linear operations. Position-dependent rotations cannot generally be absorbed into one constant matrix, which is why the actual architecture separates positional and non-positional components. Normalization, head grouping, and projection layout also belong in the real execution plan. A kernel that expands all K/V vectors before attention can give back much of the intended bandwidth benefit.
+
+For an illustrative comparison, ordinary GQA with eight KV heads of width 128 stores `2*8*128=2048` values per token per layer. A hypothetical latent cache of width 512 plus 64 positional values stores 576. At two bytes each and 32 layers, that is 128 KiB versus 36 KiB per token. This is a storage calculation, not a claim that the hypothetical models have equal quality or equal compute. Projection weights, workspaces, and any replicated latent state remain additional costs.
+
+### Sparse attention: selection becomes part of the model
+
+Sparse attention replaces the full set of eligible keys with a smaller set. A local window is a fixed rule; a learned indexer predicts relevant positions; block-sparse methods select groups to improve memory locality. The resulting operator can be exact on its selected support, but it is generally not the same result as dense softmax over all history.
+
+Consider scores `[0, 0, log(8)]` and scalar values `[0, 0, 10]`. Dense attention returns `8`. A selector that misses the third key returns zero. Accurate arithmetic inside the sparse kernel cannot repair the missed evidence. This is why indexer recall and end-task quality must be evaluated together.
+
+DeepSeek's sparse-attention line makes learned selection a first-class computation. The [DeepSeek-V4 report](https://arxiv.org/abs/2606.19348) further combines token compression with sparse retrieval through compressed and heavily compressed attention paths. Compression reduces the candidates' representation cost; selection reduces which candidates receive expensive attention. They are distinct levers, and neither implies unbounded lossless memory.
+
+Let context length be `S`, selected count `k`, index cost `I(S)`, and full per-key attention cost `a`. Sparse work is closer to `I(S)+ak` than simply `ak`. A selector that scans a compact representation of all positions can still be linear in `S`, though with a smaller constant than full attention. At short contexts, index launches and gathers may cost more than dense attention. If `k>=S`, a correct fast path can skip selection and attend to all valid positions.
+
+Test repeated identifiers, many similar distractors, multiple required passages, and evidence outside the local window. Measure selector time, index memory, top-k validity, gather locality, attention time, and the dense/short-context fallback. Report the quality budget separately from the speedup.
+
+### From an attention history to a matrix memory
+
+A simple linear associative memory stores a matrix `S` with shape `[value_dim, key_dim]`. At each position, it adds an outer product `v k^T`; a query reads `S q`. Expanding the recurrence gives a weighted sum of past values, with weights `k_i^T q`. Unlike softmax attention, these weights need not be positive or sum to one. A fixed-size matrix also cannot retain arbitrarily many independent associations without interference.
+
+For example, two identical keys with values 2 and 5 produce a readout of 7 under a plain additive update, not the latest value 5. The delta rule corrects what the memory already predicts for the incoming key instead of repeatedly adding the whole value.
+
+### Gated DeltaNet: forget globally, correct selectively
+
+The [Gated DeltaNet paper](https://arxiv.org/abs/2412.06464) combines a decay gate with a key-directed correction. In a simplified head, let `alpha` be the retention gate, `beta` the update gate, and let `k` have unit norm:
+
+:::equation S_{old}' = α S_{old}|Decay applies to the old memory before the correction is computed.
+
+:::equation e = v - S_{old}' k|The error is the incoming value minus the decayed memory's prediction for this key.
+
+:::equation S_{new} = S_{old}' + β e k^{T},  o = S_{new} q|The rank-one correction targets one key direction; the query then reads the updated memory.
+
+Take a one-row state `[2, 9]`, key `[1, 0]`, and incoming value 5. With both gates equal to one, the prediction is 2, the error is 3, and the new state is `[5, 9]`. The unrelated second direction is preserved. With `alpha=0.5` and `beta=0.5`, decay gives `[1, 4.5]`, the error is 4, and correction gives `[3, 4.5]`. Gates therefore control two different operations. The tests in `tests/test_sequence_models.py` check these exact examples and state replay.
+
+This recurrence is the teaching mechanism, not a complete model block. Real implementations add learned projections, head grouping, short convolutions, gates, normalization, and output projections. State dtype can be wider than the input dtype because repeated updates accumulate error. Unit-norm keys make the overwrite interpretation particularly clear; do not assume that behavior for arbitrary key norms.
+
+Training need not execute a Python loop over all tokens. Rewriting a step as an affine state map permits composition of chunks. For maps `S -> S A_1+B_1` and then `S -> S A_2+B_2`, the combined map is `S -> S(A_1 A_2)+B_1 A_2+B_2`. Associativity creates parallelism, although a practical kernel exploits structure instead of materializing large dense transition matrices. Decode uses the recurrent form because one new token arrives at a time. The two schedules should agree numerically within a declared tolerance.
+
+### State-space models and selective recurrence
+
+A state-space layer also summarizes history, but its parameterization is not the delta rule. A simple discrete system has hidden state `h_t`, input `u_t`, and output `y_t`:
+
+:::equation h_{t} = A_{t} h_{t-1} + B_{t} u_{t}; y_{t} = C_{t} h_{t}|Transition, input, and readout maps control what is retained, written, and observed.
+
+For scalar `A=0.5`, `B=C=1`, zero initial state, and inputs `[2,0,4]`, the states and outputs are `[2,1,4.5]`. The old input decays instead of remaining as an individually addressable KV entry. Structured transitions make larger states affordable. Selective state-space models make aspects of the transition/write/read depend on the current input, so different tokens can be retained differently rather than following one fixed convolution.
+
+[Mamba-2](https://arxiv.org/abs/2405.21060) develops structured state-space duality and an efficient chunked computation connecting these recurrences to structured matrix operations. “Transformers are SSMs” in that paper's title does not mean every full-softmax transformer can be replaced by the same fixed-size state with identical outputs. The useful connection concerns structured computations and schedules, with architectural assumptions.
+
+Compare the scalar example with attention: a later query cannot necessarily recover the exact first input from the single value 4.5. Many input histories lead to that state. Increasing state size, learning selective retention, or adding attention layers changes the capability/resource tradeoff; it does not eliminate compression. During serving, preserve the recurrent state and any local-convolution history together. During training, validate chunked outputs and gradients against a sequential reference on short sequences before trusting a fast scan implementation.
+
+### Hybrids retain more than one kind of cache
+
+The official [Qwen3.5-35B-A3B base model card](https://huggingface.co/Qwen/Qwen3.5-35B-A3B-Base) describes a repeated three-Gated-DeltaNet/one-gated-attention pattern, with MoE feed-forward blocks. This is a concrete hybrid example, not a rule for every model carrying the family name. Its recurrent layers and full-attention layers have different serving-state contracts.
+
+Suppose a hypothetical 32-layer model uses 24 recurrent layers and eight GQA layers. With 16 recurrent heads, `d_k=d_v=128`, and four-byte state, matrix memory is `24*16*128*128*4 = 24 MiB` per sequence, before convolution state. The eight GQA layers still need 32 KiB per cached token under the earlier eight-KV-head assumptions, or 64 MiB at 2,048 tokens. At one token, recurrent state can be larger than the tiny attention cache; at long context it avoids growth in those 24 layers. “Linear attention uses less memory” needs a crossover and a full hybrid ledger.
+
+Prefix reuse now means restoring both attention blocks and the matching recurrent boundary state. Speculative rejection must roll back recurrent and convolution state as well as truncate attention KV. Saving only the current matrix cannot recover an arbitrary earlier prefix. Use snapshots at supported boundaries or replay accepted tokens from a saved state. These are architecture requirements that a generic paged-KV allocator alone does not satisfy.
+
+### Exercises and worked answers
+
+1. **Why is MLA not ordinary KV quantization?** It changes the learned representation and permits projection algebra; quantization changes numerical storage of a chosen representation. They can be combined.
+2. **Can a perfect sparse kernel recover an omitted key?** No. The operator's support has already excluded that evidence; improve selection or use a fallback.
+3. **What does `beta=0` do in the recurrence?** It disables the correction, but decay still acts if `alpha<1`. It is not necessarily a no-op.
+4. **What must hybrid speculative rollback restore?** Attention positions, recurrent matrices, convolution buffers, and any position/RNG state required by the exact verification contract.
+5. **How would you choose among the families?** First compare task quality at the desired context. Then measure stored state, per-token reads, projection/index work, prefill scheduling, and rollback support under the same service SLO.
+
 ## Scale, Memory, and Performance Models
 
 LEAD: Quantitative reasoning turns architecture into a falsifiable resource plan. Start with lower bounds for work, bytes, state, and synchronization; then measure the gap between those bounds and the realized system.
@@ -433,6 +610,8 @@ Empirical scaling laws often approximate reducible loss with power-law relations
 :::equation L(N, D) = L_{∞} + A N^{-α} + B D^{-β}|Loss decreases with model parameters N and training tokens D within the fitted regime.
 
 If dense training compute is approximately proportional to `ND`, a fixed compute budget creates a constrained allocation between model size and data. The value of the model is not the exact fitted exponent. It is the ability to ask whether the next unit of compute has higher marginal return in parameters, tokens, data quality, or experimentation.
+
+To solve the toy allocation, write the fixed budget as `ND = K`, substitute `D=K/N`, and differentiate `A N^(-α) + B K^(-β) N^β` with respect to N. At its interior optimum, `α A N^(-α) = β B D^(-β)`: the marginal benefit of spending on model size balances that of spending on data. With equal exponents and equal fitted coefficients in consistent units, the toy optimum splits scaling symmetrically. In real fits the constants, exponents, units, and architecture matter; the derivation does not justify a universal tokens-per-parameter ratio.
 
 Extrapolation is dangerous. The fitted data distribution, architecture family, tokenizer, optimization recipe, and evaluation metric define the regime. Data exhaustion, repeated examples, context changes, and capability thresholds can break the curve. Always retain uncertainty bands and validate intermediate scales before committing a frontier run.
 

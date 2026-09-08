@@ -4,7 +4,9 @@ A working technical book by Yury Kirpichev covering model training, data, distil
 
 This is a **working draft**, not a finished first edition. Start with the [front matter](manuscript/00_front_matter.md), [release checks](docs/release-readiness.md), or [original review and completion status](docs/editorial-review.md). The existing all-rights-reserved terms are explicit in [LICENSE](LICENSE); no open-source or open-content license is granted at this stage.
 
-The versioned PDF is attached to the [September 2026 working-draft release](https://github.com/ykirpichev/llm-book/releases/tag/draft-2026-09-07). The repository and release remain private; access requires repository permission.
+The expanded versioned PDF is attached to the [September 2026 end-to-end learning release](https://github.com/ykirpichev/llm-book/releases/tag/draft-2026-09-07-expanded). The [earlier checkpoint](https://github.com/ykirpichev/llm-book/releases/tag/draft-2026-09-07) is preserved. The repository and both releases remain private; access requires repository permission.
+
+The [chapter coverage audit](docs/coverage-audit-2026-09.md) records the expanded pass, with a September 7, 2026 research cutoff. Core mechanisms are explained in the book with examples and failure boundaries; references provide supporting evidence. The book does not claim to catalogue every paper or reproduce frontier training runs.
 
 ## Read the draft
 
@@ -52,7 +54,7 @@ Generated PDFs and previews are ignored by Git. A GitHub Release preserves the r
 
 ## Verified teaching examples
 
-See [examples/README.md](examples/README.md) for runnable CPU attention, streaming top-K/statistics, and a small RAG regression fixture. Each has explicit assumptions and tests. Manuscript snippets distinguish runnable code from illustrative excerpts and pseudocode. CUDA excerpts have not been compiled or benchmarked in this release.
+See [examples/README.md](examples/README.md) for runnable CPU references covering a complete tiny-model lifecycle, tokenization/loss, recurrent state, post-training, speculative sampling, quantization, attention, streaming, retrieval, and a bounded agent loop. Each has explicit assumptions and tests. Manuscript snippets distinguish runnable code from illustrative excerpts and pseudocode. CUDA excerpts have not been compiled or benchmarked in this release.
 
 The [claim audit](docs/claim-audit.md) records selected source/version checks and the running-model arithmetic. It is not a line-by-line technical certification.
 

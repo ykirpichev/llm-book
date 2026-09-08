@@ -1,6 +1,6 @@
 # Part VII - Recent State of the Art
 
-This part records engineering results that materially changed how large language models were trained or served from 2024 through August 2026. It is a dated snapshot, not a permanent leaderboard. Reported speedups and benchmark scores belong to the cited paper's hardware, software, model, workload, baseline, and quality threshold.
+This part connects selected research available by September 7, 2026 to the mechanisms developed throughout the book. It is a dated engineering snapshot, not an exhaustive catalogue or permanent leaderboard. Older results remain when they establish a useful mechanism; they are not presented as the newest available implementation. Reported speedups and benchmark scores belong to the cited paper's hardware, software, model, workload, baseline, and quality threshold.
 
 The durable value of a recent result is usually not its rank. It is the mechanism that changed the resource model: sparse activation, better load balancing, reinforcement learning with verifiable rewards, explicit inference-time compute, asynchronous attention pipelines, disaggregated KV state, hierarchical memory, native-resolution multimodality, or enforceable trust boundaries for tools.
 
@@ -27,6 +27,26 @@ An MoE capacity plan therefore needs distributions, not only averages. Measure t
 :::callout insight|Reported training cost is a system result
 A GPU-hour number compresses hardware availability, precision, kernel efficiency, network topology, failure rate, checkpoint policy, and experiment reuse. Compare it only after reconstructing what the number includes.
 :::
+
+### A 2026 architecture map
+
+The [DeepSeek-V4 report](https://arxiv.org/abs/2606.19348) combines compressed sparse attention (CSA), heavily compressed attention (HCA), constrained residual mixing, and Muon. CSA compresses groups of history entries before sparse selection; HCA uses stronger compression with attention over that shorter representation. A local-window branch retains nearby detail. This differs from merely selecting fewer entries from an unchanged full-resolution cache. The resulting cache has multiple representations and partially formed tail state, so memory admission and reuse must understand each component.
+
+As a generic calculation, compressing 1,024 historical entries in groups of eight yields 128 entries; attending to 16 selected compressed entries is not the same operation as attending to 16 original tokens. Each compressed entry summarizes several positions, and information lost during compression cannot be restored by the selector. This example explains the distinction; its group sizes are not the V4 configuration.
+
+The official [Qwen3.5-35B-A3B model card](https://huggingface.co/Qwen/Qwen3.5-35B-A3B-Base) documents a hybrid of Gated DeltaNet and full attention. Part I derives why that means recurrent state plus selected attention-layer KV, not one uniformly growing cache. The [Nemotron 3 Super report](https://research.nvidia.com/labs/nemotron/files/NVIDIA-Nemotron-3-Super-Technical-Report.pdf) combines Mamba/attention with MoE and introduces LatentMoE: projecting tokens into a smaller expert-computation space changes routed bytes and parameter loading. It also describes an NVFP4 training recipe. Neither model should be described simply as “an MoE transformer” when predicting its state or precision behavior.
+
+For a generic expert layer, reducing communicated width from 4,096 to 1,024 quarters the activation payload per assignment at fixed dtype and routing count. Increasing active experts fourfold can spend that saving again. Projection overhead, scaling metadata, and expert compute remain in the ledger. Latent width, active count, and total count must therefore be listed together when making an efficiency claim.
+
+### Residual routing and learned lookup memory
+
+[Manifold-Constrained Hyper-Connections](https://arxiv.org/abs/2512.24880) studies multiple residual streams and constrained mixing between them. A doubly stochastic mixing matrix has nonnegative entries with every row and column summing to one. The intent is to retain richer routing without unconstrained amplification in the residual transport. This is a training architecture change, not a post-hoc serving flag.
+
+For an independent two-stream example, the matrix `[[0.75,0.25],[0.25,0.75]]` maps scalar streams `[2,10]` to `[4,8]`. Each new stream is a convex combination; the sum remains twelve. By contrast, multiplying both streams by two doubles the sum at every layer. The constrained example illustrates transport stability, not a proof that an entire nonlinear network cannot diverge. Layer transformations, gates, finite-iteration constraint enforcement, and optimizer behavior still matter.
+
+[Engram](https://arxiv.org/abs/2601.07372) explores learned conditional memory through n-gram-based lookup as a complement to conditional expert computation. The basic distinction is computation versus lookup: a short token pattern selects stored vectors, while contextual processing determines how useful those vectors are. A lookup table can hold recurring local associations without recomputing them through every dense layer. Hash collisions, table size, placement, and the quality of the contextual gate are engineering concerns.
+
+This is not the same as retrieving current documents from an enterprise corpus. Learned lookup parameters do not automatically provide citations, per-user permissions, or instant factual updates. Nor does discussing Engram establish that a particular released model uses it; require that model's own architecture evidence. Similarly, a fixed lookup-time complexity says little about host/device transfer latency or cache misses.
 
 ### Reasoning from reinforcement learning
 
@@ -80,6 +100,18 @@ The durable mechanism is a deeper software pipeline. Once hardware exposes speci
 
 The production acceptance test still needs ragged and causal shapes, head dimensions, sequence tails, backward or decode variants, numerical drift by layer, graph capture, and end-to-end model throughput. Peak forward attention throughput does not establish application speedup.
 
+### Read the 2026 developments through the earlier chapters
+
+Part IV now derives Blackwell ownership and the FlashAttention-4 pipeline rather than stopping at Hopper. Part III compares feature-based and block-parallel speculative drafts, including EAGLE-3 and DFlash, while retaining the target-distribution verification contract. Part II develops group-relative RL, sequence-level ratios, and feedback-conditioned self-distillation; Part V explains why asynchronous training needs policy-freshness control. These are different changes to the system, not interchangeable ways of “making reasoning faster.”
+
+| Change | Quantity it tries to improve | Evidence that could reject it |
+| --- | --- | --- |
+| Better speculative draft | Committed target tokens per unit time | Draft/verification overhead or state rollback defeats the gain |
+| New attention pipeline | Kernel critical-path time | Unsupported shapes, numerical drift, or another layer dominates |
+| Recurrent / compressed state | Persistent bytes and history processing | Required long-range information is lost |
+| Better RL feedback | Useful learning signal per rollout | Verifier shortcuts or held-out regression |
+| Asynchronous RL | Useful learner/rollout utilization | Stale-data bias, variance, or selection changes quality |
+
 ### KV-centric disaggregation
 
 [Mooncake](https://arxiv.org/abs/2407.00079) reports a disaggregated serving architecture that separates prefill and decode clusters and treats KV state as a distributed object across GPU memory, CPU memory, and SSD. Its scheduler chooses placement and admission under latency objectives. The paper reports up to 525 percent higher throughput than its baseline in selected simulations and 75 percent more handled requests on a production workload. A 525 percent increase means 6.25 times the baseline throughput; it is not the production-workload result and is not a matched comparison against every current serving engine.
@@ -117,6 +149,104 @@ Eviction, quantization, sparse selection, and offload change the model's effecti
 2. Disaggregation wins when saved queueing and improved phase utilization exceed transfer, synchronization, retry, and additional network-tail cost while KV fits within the destination's admission reserve.
 3. Admit from predicted active working set and transfer bandwidth, not nominal host capacity. Reserve headroom, bound concurrent promotions, detect thrashing, and reject or degrade before latency collapses.
 4. Eviction removes state and risks quality; sparse attention retains or tiers state but pays selection cost; quantization reduces bytes with numerical risk; offload preserves values but adds transfer latency. Hybrids should be evaluated against a full-attention quality and latency baseline.
+
+## Multimodal Representations: Images, Video, and Speech
+
+LEAD: A multimodal model must turn signals with space and time into a representation that a language system can learn from and act on. The encoder, alignment objective, sequence layout, and output contract are as important as the language backbone.
+
+### From pixels to language-model inputs
+
+Begin with an image of height H and width W. A simple patch encoder divides it into patches of side p, producing approximately `(H/p) × (W/p)` tokens when dimensions divide evenly. Each flattened patch is projected into a vector; a vision transformer mixes these vectors with position information. A projector then maps visual features to the language model's hidden width. Insert them into a declared multimodal sequence or expose them through cross-attention.
+
+In sequence insertion, visual embeddings occupy positions alongside text and consume backbone context/attention work. In cross-attention, text queries read a separate visual representation; visual-token count still changes cross-attention and encoder cost, but it is not necessarily identical to text KV growth. Early joint training can learn richer integration across modalities; it does not remove modality-specific preprocessing or alignment requirements. [Visual Instruction Tuning](https://arxiv.org/abs/2304.08485) is a primary example of connecting a vision encoder and language model for instruction-following behavior.
+
+An original geometry example: 448 × 448 pixels with 16 × 16 patches gives 784 patch tokens before any pooling or special tokens. Doubling both image dimensions gives 3,136, four times as many. A merge that combines each 2 × 2 patch group reduces those counts to 196 and 784 respectively, while discarding some spatial detail. These are illustrative dimensions, not a particular model's processor configuration. Always calculate tokens **after** the actual resize, crop, patch, and merge policy.
+
+Small text in a document creates a real tradeoff: aggressive downsampling can erase a decimal point before the language model sees anything. Increasing language-model size cannot recover pixels that were removed. Evaluate encoder resolution, OCR/visual parsing, and language interpretation separately.
+
+### Alignment objectives teach different capabilities
+
+Contrastive alignment teaches matching. In a batch of N image/text pairs, compute an N × N matrix of scaled similarities. For each image, use cross-entropy to favor its paired text over other batch texts; commonly apply the reverse direction too. [CLIP](https://arxiv.org/abs/2103.00020) establishes this form of image-language representation learning. A high matching score is not itself a caption generator or a proof of visual reasoning.
+
+For an original two-pair example, logits `[2,0]` give the correct first text probability `exp(2)/(exp(2)+1) ≈ 0.881`, with loss about 0.127. If two captions are both valid descriptions of the image, treating one as a negative creates a data/objective mismatch. Pair quality, duplicated images, and near-identical captions affect the training signal.
+
+Generative alignment instead predicts text conditioned on visual features—for example a caption or answer. Instruction tuning adds varied questions and response formats. Training a projector with a frozen backbone differs from updating the vision encoder and language model together: their memory, compute, forgetting risk, and data needs differ. Evaluate visual grounding using image changes that should alter the answer, not only questions that a text-only prior can answer.
+
+### Video requires time, not only more images
+
+A straightforward video pipeline samples frames, encodes each, and attaches timestamps before combining them with text or audio. Frame order alone is insufficient if sampling rates vary. The model must distinguish “frame 20” from “twenty seconds elapsed.” Temporal pooling can lower cost while losing short actions; adaptive sampling can retain events while adding another learned or heuristic decision.
+
+At two frames per second, a one-minute clip contains 120 sampled frames. With 196 visual tokens per frame, that is 23,520 tokens before text, audio, and temporal compression. A 100-millisecond event can occur entirely between the sampled frames. No downstream reasoning method can guarantee recovery of an unobserved event. Evaluate temporal localization, ordering, and evidence coverage separately from a general video summary.
+
+Grounded outputs need a coordinate contract. If a detector reports normalized `(x,y)` coordinates in a crop, first map them to crop pixels, then undo crop offset, scale, rotation, and padding to locate the point in the original image. A correct label with the wrong coordinate frame can trigger the wrong UI action. For video, preserve the source time base and dropped-frame policy similarly.
+
+### Speech has acoustic and linguistic time scales
+
+Audio may enter as waveform-derived features such as a log-mel spectrogram, then pass through an audio encoder. For generation, a neural codec can compress audio into discrete code sequences that a model predicts before a decoder reconstructs a waveform. [EnCodec](https://arxiv.org/abs/2210.13438) is a primary neural-compression reference. Codec tokens are not words: several codebooks may describe different residual details of one audio frame.
+
+Imagine a codec producing 50 frames per second with eight codebooks. A naive flattening has 400 code symbols per second; a model that predicts codebooks partly in parallel has a different sequential-step count. Neither count should be called text tokens per second. Separate semantic content, acoustic detail, frame rate, codec bitrate, model steps, and audible latency.
+
+A cascaded assistant uses speech recognition, a text model, then text-to-speech. It offers clear component boundaries but can lose prosody and compound errors. A speech-text model can integrate these representations more directly. [Moshi](https://arxiv.org/abs/2410.00037) studies real-time speech-text dialogue; the [Qwen3-Omni report](https://arxiv.org/abs/2509.17765) describes a Thinker/Talker organization for multimodal understanding and speech generation. These systems motivate separating language decisions from waveform production while coordinating their streams.
+
+The April 2026 [Qwen3.5-Omni report](https://arxiv.org/abs/2604.15804) describes hybrid-attention MoE components and adaptive text/speech alignment, addressing differing production rates between text and speech tokens. The underlying problem is general: if text outruns audio, buffering grows; if audio commits too early, later reasoning cannot retract spoken words cleanly. The book does not adopt the report's broad benchmark leadership claims as a universal ranking.
+
+### Budget and evaluate the entire interaction
+
+Time to first audio includes input buffering, encoder work, decision latency, codec generation, waveform decoding, and playback buffering. An original budget of 80, 60, 140, 40, and 80 milliseconds for five sequential stages totals 400 milliseconds; overlap may reduce it, while queueing can enlarge it. A first text token is not a first audible response.
+
+For interruption, stop generation and playback coherently, release queued state, and record what the user actually heard. A tool action already committed cannot be canceled by muting its spoken confirmation. Define turn-taking, barge-in, maximum silence, and degradation on packet loss before optimizing throughput.
+
+Evaluate recognition by language, accent, noise, and domain vocabulary; grounding by visible/audible evidence; generated speech by intelligibility and timing; interaction by successful tasks and appropriate interruption. Train/test splits should avoid speaker, video, or near-duplicate scene leakage. Obtain appropriate rights and consent for source material and voices; data availability is not equivalent to permission to clone a speaker.
+
+### Exercises and worked answers
+
+1. **Why does doubling width and height quadruple patch count?** Patches cover area; both axes double. Attention and encoder costs may then grow faster than the token count.
+2. **Can a larger model fix text destroyed by downsampling?** Not reliably. Preserve the signal or use a better crop/resolution policy before changing the backbone.
+3. **Why is a contrastive model not automatically a generative assistant?** Matching representations and generating conditional responses use different objectives and output mechanisms.
+4. **Why can a correct video summary miss an important action?** Sampling or compression can omit a brief event; evaluate coverage and temporal localization, not only summary fluency.
+5. **What counts as completed speech output?** Audio actually delivered under the interaction contract, with synchronized cancellation and tool state—not merely predicted text or queued codec tokens.
+
+## Diffusion and Block-Parallel Language Generation
+
+LEAD: Autoregressive decoding commits a sequence from left to right. Discrete diffusion-style generation instead learns to reconstruct corrupted token sequences and can refine multiple positions in one model call. Parallel positions do not automatically imply lower total computation or identical semantics.
+
+### Train a masked denoiser
+
+Take a clean sequence and randomly replace some tokens with a mask symbol. The network sees the corrupted sequence and predicts original tokens at masked positions. Vary the corruption level during training so it learns both nearly complete and heavily masked contexts. Unlike a causal decoder, a denoiser can use visible context on both sides of a missing position.
+
+For an illustrative objective with independent mask probability t sampled uniformly in `(0,1]`, weight the summed masked-token cross-entropy by `1/t`. The weighting compensates for how often positions are masked; implementations need their precise noise schedule, conditioning, and loss normalization. This is not obtained by adding a mask token to a pretrained causal model and changing its decoder. [LLaDA](https://arxiv.org/abs/2502.09992) studies large language models trained through a masked-diffusion formulation.
+
+### Generate through a schedule of commitments
+
+Start with a requested output length of masks. Predict distributions for currently masked positions, sample or choose candidate tokens, and reveal a subset according to a schedule—possibly using confidence. Repeat until complete. Some methods remask or revise positions. Output length and end-of-sequence handling are part of the method, not details that left-to-right decoding supplies automatically.
+
+Example status: Explanatory pseudocode; model training, sampling policy, and length selection are intentionally abstract.
+
+```text
+tokens = MASK repeated output_length times
+for step in denoising_schedule:
+    predictions = model(prompt, tokens, noise_level=step.level)
+    positions = choose_positions_to_commit(predictions, step)
+    tokens[positions] = sample(predictions[positions])
+assert no_required_position_is_masked(tokens)
+```
+
+An eight-position sequence revealed two positions per round requires four denoiser calls. Eight autoregressive output positions require eight sequential decode steps, but each denoiser call can process all eight output positions, while cached autoregressive decode processes only the new position against prior state. Comparing four to eight without FLOPs, memory traffic, batch size, and quality is misleading. Independent guesses can also disagree: choosing a subject and verb simultaneously may commit an incompatible pair.
+
+### Block diffusion and cache validity
+
+[Block Diffusion](https://arxiv.org/abs/2503.09573) interpolates between autoregressive blocks and within-block diffusion. Earlier blocks can become fixed context while positions in the current block are refined together. This introduces a tunable tradeoff among block size, denoising steps, parallelism, and quality.
+
+A causal prefix cache is valid because later output cannot alter its representations. A bidirectional mutable block lacks that property: changing one token can change the other positions' hidden states. Do not reuse its KV as if it were an unchanged autoregressive prefix. Cache reuse must follow the method's attention mask and update dependencies; an approximation needs an accuracy test of its own.
+
+A diffusion **draft** inside speculative decoding is a different system from a diffusion **target** model. In the former, an autoregressive target can still define the output distribution if the proposal and verification procedure is valid; Part III discusses DFlash in that role. In the latter, the denoising model and generation schedule define the output behavior. There is no general promise of equality to an unrelated autoregressive model.
+
+### Exercises and worked answers
+
+1. **Does half as many model calls mean twice the speed?** No. Each call may process more positions and move more state; measure end-to-end time at matched quality and batch size.
+2. **Why train across corruption levels?** Inference encounters different amounts of known context as generation proceeds; training only at one mask rate can mismatch that sequence.
+3. **When may an earlier block be cached?** When its representations cannot depend on mutable later positions under the actual attention mask and model computation.
+4. **Is masked denoising exact speculative sampling?** No. It can supply proposals, but a target-preserving verifier needs the correct proposal semantics and acceptance/correction logic.
 
 ## Multimodal and Tool-Using Systems
 

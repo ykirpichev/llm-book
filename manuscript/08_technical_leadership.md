@@ -127,6 +127,24 @@ For each critical interface, define:
 
 Avoid responsibility matrices that assign many “accountable” people. One role owns the decision, even when several teams own execution. Ownership must include authority and resources; assigning accountability without either is organizational fiction.
 
+### Govern a changing model-and-agent stack
+
+A modern release may change the backbone architecture, low-precision kernels, retrieval index, tool permissions, and agent prompt at once. Those changes have different owners and different evidence. Keep a release manifest that binds the compatible versions; avoid making a model-name change stand in for the entire system identity.
+
+| Proposed change | Minimum decision evidence | Accountable boundary |
+| --- | --- | --- |
+| Hybrid or compressed-state model | Slice-level quality, cache/state accounting, rollback compatibility | Model release owner with serving signoff |
+| FP4 or a new attention kernel | Numerical and convergence checks where applicable; end-to-end latency | Kernel/precision owner, not benchmark author alone |
+| Asynchronous RL | Quality versus time/cost, stale-sample and verifier diagnostics | Training owner with rollout-platform support |
+| New agent tool | Authorized effects, failure reconciliation, adversarial task tests | Product capability owner and security review |
+| New retrieval representation | Filtered recall, lineage, deletion/revocation behavior | Data/retrieval owner |
+
+Consider a hypothetical attention replacement that makes a kernel twice as fast. That kernel previously consumed 20 percent of request service time. With all else unchanged, total time becomes `0.8 + 0.2/2 = 0.9` of baseline: a 10 percent reduction, not 50 percent. If layout conversion adds 12 percent of the old total, the replacement loses overall. The decision memo should contain this resource model before the team schedules a large migration.
+
+For an agent improvement, use verified tasks per budget as the outcome. A stricter tool policy can reduce apparent completion while preventing unauthorized actions; a larger model can reduce retries enough to lower cost per success. Separate utility, policy violations, latency, and cost so the decision does not reward unsafe completion or blanket refusal. Define who can stop the rollout when one of these boundaries fails.
+
+The release owner should be able to answer: which immutable baseline did we beat, under whose workload, what changed besides the named technique, which failures remain, and what exactly can be rolled back? That is the leadership counterpart of the book's technical invariants.
+
 ### Review architecture without becoming a gatekeeper
 
 Architecture review should improve local decisions and propagate reusable knowledge. It should not route every design through the most senior engineer. Use tiers based on blast radius, reversibility, novelty, and shared dependencies.
