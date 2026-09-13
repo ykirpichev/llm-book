@@ -1545,6 +1545,22 @@ CUDA names more than a kernel language: an application may depend on its runtime
 
 There are three separate acceptance tests. **Source portability** asks how much code can be reused. **Semantic portability** asks whether it still implements the required computation and state transitions. **Performance portability** asks whether the target meets the workload's service objective. A successful import or compilation establishes none of the latter two by itself.
 
+We will follow that boundary in three stages: port an operator, place the model's state and compiled variants, then judge a deployment against the assistant's workload. Triton supplies the worked tiled kernel; HIP exposes block synchronization; TPU and NKI illustrate different tile schedules. At each stop, ask who owns the row, where working values live, how tails remain correct, and what evidence establishes performance.
+
+The [SYCL standard](https://www.khronos.org/sycl/) offers another heterogeneous C++ programming model, including implementations for Intel GPUs. Its libraries and serving integrations still depend on the selected implementation; this chapter concentrates on the four paths in the diagram.
+
+### Carry one operation across the boundary
+
+Use RMSNorm as a small porting exercise before moving the whole assistant. For an input row `x` of actual width `N`, learned weights `w`, and positive epsilon, the operation is `y[i] = x[i] * rsqrt(sum(x[j]^2) / N + epsilon) * w[i]`. Unlike LayerNorm, it does not subtract a mean. The contract is short; the implementation decisions are not. Who owns a row? Where does its partial sum live? Which participants synchronize? What happens to a padded lane?
+
+For the examples here, input rows and weights are separate read-only tensors; the output is newly allocated. Accumulate squared inputs in FP32 after converting the loaded values, and convert the final result to the output storage dtype. Restrict the values to a bounded activation range: even finite FP32 inputs can overflow when squared, and a positive Python epsilon can round to zero in FP32. Higher-precision accumulation is a useful choice, not a proof that every input is safe. Training would need a backward implementation and gradient tests as well.
+
+:::diagram rmsnorm_port|Padding changes the tile, not the mathematical row width.
+
+For `x = [3, 4, 0]`, unit weights, and epsilon `1e-6`, the squared sum is 25. Using the actual width `N=3` in the mean-square term produces approximately `[1.0392304, 1.3856406, 0]`. Mistakenly using the padded width four produces approximately `[1.1999999, 1.5999999, 0]`. Both look plausible. A width-4096-only test would never expose this bug. The repository's `examples/accelerator_portability.py` provides a higher-precision CPU oracle and rejection tests for out-of-range arithmetic.
+
+Keep two references when validating a real kernel: higher-precision arithmetic for the intended mathematics, and an explicit framework expression for the chosen accumulation and output dtypes. Agreement need not be bitwise across reduction trees or reciprocal-square-root implementations. Set tolerances from the relevant value range and dtype, then check the model's quality; a permissive operator tolerance can conceal a systematic mistake.
+
 ### Triton: change the kernel language, not necessarily the GPU
 
 Triton lets a programmer express operations over tiles of tensor elements instead of spelling out every thread's scalar work. Its upstream project lists NVIDIA and AMD GPU support. It is distinct from the similarly named NVIDIA Triton Inference Server. A Triton kernel targeting NVIDIA still needs the relevant NVIDIA execution stack; selecting an AMD backend does not port surrounding CUDA libraries or extensions. See the [Triton project and compatibility notes](https://github.com/triton-lang/triton).
@@ -1552,6 +1568,31 @@ Triton lets a programmer express operations over tiles of tensor elements instea
 Consider RMSNorm over a row of width 4096. A tiled implementation loads the row, accumulates its squared values, computes the normalization factor, applies the learned scale, and stores the result. The useful algorithm survives a backend change. The best tile layout, number of participating warps, and reduction schedule may not. Test awkward widths and noncontiguous inputs as well as the common case; padding lanes must not contribute to the reduction.
 
 For a first port, use the framework's supported operator. Write or retune a Triton kernel only when profiling identifies a meaningful gap. A portable source file with two backend-specific tuning configurations can be a better maintenance choice than either two unrelated implementations or one universally mediocre configuration.
+
+Here is the body of the accompanying forward-only implementation. A program handles one row; `BLOCK` is the next power of two at least as large as `N`. Input strides are measured in elements. Output rows are contiguous, so their stride is `N`, not the input row stride. Promoting indices before stride multiplication avoids an accidental 32-bit offset limitation.
+
+Example status: Source-only Triton excerpt. Complete wrapper and on-target smoke tests: `examples/accelerators/triton_rmsnorm.py`; no GPU execution recorded.
+
+```python
+@triton.jit
+def rmsnorm_rows(X, W, Y, sx0, sx1, sw,
+                 N: tl.constexpr, EPS: tl.constexpr, BLOCK: tl.constexpr):
+    row = tl.program_id(0).to(tl.int64)
+    col = tl.arange(0, BLOCK).to(tl.int64)
+    valid = col < N
+    x = tl.load(X + row*sx0 + col*sx1,
+                mask=valid, other=0).to(tl.float32)
+    w = tl.load(W + col*sw, mask=valid, other=0).to(tl.float32)
+    square_sum = tl.sum(x*x, axis=0)
+    y = x * tl.rsqrt(square_sum/N + EPS) * w
+    tl.store(Y + row*N + col, y, mask=valid)
+```
+
+The host wrapper is part of the operation. This inference-only example accepts matched input types, positive strides, width at most 8192, and epsilon in `1e-12..1e-2`. It allocates contiguous output on the input device and skips empty launches. Its four-warp configuration needs target-specific tuning. The companion file lists the full argument checks; the bounded-value contract avoids a synchronizing scan on every call.
+
+Test a strided view, not just a contiguous matrix: if storage has shape `(M, 2*N+3)` and the view is `storage[:, 1:1+2*N:2]`, the row stride is `2*N+3`, the column stride is 2, and the new output's row stride is `N`. Sweep unit widths, either side of powers of two, and the implementation limit. Moving from 4096 to 4097 doubles this kernel's logical tile size; that can change register pressure and occupancy. Correct indexing and coalesced access are separate goals.
+
+The [Triton softmax tutorial](https://triton-lang.org/main/getting-started/tutorials/02-fused-softmax.html) is a useful reference for masked power-of-two tiles and strides. The [LayerNorm tutorial](https://triton-lang.org/main/getting-started/tutorials/05-layer-norm.html) explains row reductions and launch choices; its operation includes centering and is not this RMSNorm kernel. Read them alongside the original example rather than assuming a tutorial's benchmark transfers to this workload.
 
 ### AMD GPUs: ROCm, HIP, and the code that translation misses
 
@@ -1563,6 +1604,62 @@ For multi-device work, RCCL supplies AMD-oriented collective operations, includi
 
 Start with a supported framework and serving-engine build, then enumerate custom extensions, attention backends, quantization formats, and MoE kernels. Pin the GPU, operating system, driver, ROCm release, framework, and engine together. The [ROCm compatibility matrix](https://rocm.docs.amd.com/en/develop/compatibility/compatibility-matrix.html) is the starting point; an AMD product name alone is not a support guarantee. Unsupported code may fail loudly, but an unnoticed fallback or layout conversion can be equally costly.
 
+#### A HIP reduction makes ownership explicit
+
+A simple HIP baseline uses one 256-thread block per row. Each thread accumulates columns `tid, tid+256, ...`; shared memory combines the partial sums. This is deliberately independent of warp/wave width. The following excerpt is only the reduction portion: a complete kernel also loads weights and stores normalized values in a second loop.
+
+Example status: Hardware-dependent HIP kernel-body excerpt; not compiled or executed here. Requires exactly 256 threads per block, valid FP32 input pointers, positive element strides, and a nonempty row.
+
+```cpp
+const int64_t row = static_cast<int64_t>(blockIdx.x);
+const unsigned tid = threadIdx.x;
+__shared__ float sums[256];
+float local = 0.0f;
+for (int64_t c = tid; c < n; c += 256) {
+    float v = x[row * sx0 + c * sx1];
+    local += v * v;
+}
+sums[tid] = local;
+__syncthreads();
+for (unsigned step = 128; step != 0; step >>= 1) {
+    if (tid < step) sums[tid] += sums[tid + step];
+    __syncthreads();
+}
+float inv_rms = rsqrtf(sums[0] / static_cast<float>(n) + eps);
+```
+
+For a three-element row, 253 threads contribute zero, but all 256 still reach every block barrier. Adding `if (tid >= n) return;` would break that synchronization contract. This baseline rereads inputs for the output pass, unlike the source-level single-load Triton version; similar arithmetic is not necessarily similar memory traffic. A supported block-reduction primitive may be a better production choice after profiling.
+
+The launch boundary matters too. Check allocation/copy calls, check the launch error, and synchronize at a test boundary to detect asynchronous execution errors. Do not free or reuse input, output, or transfer buffers until their consumers finish. A producer on another stream needs an explicit dependency; residing on the same device does not order it. See the [HIP asynchronous execution guide](https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/hip_runtime_api/asynchronous.html). Do not put a global synchronization after every production operation merely because it simplifies the test.
+
+Example status: Source-only HIP launch excerpt. Assumes checked allocations, positive dimensions, valid pointers, and a live stream; `HIP_CHECK` reports an error and stops the test.
+
+```cpp
+hipLaunchKernelGGL(rmsnorm_f32, dim3(rows), dim3(256), 0, stream,
+                  d_x, d_w, d_y, n, sx0, sx1, sw, eps);
+HIP_CHECK(hipGetLastError());
+HIP_CHECK(hipStreamSynchronize(stream));  // correctness-test boundary
+```
+
+If another stream produces `d_x`, record an event after that production and make this stream wait on it before the launch. Synchronizing the consumer after launch does not retroactively establish the missing producer dependency. The optional `examples/accelerators/hip_rmsnorm.cpp` companion supplies the kernel, output pass, allocation, and test boundary; its compile/run status is recorded separately from CPU tests.
+
+Some familiar names intentionally remain: ROCm PyTorch uses the `torch.cuda` interface and the `cuda` device type. Replacing them with an invented `hip` device string is not the port. Conversely, low-level masks need an actual audit: HIP documents unsigned 64-bit warp masks even for 32-lane targets. Consult [PyTorch HIP semantics](https://docs.pytorch.org/docs/main/notes/hip.html) and the release-matched [HIP language extensions](https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/hip_cpp_language_extensions.html), rather than making a global textual substitution.
+
+#### Follow the time before collecting counters
+
+Start with an unprofiled correctness run and warm timings, then capture host calls, dispatches, and copies. On current ROCm, the ROCprofiler-SDK workflow uses `rocprofv3`; older `rocprof`/`rocprofv2` tooling is marked deprecated. The [SDK quick reference](https://rocm.docs.amd.com/projects/rocprofiler-sdk/en/latest/quick-reference/quick_guide.html) gives current trace and counter commands.
+
+Example status: Illustrative on-target shell workflow; requires a built HIP test program and compatible profiling tools. Not run in this book's CPU environment.
+
+```sh
+rocprofv3 --version
+rocprofv3 --hip-trace --kernel-trace \
+  --memory-copy-trace -- ./rmsnorm_bench
+rocprofv3-avail list --pmc
+```
+
+First ask whether time disappears into host gaps, transfers, or the kernel. Only then select supported counters for that kernel. Record dimensions, strides, dtype, architecture, compiler/runtime versions, warm-up, repetition policy, and clock/power conditions. Profiled timings can include instrumentation overhead; keep the unprofiled baseline.
+
 ### Google TPU: compile the graph and design the tile schedule
 
 A TPU is not a GPU with different branding. Its TensorCores combine matrix-multiply, vector, and scalar resources; the precise organization varies by generation. The matrix units favor well-filled matrix work, but attention also needs reductions, masking, and memory movement. Those operations remain part of the latency budget. Google's [TPU architecture guide](https://docs.cloud.google.com/tpu/docs/system-architecture-tpu-vm) describes the hardware model.
@@ -1573,21 +1670,87 @@ TPUs can serve autoregressive models as well as train them. Google's current inf
 
 For the assistant, prefill presents many query rows and opportunities for matrix reuse. Decode exposes weight and KV reads, small operations, scheduling, and collective latency. The accelerator's matrix peak alone cannot predict either request-level TTFT or token cadence. Ragged lengths, paged KV, and dynamic arrivals require a serving implementation that manages those states efficiently; they do not make TPU serving impossible. Compilation buckets, attention layouts, and host/device boundaries become concrete review items.
 
+#### Choose a Pallas window and count its live values
+
+Begin with a dtype-matched JAX RMSNorm reference, then choose a window for the custom kernel. Suppose the input is `(128, 4096)`, weights are presented as `(1, 4096)`, and each program handles eight complete rows. The input and output windows advance along rows; every program sees the same weight window.
+
+Example status: Source-only Pallas window specification; omits the kernel body and launch. Requires release-matched JAX/jaxlib.
+
+```python
+from jax.experimental import pallas as pl
+
+rows, width, rows_per_program = 128, 4096, 8
+grid = (rows // rows_per_program,)
+x_window = pl.BlockSpec((8, width), lambda p: (p, 0))
+w_window = pl.BlockSpec((1, width), lambda p: (0, 0))
+y_window = pl.BlockSpec((8, width), lambda p: (p, 0))
+```
+
+Under blocked indexing, program `p=3` selects input rows 24 through 31: the index map returns block coordinates, which are multiplied by the block shape. The 16 programs cover all 128 rows. These windows satisfy the documented two-dimensional TPU block-size rules; that is only one part of a valid kernel. The [Grids and BlockSpecs guide](https://docs.jax.dev/en/latest/pallas/grid_blockspec.html) also describes full-dimension exceptions and out-of-bounds padding. Such padding has unspecified values; explicitly mask it when a reduction could read it.
+
+The FP32 input window alone contains `8 * 4096 * 4 = 128 KiB`. An equally sized output adds 128 KiB of logical values, and a single FP32 weight row adds 16 KiB. Temporaries, layout padding, and extra pipeline buffers are additional costs; live ranges determine how much must coexist. This byte ledger narrows the design, but the target compiler and memory report decide whether the schedule fits VMEM.
+
+For a custom TPU kernel, the next question is how HBM rows and weights become on-chip working tiles. TPU Pallas exposes vector memory (VMEM), scalar memory (SMEM), and synchronization mechanisms for staged work. A `Ref` is a mutable memory view; its name alone does not identify its memory space. The [TPU pipelining guide](https://docs.jax.dev/en/latest/pallas/tpu/pipelining.html) shows how block windows and pipelines arrange transfers. The [matrix-multiplication guide](https://docs.jax.dev/en/latest/pallas/tpu/matmul.html) is a concrete example of a grid, an accumulating dimension, and reuse.
+
+Eight complete rows keep each normalization local to a program. Splitting one row across two programs changes the dependency: their partial squared sums must be combined before either fragment can normalize. The implementation must then retain or reload the row values and use a supported multi-stage schedule. The global denominator alone cannot repair a fragment-local numerator.
+
+:::diagram rmsnorm_fragments|Fragmenting a row creates a full-row reduction dependency. The arrows describe required information, not a universally available cross-program barrier.
+
+Pallas offers `pallas_call(..., interpret=True)` for CPU-accessible semantic debugging. It lowers the grid/body into JAX execution; it does not run TPU instructions or establish VMEM fit, legal TPU layouts, DMA overlap, or speed. A separate TPU-specific interpreter models more of those mechanisms, but remains a simulator. Read the [Pallas call contract](https://docs.jax.dev/en/latest/_autosummary/jax.experimental.pallas.pallas_call.html) before interpreting a passing test as hardware support. Pallas is experimental; pin JAX and jaxlib together and consult its [changelog](https://docs.jax.dev/en/latest/pallas/CHANGELOG.html) when adapting older examples.
+
 ### AWS accelerators: Neuron is the stack, not the chip
 
-Trainium and Inferentia are AWS accelerator families. Inferentia targets inference; Trainium supports training and inference. Neuron is their software stack, including compiler, runtime, framework integrations, libraries, and profiling tools. Current documentation also describes native PyTorch on Trainium through TorchNeuron, alongside PyTorch NeuronX and JAX paths. These are distinct integration choices, not interchangeable package names. See the [Neuron SDK overview](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/).
+Trainium and Inferentia are AWS accelerator families. Inferentia targets inference; Trainium supports training and inference. Neuron is their software stack, including compiler, runtime, framework integrations, libraries, and profiling tools. Native PyTorch through TorchNeuron is a closed-beta path in the checked SDK 2.32 documentation; PyTorch NeuronX and JAX are distinct integrations. Confirm access as well as feature support. See the [Neuron SDK overview](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/) and [native PyTorch access note](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/frameworks/torch/pytorch-native-overview.html).
 
-NKI, the Neuron Kernel Interface, exposes tiled custom computation and explicit data movement. Think in terms of moving tiles between HBM and on-chip storage, computing with the available engines, and storing results. SBUF holds on-chip working tensors; PSUM is used for accumulation. Partition dimensions, tile constraints, and lifetime rules replace the CUDA-specific warp schedule. The [NKI introduction](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.31.0/nki/get-started/about/index.html) provides the programming entry point; the [versioned programming model](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.26.0/general/nki/programming_model.html) illustrates the memory hierarchy. Use the documentation matching the deployed SDK for exact constraints.
+NKI, the Neuron Kernel Interface, exposes tiled custom computation and explicit data movement. HBM holds large tensors, SBUF holds on-chip working tiles, and PSUM provides distinct accumulation storage for applicable matrix results. Partition dimensions, tile constraints, and lifetimes determine the schedule. The current [memory hierarchy guide](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/nki/get-started/about/memory-hierarchy-overview.html) is the conceptual starting point.
 
 There is an important release boundary. Neuron's release notes place NxD Inference in maintenance mode starting with SDK 2.32.0. The newer vLLM Neuron plugin is documented as beta and no longer depends on NxD Inference; the current announcement targets Trn2 and Trn3. Do not infer that this path covers older Inferentia hardware just because the umbrella SDK does. Older NxD examples remain useful but should not be presented as the default architecture for a new deployment. See the [NxD release notes](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/release-notes/components/nxd-inference.html) and [Neuron update announcement](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/about-neuron/whats-new.html).
 
 The [vLLM Neuron migration guide](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/vllm-neuron/docs/getting-started/migration-nxdi-to-vllm-neuron.html) separates moving a supported model from reimplementing custom modeling code. Apply that distinction to the assistant: validate its exact attention, quantization, sampling, and cache features before budgeting a full port. A familiar serving API can conceal a different compilation and state-management path.
 
-### Other options and the abstraction boundary
+#### NKI: follow the tile between memory spaces
 
-SYCL is a standardized single-source C++ model for heterogeneous computing. It is relevant when a project needs that programming interface or an implementation targeting another device family, including Intel GPUs. Backend coverage and optimized libraries depend on the implementation; the standard does not create a universal LLM serving stack. See the [Khronos SYCL overview](https://www.khronos.org/sycl/).
+The checked SDK 2.32 pairs with NKI 0.6 and uses the `nki`, `nki.language`, and `nki.isa` namespaces. Use the [migration guide](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/migration/index.html) when adapting older examples, especially for returned-buffer and runtime-loop rules.
 
-CPU inference, local accelerators, and specialized inference appliances belong in a broader deployment evaluation when memory footprint, locality, power, or small-model latency makes them plausible. They are not all replacements for a datacenter training GPU. Compare a supported end-to-end workload, including operational ownership, rather than expanding a vendor list without a decision to make.
+Use this schedule to read the maintained RMSNorm implementation. It is intentionally pseudocode: supported tile shapes, reduction operations, and dtype conversions must come from the selected SDK and target.
+
+Example status: Explanatory NKI schedule; not executable code.
+
+```text
+For a bounded tile containing complete rows:
+    load input and weight tiles from HBM into SBUF
+    reduce squared values across each actual row width
+    compute the inverse RMS and scale the working tile
+    store the output into shared HBM
+If a row spans tiles, combine its partial sums before normalizing it.
+```
+
+SBUF is software-managed working storage, not merely a hardware cache. PSUM is distinct accumulation storage used for matrix results; it should not be drawn as an obligatory stop for every scalar reduction. Returning an output tensor also has a buffer contract: modern NKI uses shared HBM for returned tensors. Read the [memory hierarchy guide](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/nki/get-started/about/memory-hierarchy-overview.html) with the SDK 2.32 [`nki.language.rms_norm` reference](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.language.rms_norm.html). That API's documented targets and input contract are narrower than a universal framework operator; an old tutorial with a similar name may use a different namespace or SDK.
+
+Make the operator arguments concrete. For a `(128, 512)` input tile already in SBUF, dimension zero identifies the 128 partitions and dimension one contains each row's 512 values. Present the learned scale as a same-shaped weight tile repeating the row weights. This explicit layout is easy to read; reusing or broadcasting a smaller weight tile is a separate implementation choice.
+
+Example status: Source-only NKI 0.6 API fragment; assumes FP32 `(128, 512)` input and weight tiles in SBUF. No simulator or device run recorded.
+
+```python
+import nki.language as nl
+
+y_sbuf = nl.rms_norm(x_sbuf, w_sbuf, axis=1, n=512,
+                    epsilon=1e-6, compute_dtype=nl.float32,
+                    dtype=nl.float32)
+```
+
+Here `axis=1` selects the reduction dimension and `n=512` specifies its actual width. Passing `n=4096` for one 512-element fragment of a wider row would still omit the other fragments' squared values. The experimental API's [official source reference](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/_modules/nki/language.html#rms_norm) documents the tile operation; the surrounding implementation must supply loads, a legal target schedule, and the shared-HBM output store.
+
+The [NKI CPU simulator](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/nki/guides/nki_simulator.html), invoked through `nki.simulate(kernel)`, is a functional/debug aid. Sequential host simulation cannot establish instruction scheduling, engine overlap, latency, or bandwidth. After it passes, compile for the named accelerator generation, compare device outputs, and inspect a device trace with [Neuron Explorer](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/tools/neuron-explorer/how-to-profile-workload.html). These are separate gates. A simulator result should never appear in a chart labeled Trainium performance.
+
+| Porting question | Triton / HIP on GPU | Pallas on TPU | NKI on Neuron |
+| --- | --- | --- | --- |
+| Who owns a row? | Program tile or block | Grid program and block window | Program/tile schedule |
+| Where does working state live? | Compiler-managed registers; explicit shared storage in HIP | VMEM/SMEM selected by the TPU schedule | SBUF; PSUM for applicable accumulation |
+| What must a tail preserve? | Masked loads, actual divisor, valid stores | Legal bounded windows and full reduction semantics | Legal tile/partition shapes and full reduction semantics |
+| What establishes speed? | Warm device execution and engine replay | TPU execution/profile and engine replay | Neuron execution/profile and engine replay |
+
+This is a comparison of questions to answer, not equivalence between memory spaces or a hardware support matrix. The common mathematical reference stays above the implementation boundary.
 
 ### Port the running model before comparing devices
 
@@ -1595,9 +1758,62 @@ Keep the assistant's checkpoint, tokenizer, GQA geometry, and quality evaluation
 
 The earlier model's roughly 14 GB of weights and 4.3 GB of logical KV reads give a useful first decode ledger under the stated full-read assumptions. Replace the illustrative GPU bandwidth with the target's measured sustainable bandwidth; do not reuse the earlier 3 TB/s number as a TPU, AMD, or Trainium specification. Likewise, aggregate memory across devices is not freely pooled memory. Weight shards and KV shards must fit where the executable places them.
 
+#### More ranks can replicate state
+
+Assume uniform full-history GQA, no pipeline partition, and tensor parallelism that partitions whole KV heads when possible. With eight KV heads and TP=4, each rank owns two heads: the 4 GiB logical cache becomes 1 GiB per rank. At TP=16, suppose the implementation instead replicates each KV head across two ranks. Each rank holds 512 MiB, but aggregate physical KV becomes 8 GiB. Lower per-rank memory and greater aggregate memory are compatible outcomes.
+
+Now combine TP=4 with context parallelism CP=2, assuming these groups partition heads and token positions independently. Each of eight ranks stores two heads for half the history: 512 MiB per rank and 4 GiB aggregate. This is a placement calculation, not evidence that a chosen engine supports that group combination. Uneven context partitions add padding; pipeline partitions, sliding windows, latent caches, and different replication policies require a different model.
+
+:::diagram kv_port_placement|The same 4 GiB logical cache has different physical layouts. Counts describe ranks, not interchangeable devices. The example isolates KV state; weights, activations, workspace, and reserved pools are additional allocations.
+
+Example status: Runnable Python; self-contained KV arithmetic for the three stated layouts.
+
+```python
+layers, batch, context = 32, 8, 4096
+kv_heads, head_dim, element_bytes = 8, 128, 2
+logical_kv = (2 * layers * batch * context
+              * kv_heads * head_dim * element_bytes)
+results = []
+for tp, cp in [(4, 1), (16, 1), (4, 2)]:
+    # Whole heads partition; beyond 8 TP ranks, each head is replicated.
+    heads_per_rank = max(1, kv_heads // tp)
+    tokens_per_rank = (context + cp - 1) // cp
+    local_kv = (2 * layers * batch * tokens_per_rank
+                * heads_per_rank * head_dim * element_bytes)
+    modeled_total = local_kv * tp * cp
+    results.append((local_kv // 2**20, modeled_total // 2**20))
+assert logical_kv == 4 * 2**30
+assert results == [(1024, 4096), (512, 8192), (512, 4096)]
+```
+
+Each result is `(MiB per rank, aggregate modeled KV MiB)`. The general helper in `examples/accelerator_portability.py` validates integer and head-divisibility assumptions; the printed calculation intentionally evaluates only the three named configurations.
+
+For admission, use the most constrained rank's peak live allocation, not the average across the cluster. A useful per-rank ledger is `weights + live KV + peak workspace/activations + runtime reservations + safety margin`. If one rank cannot fit its largest supported prefill chunk while retaining admitted decode state, spare bytes elsewhere do not rescue that executable. Reducing TP can remove collectives but increase per-rank weight traffic; adding CP reduces local history while introducing partial-attention communication. Measure both phases after each placement change.
+
+#### Treat compiled variants as deployment artifacts
+
 Compilation adds another budget. Suppose a serving implementation buckets prompt lengths 2048 and 4096, and pads a 2300-token prompt to 4096. A fully padded linear operation processes about `4096 / 2300 = 1.78` times as many positions. A dense quadratic operation would process about `1.78^2 = 3.17` times as many position pairs. These are padding ratios, not measured latency multipliers: masked tile skipping, ragged kernels, chunked prefill, and other operators change the result. Smaller buckets reduce waste but add executable variants, compilation work, and warm-up cost.
 
 Capture cold compilation separately from warm execution. Then test a rolling deployment where new workers must become ready while old workers still serve traffic. A fast warm benchmark is insufficient if compiling or loading the required variants prevents timely recovery.
+
+:::diagram compile_lifecycle|A warm request uses a compatible compiled variant; a miss needs an explicit policy. Prewarming and persistent artifacts reduce repeated work but do not make an unsupported shape legal. The cache key is a compatibility identity, not merely a prompt length.
+
+Concrete tensor shapes, dtypes, static configuration, and target/compiler choices can affect specialization. The exact key belongs to the integration. For JAX, [JIT compilation](https://docs.jax.dev/en/latest/jit-compilation.html) and the [persistent compilation cache](https://docs.jax.dev/en/latest/persistent_compilation_cache.html) explain the distinction. Shape-polymorphic export can reuse tracing/lowering work without promising a single device executable for every concrete shape. For NKI, the SDK's specialization rules similarly distinguish tensor metadata from runtime values. A bounded valid length inside allocated storage is not an unbounded dynamic allocation.
+
+Use a small cost calculation to decide which variants deserve prewarming. Suppose one variant costs 60 seconds to compile, a baseline call takes 125 milliseconds, and the candidate takes 62.5 milliseconds. At a fixed serial workload, it repays compilation after `60 / (0.125 - 0.0625) = 960` calls. These deliberately simple numbers are illustrative, not a vendor measurement. A rare shape used twenty times per worker may never repay its own compile cost. Sharing a trusted compatible artifact changes that calculation; so do overlap, throughput-oriented batching, and worker lifetime.
+
+The CPU helper tests the padding and repayment arithmetic. To plan deployment, also count which configurations need separate artifacts. Assume a hypothetical integration specializes on two storage-length buckets, two dtypes, and two supported static layouts: that creates eight possible combinations. Its runtime valid-length value only changes a mask within the selected storage bucket. The actual integration defines the key; these choices are an example.
+
+| Call | Storage length / valid length | Dtype / static layout | Artifact decision in this example |
+| --- | --- | --- | --- |
+| A | 4096 / 2300 | BF16 / layout 1 | Select the matching variant |
+| B | 4096 / 3000 | BF16 / layout 1 | Reuse A's variant; change the runtime mask |
+| C | 4096 / 2300 | FP16 / layout 1 | Different dtype variant |
+| D | 4096 / 2300 | BF16 / layout 2 | Different static-layout variant |
+
+Same prompt length therefore need not mean the same executable. A prewarm manifest records the required variants with model revision, target/compiler compatibility, and trusted artifact identity. Economics and readiness can also disagree: a rare required variant may deserve prewarming to meet cold-start SLOs even when that worker never repays its compilation cost through faster calls.
+
+The serving decision is not “always add more buckets.” Choose a bounded set from the workload, warm the important variants before declaring readiness, and specify the miss policy: queue within a deadline, use a supported fallback, or reject. Do not assume an eager fallback exists on every integration. Count misses and compile time separately from prompt execution. A shared executable cache is also a trust boundary: accept artifacts only from trusted writers, with version/target compatibility and integrity checks.
 
 ### Training, prefill, and decode need different acceptance evidence
 
@@ -1613,24 +1829,40 @@ Parallelism must be reselected, not copied. Prefill context parallelism distribu
 
 For disaggregated serving, keep initial prefill and decode pools on a compatible implementation path. Cross-vendor KV transfer is not automatically available: peers must agree on logical token identity, dtype, head mapping, layout, quantization metadata, and ownership. Repacking and transport must fit inside the transfer budget. A shared model checkpoint does not establish a shared cache ABI.
 
+Name the handoff unit before calculating its cost: one request, a microbatch, or a pool migration. The earlier 4 GiB represents the whole batch of eight sequences with 4096 committed tokens each. One 2000-token request instead has 250 MiB of logical KV under the same full-history, uncompressed geometry. Transfer bytes also depend on physical representation and which shards move.
+
+Suppose that whole-batch 4 GiB handoff uses an illustrative effective link rate of 50 GiB/s. Its payload-only time is 80 milliseconds. If packing and unpacking each take 15 milliseconds and the operations are serialized, the handoff already costs 110 milliseconds before queueing, protocol overhead, and attention work. A separate 100-millisecond transfer budget fails even though the link-only estimate passed. Overlap requires a measured schedule and correct buffer lifetimes. This is planning arithmetic, not measured cross-vendor interoperability; the transfer budget is distinct from the assistant's visible token-gap SLO.
+
 ### Decide with a bounded experiment
 
 Begin with one supported model and a replay containing short and long prompts, warm and cold prefixes, cancellation, and overload. Establish correctness, then profile the largest end-to-end gap. Only then decide whether it warrants a custom HIP, Triton, Pallas, or NKI kernel. Keep a known-good backend and versioned artifacts for rollback; do not attempt to recover an in-flight request by copying opaque device memory between ecosystems.
 
 Compare cost per successful request that meets the SLO, including idle capacity, host resources, networking, compilation, and recovery. Add the engineering cost of maintaining another backend over an explicit planning horizon. For training, use time and cost to an agreed quality threshold, not merely examples per second. These denominators make a capacity-driven or cost-driven choice explainable without claiming that one vendor is universally faster.
 
+For the assistant, retain the existing p99 first-token target of 1.5 seconds and p99 visible token-gap target of 100 milliseconds. Report them by prompt/output-length cohort at the same arrival process, including rejected and failed requests in the accounting. Do not claim a win by quietly admitting less traffic or shortening outputs. Report the final quality gate, sustained offered load, accepted concurrency, cold-worker readiness, peak per-rank memory, and SLO-qualified cost together. The best kernel result is a diagnostic; the deployment result is the decision.
+
+| Evidence stage | Smallest useful artifact | What it still does not prove |
+| --- | --- | --- |
+| CPU semantics | Oracle tests; simulator or interpreter results where available | Device compilation, hardware numerics, or speed |
+| Device operator | Pinned versions, shape/dtype sweep, numerical comparison | Model integration and request behavior |
+| Integrated engine | Same model/features, quality gate, warm replay | Cold recovery, overload, sustained operating cost |
+| Deployment trial | Arrival replay, SLO tails, failure/recovery, total cost | Universal superiority on other workloads |
+
+The repository validates CPU planning and oracle tests. Accelerator listings remain source-only unless explicitly marked device-tested; no accelerator compilation or benchmark is recorded for this chapter. Companion files carry the full validation checklist.
+
 ### Design Exercises
 
-1. A Triton RMSNorm kernel compiles on two GPU backends. What remains before calling it portable?
+1. A custom RMSNorm passes a CPU interpreter or simulator at widths 4096 and 4097. What must happen before reporting a device speedup?
 2. A TPU or Neuron serving port has fast warm decode but poor TTFT after scaling out. What evidence separates compilation from prefill inefficiency?
 3. An alternative device has more memory per chip. Can the assistant reduce tensor parallelism safely?
-4. A team proposes NVIDIA prefill with AMD decode to use spare capacity. What must it demonstrate first?
+4. A 2000-token request uses this chapter's cache geometry. A proposed cross-vendor handoff has a 25 GiB/s effective link, serialized pack/unpack costs of 2 ms each, and a 15 ms transfer budget. Is that enough evidence to approve it?
+5. A three-element row uses a four-element Triton tile or a 256-thread HIP block. A developer divides by four in the first kernel and adds `if (tid >= n) return;` to the second. Diagnose both changes.
 
 ### Worked Solutions
 
-#### 1. Three kinds of portability
+#### 1. A passing interpreter is the first gate
 
-Verify numerical behavior, strides, alignment, padded lanes, and boundary shapes against the same reference. Retune using the real shape distribution, then measure the operator in the engine so conversions and dispatch costs are included. Compilation establishes that a source path exists, not correctness or competitive latency.
+Compile for the named device and pinned stack; check supported operations, layouts, and working-memory fit. Compare device outputs across the declared dtypes and boundary shapes, then warm and synchronize the timed region. Separate compilation, copies, dispatch, and kernel work. Finally measure the operator inside the engine under the same workload and quality gate. The CPU result establishes neither device legality nor the speed of an asynchronous device execution.
 
 #### 2. Cold-start attribution
 
@@ -1640,8 +1872,12 @@ Trace compilation, artifact loading, allocation, warm-up, queue time, and prefil
 
 Recompute per-device weights, KV, workspace, activations, and head replication for the proposed layout. Confirm the backend supports it. Fewer ranks may remove collective latency but also reduce compute and memory bandwidth available to one request. Compare TTFT, decode tails, and admitted concurrency under the same traffic before changing placement.
 
-#### 4. A cache contract, not just a network link
+#### 4. A small margin and an unproven cache contract
 
-Demonstrate compatible cache semantics and an explicit conversion path, including positions, heads, dtype, and quantization metadata. Measure conversion plus transfer at realistic cache sizes and concurrent load. Test cancellation, partial transfer, ownership handoff, and failure without exposing another tenant's state. If that path is unsupported or too expensive, use homogeneous prefill/decode pools or route whole requests to each ecosystem.
+The request's logical KV is `2000 * 131072 = 262144000` bytes, or 250 MiB. Payload transfer takes `250 / (25 * 1024)` seconds, about 9.766 ms; adding both conversions gives 13.766 ms. Only about 1.234 ms remains for the other transfer-path costs. This clears the illustrative arithmetic, not the deployment gate: establish actual wire bytes, compatible positions/head/dtype/quantization semantics, and latency under concurrent load. Test cancellation, partial transfer, ownership handoff, and failure. If that path is unsupported or misses the budget, keep homogeneous pools or route whole requests to each ecosystem.
+
+#### 5. A tile is not the row, and inactive work still synchronizes
+
+The Triton squared sum must be divided by the three actual elements. The zero-filled padding lane adds no squared value and should not change the normalization. In HIP, threads with no input elements still contribute zero and reach every block barrier. Returning them early violates the block-wide synchronization contract; keep them in the reduction or design a different supported collective.
 
 The port ends with a supported deployment configuration and workload evidence, not a translated source tree. The next part adds peers to the device schedule: which rank owns a tensor, when another rank needs it, and what happens when that rank fails. Those questions survive every accelerator choice.

@@ -16,6 +16,7 @@ the standard library and do not download models, call APIs, or require a GPU.
 | Agent loop | `python -m examples.agent_loop` | `finished 1 0` | Denied capabilities, retry after commit, budgets, key conflicts, revocation/removal. Scripted policy, no LLM. |
 | Retrieval ranking | `python -m unittest tests.test_agent_loop.RetrievalMethodTests` | 2 passing tests | Reciprocal rank fusion and normalized token-level MaxSim; no learned encoder or ANN implementation. |
 | Foundation calculations | `python -m unittest tests.test_foundations` | 11 passing tests | Loss gradient, causal mask/permutation, rank weighting, clipping, resource and cost models, scaling allocation, paired uncertainty, zero-failure bounds, coarsened KL. |
+| Accelerator portability planning | `python -m unittest tests.test_accelerator_portability -v` | 7 passing tests | Higher-precision RMSNorm oracle, padding ratios, modeled physical KV partition/replication, compilation repayment. CPU arithmetic, not device emulation or hardware validation. |
 
 Run `make test` for all tests. The RAG experiment is a five-case synthetic
 fixture with labeled facts and a deterministic answer function. It is not a
@@ -29,6 +30,10 @@ declared policy (such as skipping invalid scores). Policies must not be mixed
 silently when comparing implementations.
 
 ## GPU examples
+
+The [optional accelerator examples](accelerators/README.md) include a source-only
+Triton RMSNorm kernel and an on-target forward smoke-test harness. Their packages
+and hardware requirements are separate from the CPU examples above.
 
 CUDA snippets in the manuscript are explanatory excerpts, not validated
 standalone programs. A future GPU benchmark must name the device, compiler,

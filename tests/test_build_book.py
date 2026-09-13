@@ -145,6 +145,16 @@ class BuildBookTests(unittest.TestCase):
             self.assertIn(label, labels)
         self.assertIn("Connectors move state; they do not admit requests.", labels)
 
+    def test_accelerator_examples_keep_denominator_placement_and_miss_contracts(self):
+        self.assertIn("Divide by N = 3", self.figure_labels("rmsnorm_port"))
+        self.assertIn("not the padded tile width of 4", self.figure_labels("rmsnorm_port"))
+        self.assertIn("8 GiB: each head replicated twice", self.figure_labels("kv_port_placement"))
+        self.assertIn("Miss: admission policy", self.figure_labels("compile_lifecycle"))
+        self.assertIn("if admitted", self.figure_labels("compile_lifecycle"))
+        fragments = self.figure_labels("rmsnorm_fragments")
+        self.assertIn("Combine sums, then inverse RMS", fragments)
+        self.assertEqual(fragments.count("Partial squared sum"), 2)
+
     def test_decoder_diagram_separates_sums_from_outputs(self):
         labels = self.figure_labels("decoder_block")
         self.assertEqual(labels.count("+"), 2)
