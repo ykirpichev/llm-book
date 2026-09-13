@@ -177,7 +177,7 @@ Scaling `d` increases global batch unless `b` or `g` changes. That can alter opt
 
 Frameworks register backward hooks and place parameters into buckets. When all gradients for a bucket are ready, its all-reduce can overlap with backward computation for earlier layers.
 
-Small buckets start early but pay more launch and latency. Large buckets use bandwidth well but may not begin until late in backward. Parameter registration order should roughly match gradient-ready order; unused or conditional parameters complicate readiness.
+Small buckets start early but pay more launch and latency. Large buckets use bandwidth well but may not begin until late in backward. Bucket order should track observed gradient readiness. PyTorch DDP normally launches reductions in reverse parameter-registration order, so registering parameters in approximate forward-execution order often aligns the schedule with backward; bucket rebuilding, unused parameters, and conditional paths can change the observed order and should be inspected rather than assumed.
 
 Gradient accumulation can suppress synchronization for intermediate microbatches and reduce once at the accumulation boundary. This saves communication but holds gradients longer and changes the overlap opportunity. Ensure the final microbatch triggers synchronization on every rank, including early termination paths.
 
@@ -313,7 +313,7 @@ Bias, activation, and gating should be applied locally when their partition matc
 
 Row parallelism partitions the input rows of `A` and the corresponding feature dimension of `X`. Rank `i` computes a partial output `X_i A_i`; partials must be summed across ranks. The result is usually produced by all-reduce, or reduce-scatter when the next region can consume a sharded output.
 
-A common transformer plan pairs a column-parallel expansion with a row-parallel contraction. The intermediate activation remains sharded, and only the final partial outputs require reduction. The same principle applies to attention projections: choose adjacent layouts so communication occurs at a small number of deliberate boundaries.
+A common transformer plan pairs a column-parallel expansion with a row-parallel contraction. In the forward pass, the intermediate activation remains sharded and the contraction's partial outputs require reduction. Backward has a corresponding boundary: a column-parallel layer produces partial input gradients that must be summed across tensor-parallel ranks, commonly by all-reduce or by a reduce-scatter/all-gather sequence when sequence parallelism is active. The same principle applies to attention projections: choose adjacent layouts so communication occurs at a small number of deliberate boundaries.
 
 ### Tensor layouts are types
 
@@ -363,7 +363,7 @@ Random operations need a logical mask policy. If dropout is intended to be invar
 
 Context parallelism partitions the entire sequence and its activations across a group. Tokenwise linear and normalization operations run locally. Attention is different: local queries require keys and values from the full logical context.
 
-That description is sufficient for training, where many query positions are processed together, but it is too coarse for serving. Prefill and autoregressive decode have different query-to-history ratios and therefore need different context-parallel layouts. The distributed-inference chapter distinguishes **prefill context parallelism (PCP)** from **decode context parallelism (DCP)**; the two should not be treated as interchangeable settings.
+In training, many query positions are processed together and the backward pass must return attention-gradient contributions to the owning sequence shards. Serving adds a different distinction: prefill and autoregressive decode have different query-to-history ratios and therefore need different context-parallel layouts. The distributed-inference chapter distinguishes **prefill context parallelism (PCP)** from **decode context parallelism (DCP)**; the two should not be treated as interchangeable settings.
 
 Do not confuse these with **phase-specific tensor parallelism**: a disaggregated service can run ordinary TP at one degree in its prefill pool and another degree in its decode pool. That changes model-group ownership across a KV handoff, whereas PCP and DCP partition sequence work or history. Part III's “Different TP sizes for prefill and decode” gives a concrete TP=4 to TP=2 handoff.
 
@@ -384,7 +384,7 @@ Packed ragged sequences add boundaries and different lengths. Do not let an atte
 
 ### Choosing TP versus CP
 
-Both can reduce activation memory, but they affect different work. Raising TP shrinks hidden-dimension GEMMs and adds collectives throughout the block. Raising CP shrinks sequence-local activations and attention queries while duplicating weights across the CP group and communicating attention context.
+Both can reduce activation memory, but they affect different work. Raising TP shrinks hidden-dimension GEMMs and adds collectives throughout the block. Raising CP shrinks sequence-local activations and attention queries while replicating weights across the CP group and communicating attention context. Because CP ranks process different fragments of one logical sequence rather than independent examples, their parameter-gradient contributions must also be combined before the optimizer step. In a dense layout this reduction commonly spans DP×CP ranks at fixed PP and TP coordinates, or the equivalent sharded group. Its normalization must preserve the intended logical-token objective rather than treating CP as another independent-example dimension.
 
 For very long sequence and already efficient hidden-dimension kernels, CP may preserve better local GEMM shapes than another TP step. For huge hidden layers that do not fit, TP remains necessary. Compose them only after measuring the communication paths and divisibility constraints.
 
@@ -411,7 +411,7 @@ For every transformer sublayer, label input, intermediate, and output as replica
 
 #### 1. Paired linear layers
 
-Column sharding replicates input `X`, partitions output columns of `A`, and produces a sharded feature activation with no reduction. A compatible activation and next linear consume that shard. Row sharding of the contraction computes partial full outputs from each input-feature shard, then all-reduces them, or reduce-scatters if the next region accepts a shard. The efficient pair avoids gathering the expanded intermediate and communicates only at the contraction boundary.
+Column sharding replicates input `X`, partitions output columns of `A`, and produces a sharded feature activation with no forward reduction. A compatible activation and next linear consume that shard. Row sharding of the contraction computes partial full outputs from each input-feature shard, then all-reduces them, or reduce-scatters if the next region accepts a shard. The efficient forward pair avoids gathering the expanded intermediate and communicates at the contraction boundary; during backward, the column-parallel layer also sums its partial input gradients across the tensor-parallel group.
 
 #### 2. Vocabulary-parallel loss
 
@@ -572,7 +572,7 @@ Profile forward, backward, recompute, parameter bytes, and boundary activations 
 
 #### 4. Rank coordinates
 
-Assign deterministic `(dp, pp, tp, cp)` coordinates whose product equals world size for the dense case. TP groups vary `tp` while other coordinates are fixed; PP groups vary `pp`; CP groups vary `cp`; DP groups vary `dp`. Map TP to local fabric, PP to low-contention neighbor paths, and DP across replicas/rails. Print memberships and include expert folding explicitly rather than assuming another independent product dimension.
+Assign deterministic `(dp, pp, tp, cp)` coordinates whose product equals world size for the dense case. TP groups vary `tp` while other coordinates are fixed; PP groups vary `pp`; CP groups vary `cp`; DP groups vary `dp`. Also define the optimizer-synchronization group explicitly: with parameters replicated over CP, it commonly varies both `dp` and `cp` at fixed `pp` and `tp`, or uses the sharded equivalent. Map TP to local fabric, PP to low-contention neighbor paths, and replica synchronization across rails. Print memberships and include expert folding explicitly rather than assuming another independent product dimension.
 
 #### 5. Sixty-four GPUs
 

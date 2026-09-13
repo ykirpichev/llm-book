@@ -1516,4 +1516,4 @@ Create a variant when a frequent shape or semantic mode has a materially differe
 
 > A kernel is a proof that an algorithm, a data layout, and a hardware schedule agree.
 
-The proof has three parts: correctness for every supported shape, a resource model that predicts the bottleneck, and measurements that show the optimization survives integration. For this part, that means the same running example you opened with - prefill tiles that avoid quadratic HBM, and decode steps that honor the KV contract - still holds after profiling and fusion. Missing any one produces a benchmark artifact rather than a production kernel.
+The proof has three parts: correctness for every supported shape, a resource model that predicts the bottleneck, and measurements that show the optimization survives integration. In the running example, prefill tiles must still avoid materializing quadratic score and probability matrices in HBM, and decode steps must still honor the KV contract after profiling and fusion. Missing any one of these conditions produces a benchmark artifact rather than a production kernel.

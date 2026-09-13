@@ -92,8 +92,8 @@ adjacent chapters and are not duplicated at every chapter boundary.
 | Online Statistics and Sampling | Retained | Welford and reservoir derivations with worked examples |
 | Heavy Hitters and Probabilistic Sketches | Retained | Misra-Gries, CMS, HLL, Bloom and quantile error models |
 | Building a Streaming Telemetry Service | Retained | Complete service and ten worked solutions |
-| ML Algorithms in Production Code | Retained | Shape/numerical contracts and worked answer criteria |
-| An Engineering System Design Method | Retained | Contract, estimation, critical path, failure and decision method |
+| Compact Review of ML Algorithms in Production | Retained | Shape/numerical contracts and worked answer criteria |
+| An Engineering System Design and Review Method | Retained | Contract, estimation, critical path, failure and decision method |
 | RAG, Vector Search, and Evaluation Pipelines | Expanded | RRF/MaxSim, hierarchical/graph alternatives, authorized service fixture |
 | Building and Evaluating a Bounded Agent Loop | Added | Executable loop, capability denial, ambiguous writes, memory and task evaluation |
 | Efficient Frontier Models and Reasoning Training | Expanded | V4, Qwen3.5, Nemotron 3, mHC and Engram with independent toy examples |
@@ -107,7 +107,7 @@ adjacent chapters and are not duplicated at every chapter boundary.
 | Incident Leadership and High-Risk Change | Retained | Causal diagnosis, mitigation clock, migrations and rollback |
 | Strategy, Vision, and the First 90 Days | Retained | Staged discovery, commitments and falsifiable milestones |
 | Leadership Evidence and Reflective Practice | Retained | Three applied decision cases and evidence-based reflection |
-| Cross-Layer Design Synthesis | Retained | Fifteen cross-layer scenarios with answer structures |
+| Cross-Layer Design Prompt Bank | Retained | Fifteen cross-layer scenarios with answer structures |
 | End-to-End Learning Lab and Capstone | Added | Train/serialize/generate fixture; connected service design and self-check |
 | Formula and Capacity Sheet | Expanded | Hybrid state, LoRA, DPO/PPO/GRPO and ESS with assumptions |
 | CUDA Engineering Checklist | Retained | Correctness, race, timing and resource checklists |

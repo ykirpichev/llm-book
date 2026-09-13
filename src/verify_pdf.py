@@ -20,7 +20,7 @@ REQUIRED_TERMS = [
     "Tiled Matrix Multiplication",
     "Continuous Batching",
     "Technical Leadership",
-    "Cross-Layer Design Synthesis",
+    "Cross-Layer Design Prompt Bank",
     "Recent State of the Art",
     "FlashAttention-3",
     "AgentDojo",

@@ -1,5 +1,7 @@
 # Part VI - Coding and System Design
 
+Part VI follows two paths that meet in production services. **Streaming-state primitives** develop exact windows, sampling, sketches, and mergeable statistics, then assemble them into telemetry and control loops. **ML implementation and system design** turns numerical assumptions into code, applies a repeatable review method, and builds retrieval and bounded-agent systems. Readers focused on application architecture may begin at **RAG, Vector Search, and Evaluation Pipelines** and return to the streaming chapters for the state, approximation, and failure models those services depend on.
+
 Production algorithms are contracts about state, approximation, time, and failure. Their value in LLM systems appears in telemetry, data processing, retrieval, scheduling, cache policy, evaluation, and capacity control. This part develops the underlying structures and then connects them to complete services.
 
 ## Exact Streaming Queries and Time Windows
@@ -662,7 +664,7 @@ Using sketch estimates as heap priorities can admit false positives due to overe
 
 Standard sketches merge by elementwise addition only when width, depth, hash functions, seeds, counter type, and update semantics match. Include those fields in the serialized schema. For disjoint stream partitions, the merged sketch represents the union multiset. It does not deduplicate replicated events.
 
-Conservative update increments only counters currently equal to the row minimum and often reduces empirical overestimation. It is not the same state transition as ordinary Count-Min. Adding two conservatively updated arrays produces useful combined counters in some implementations, but not the state that serial conservative updates would have produced; use only a merge contract proved by the chosen library and do not silently attach the standard linear-state interpretation.
+For an unweighted increment, conservative update raises only counters at the current row minimum and often reduces empirical overestimation. For a weighted nonnegative increment `c`, let `m = min_j C_j(x)` and set every addressed counter to `max(C_j(x), m + c)`; merely adding `c` to counters equal to `m` is correct only when `c = 1`. Conservative update is not the same state transition as ordinary Count-Min. Adding two conservatively updated arrays produces useful combined counters in some implementations, but not the state that serial conservative updates would have produced; use only a merge contract proved by the chosen library and do not silently attach the standard linear-state interpretation.
 
 Valid strict-turnstile deletions preserve this argument for the standard linear sketch: apply the signed delta to every hashed row, and require all true frequencies to remain nonnegative. The bound then uses current mass `F_1`. A sketch cannot itself certify that a deletion was valid; authoritative event or keyed state must enforce that contract. In a general-turnstile stream, negative true frequencies can cancel collision mass and break the minimum estimator's one-sided guarantee. Use a sketch and estimator analyzed for that model, or exact keyed state.
 
@@ -1032,7 +1034,7 @@ Algorithm R stores the first `k` items. At one-based position `i > k`, it select
 
 Assume every earlier item is present after `i-1` positions with probability `k/(i-1)`. Conditional on being present, its particular slot is replaced with probability `1/i`, so it survives with probability `(i-1)/i`. Its new inclusion probability is `(k/(i-1))((i-1)/i) = k/i`. The induction proves that every item has inclusion probability `k/N` at the end.
 
-Naively combining equal-size shard reservoirs is biased if shard sizes differ. A robust distributed construction assigns each record an independent continuous priority from a stable ID and seed, keeps the `k` smallest priorities locally, then keeps the `k` smallest globally. An item omitted locally already has `k` lower-priority same-shard items, so it cannot qualify globally. This produces the same uniform size-`k` subset as choosing the globally smallest independent priorities, assuming collision-free continuous priorities or deterministic collision handling.
+Naively combining equal-size shard reservoirs is biased if shard sizes differ. A robust distributed construction assigns each record an independent continuous priority, keeps the `k` smallest priorities locally, then keeps the `k` smallest globally. An item omitted locally already has `k` lower-priority same-shard items, so it cannot qualify globally. Independent continuous priorities produce the same exact uniform size-`k` subset as a global priority sample because ties occur with probability zero. A stable finite hash and deterministic tie-breaker make the result reproducible, but the construction is only approximately uniform when collisions are possible; use enough hash bits to make that bias negligible for the population and risk tolerance.
 
 An alternative first draws shard sample counts from:
 
@@ -1163,9 +1165,9 @@ Backpressure, a stalled watermark, and hot keys are correctness concerns. Prefer
 - [Apache DataSketches KLL documentation](https://datasketches.apache.org/docs/KLL/KLLSketch.html) - implementation parameters, normalized-rank error, and merge behavior.
 - [Apache Beam Programming Guide](https://beam.apache.org/documentation/programming-guide/) - event time, watermarks, triggers, and allowed lateness.
 
-## ML Algorithms in Production Code
+## Compact Review of ML Algorithms in Production
 
-LEAD: Production ML code turns mathematical assumptions into shapes, invariants, numerical policies, and measurable failure behavior.
+LEAD: This compact reference shows how production ML code turns mathematical assumptions into shapes, invariants, numerical policies, and measurable failure behavior. It emphasizes implementation contracts rather than surveying each algorithm exhaustively.
 
 ### Vectorized logistic regression
 
@@ -1183,7 +1185,7 @@ def logistic_loss_and_grad(X, y, w, l2=0.0):
     return loss, grad
 ```
 
-Discuss sparse features, class weighting, calibration, distributed reduction, feature normalization, leakage, and stopping. Complexity is `O(nnz(X))` for sparse matvec plus the update.
+Production implementations must specify sparse-feature handling, class weighting, calibration, distributed reduction, feature normalization, leakage controls, and stopping criteria. The sparse matrix-vector product and update cost `O(nnz(X))` per pass.
 
 ### K-means
 
@@ -1268,9 +1270,9 @@ Embedding normalization makes cosine similarity equivalent to inner product rank
 4. The dense reference materializes a query-by-key score matrix and usually probabilities of the same size. Chunked attention retains online normalization state instead; compare against the dense result within the declared dtype tolerance.
 5. Benchmark the actual update/delete workload and filtered recall, not only unfiltered search throughput. Keep an exact-search oracle for small partitions and test selective ACLs before committing to an ANN layout.
 
-## An Engineering System Design Method
+## An Engineering System Design and Review Method
 
-LEAD: The best system design answer is a sequence of decisions tied to requirements. A diagram is evidence of that reasoning, not a substitute for it.
+LEAD: A strong system design or design review is a sequence of decisions tied to requirements. A diagram is evidence of that reasoning, not a substitute for it.
 
 ### Step 1: define the contract
 
@@ -1327,7 +1329,7 @@ Restraint is a design skill. Defer components whose complexity is not justified 
 
 ### Communicating the design
 
-Signpost transitions: "I will first establish the workload, then estimate the dominant state, then draw a baseline and stress it." Keep a visible list of requirements and risks. When interrupted, answer the question and return to the structure.
+In a live review, signpost transitions: "I will first establish the workload, then estimate the dominant state, then draw a baseline and stress it." Keep a visible list of requirements and risks. Answer questions directly, then reconnect the discussion to the decision currently being tested. In a written record, use the same structure as section headings and preserve unresolved objections.
 
 If new information invalidates the design, revise it. Defending an obsolete choice signals rigidity, not leadership.
 
@@ -1338,6 +1340,10 @@ If new information invalidates the design, revise it. Defending an obsolete choi
 3. How do you represent failure domains clearly in an architecture diagram?
 4. What makes an approximation acceptable?
 5. Name a component you would defer in a new LLM platform and the trigger to add it.
+
+### Worked answer criteria
+
+A strong response states the workload and SLO, quantifies the dominant state or resource, presents one coherent baseline with ownership and failure domains, and compares at least one credible alternative. It also defines observable success and guardrail metrics, rollout and rollback, and the condition that would reverse the decision. A polished diagram cannot compensate for a missing consistency, security, or overload contract.
 
 ## RAG, Vector Search, and Evaluation Pipelines
 
@@ -1614,3 +1620,7 @@ Measure latency from request arrival to verified completion, including tool queu
 3. **An agent repeatedly searches without improvement. What stops it?** Host-enforced call/time/token budgets and an explicit failure outcome, not a request in the prompt to be efficient.
 4. **When do parallel agents help?** For separable experiments with independent state, a common baseline, bounded resources, and a verified merge. Shared-file contention and duplicate hypotheses can erase the gain.
 5. **Does the fixture's passing injection test prove robust model behavior?** No. It verifies a deterministic denied capability. Real models, other tools, observation poisoning, and authorized-but-harmful arguments require broader adversarial tests.
+
+### Part VI closing principle
+
+Production algorithms earn trust by making state, approximation, authority, and recovery explicit. The same rule governs a streaming sketch, a retrieval service, and an agent loop: define the contract, bound the failure, measure the outcome, and keep consequential control outside an unverified prediction.

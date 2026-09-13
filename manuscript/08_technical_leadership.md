@@ -352,9 +352,13 @@ Mention the interface, metric, review, tool, ownership model, or talent growth t
 4. Explain a cross-org disagreement without making the other side irrational.
 5. Demonstrate mentorship by the ownership the other person gained.
 
+### Leadership exercise criteria
+
+Apply this rubric to every exercise in Part VIII. A strong answer names the decision and accountable owner; distinguishes evidence from uncertainty; presents a credible alternative or dissenting view; installs a mechanism with a cadence or trigger; and defines an observable reversal, escalation, or completion boundary. Prefer a smaller claim supported by durable evidence over a sweeping story whose outcome cannot be verified.
+
 ### Three decision cases
 
-The following cases are fictional teaching examples, not claims about the author's employment or measured project outcomes. Each uses a concrete choice to show what a leadership mechanism changes.
+The following cases are fictional teaching examples, not claims about the author's employment or measured project outcomes. They serve as model answers for migration, prioritization, and incident decisions: each uses a concrete choice to show what a leadership mechanism changes.
 
 #### A migration that passes the average and fails a customer
 
@@ -378,11 +382,11 @@ After a permissions rollout, the documentation assistant begins returning cached
 
 Disable affected answer-cache reads and fail closed for protected content whose authorization cannot be established. Preserve scoped diagnostic evidence without copying confidential answers into a broad incident channel. One owner validates revocation and cache invalidation, another estimates the availability impact, and a communications owner gives users a concrete reduced-service status.
 
-Recovery requires replaying the previously failing access cases against the canonical authority, not merely seeing the error counter fall after traffic was rejected. The follow-up action is an authorization-aware cache contract with revocation tests and a named owner. “Be more careful during rollout” cannot be verified and therefore is not a sufficient corrective action.
+Recovery requires replaying the failing access cases against the canonical authority, not merely observing fewer errors after rejection. The corrective action is a named-owner, authorization-aware cache contract with revocation tests; “be more careful” is not verifiable.
 
-## Cross-Layer Design Synthesis
+## Cross-Layer Design Prompt Bank
 
-LEAD: The following scenarios connect the major technical layers of the book. Each decision path is deliberately compact and should be expanded through assumptions, equations, alternatives, failure modes, and measurement.
+LEAD: The following compact prompts connect the major technical layers of the book. The first ten include diagnostic questions; the final five leave those questions to the reader. Expand every decision path through assumptions, equations, alternatives, failure modes, and measurement.
 
 ### 1. Design a draft model for speculative decoding
 
@@ -477,3 +481,5 @@ For each decision path, write the governing assumptions, derive the controlling 
 - Did I define offline, online, and guardrail metrics?
 - Did I explain rollout and rollback?
 - Did I make my own decision and remaining uncertainty clear?
+
+The technical and leadership arguments now meet at the same standard: make the objective explicit, model the controlling mechanism, expose credible alternatives, assign ownership, and build evidence that can change the decision. A professional judgment is not complete when it sounds decisive; it is complete when another person can operate, test, and revise it responsibly.

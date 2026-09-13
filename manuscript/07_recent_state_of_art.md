@@ -4,6 +4,8 @@ This part connects selected research available by September 7, 2026 to the mecha
 
 The durable value of a recent result is usually not its rank. It is the mechanism that changed the resource model: sparse activation, better load balancing, reinforcement learning with verifiable rewards, explicit inference-time compute, asynchronous attention pipelines, disaggregated KV state, hierarchical memory, native-resolution multimodality, or enforceable trust boundaries for tools.
 
+Read this part as a decision filter, not a chronology. For each result, first identify the mechanism and the resource or behavior it changes; then reconstruct the evaluation boundary and compare it with your workload. Finally, name the integration cost, quality guardrail, and experiment that would justify adoption. Return to Parts II–VI when a claim depends on training data, serving state, kernel behavior, topology, or application policy—the dated examples here do not replace those durable models.
+
 :::callout decision|How to read a state-of-the-art claim
 Record the evaluated system, baseline, workload distribution, hardware, precision, quality constraint, and end-to-end boundary. Treat an isolated kernel speedup, benchmark score, or best-case throughput number as a hypothesis until the same advantage appears under the production contract.
 :::

@@ -2,7 +2,7 @@
 
 Training turns a capability hypothesis into a reproducible model release. The work is not a sequence of independent choices about data, loss, optimizer, and scale. It is a controlled program in which evidence from pilots determines what deserves more compute, every dataset release can be reconstructed, and every checkpoint can be evaluated against the behavior and serving envelope it is meant to satisfy.
 
-This part follows that program from end to end. It begins with recipe design and experiment gates, then develops data contracts, filtering, synthetic generation, mixture control, and release engineering. It closes with distillation and post-training, where a broad base distribution is transformed into a model with a specific capacity, policy, and operating role.
+This part follows two connected arcs. The first builds the training substrate: recipe design, experiment gates, data contracts, filtering, synthetic generation, mixture control, and release engineering. The second shapes behavior within a serving envelope: distillation, supervised adaptation, preference optimization, and reinforcement learning. The bridge between them is evidence—versioned data, protected evaluation, and release gates that make a behavioral change attributable and reversible.
 
 ## Designing a Training Recipe
 
@@ -135,6 +135,8 @@ Name what evidence permits progression from pilot to scale-up, from supervised t
 3. How would you decide whether to spend the next budget increment on data, model size, or more steps?
 4. What belongs in a resumable checkpoint for a sharded optimizer?
 5. How do you prevent a reasoning model from learning to exploit its verifier?
+
+Use the worked cases in **Applied Data-System Casework** to evaluate these answers: state the serving constraint, name the evidence that advances each stage, preserve lineage and rollback, and identify the failure that would stop scale-up.
 
 ## Data Contracts, Provenance, and Normalization
 
@@ -1457,6 +1459,8 @@ Balance near serving traffic with floors for rare costly failures and caps on us
 - [Li et al., DataComp-LM](https://arxiv.org/abs/2406.11794) - controlled experiments for filtering, mixing, and data-quality evaluation.
 - [Penedo et al., The FineWeb Datasets](https://arxiv.org/abs/2406.17557) - documented web-scale filtering and deduplication ablations.
 
+The data-system arc establishes what examples mean and how a release can be reconstructed. The remaining chapters use that substrate to change model behavior. Their objectives differ, but each must declare which distribution supplies the target, which model states receive updates, and which independent evaluation can detect regression.
+
 ## Distillation, KL Divergence, and Model Sizing
 
 LEAD: Distillation is distribution transfer under a capacity and serving constraint. The central question is not "teacher or student?" It is which information should cross the capacity boundary.
@@ -1854,3 +1858,7 @@ Track answer length, entropy, group reward variance, discarded prompts, clipping
 3. **Can pass-at-8 rise while pass-at-1 falls?** Yes. Distributional changes can improve coverage while hurting the most likely or typical answer. Report both and the actual selection mechanism.
 4. **What is wrong with rewarding a process's printed `PASS`?** The actor can print it. The trusted verifier must inspect independently protected execution results, not accept self-reported success.
 5. **Which first optimization fits the numerical cycle above?** Improve valid rollout throughput or overlap before assuming optimizer speed dominates; include verifier capacity and policy staleness in the measurement.
+
+### Part II closing principle
+
+A training system is credible when every behavioral claim can be traced through a versioned signal, an explicit objective, and an independent evaluation gate. Scale does not repair an ambiguous data contract, and a sophisticated objective does not repair a verifier the model can exploit. Preserve the evidence chain from source data to released checkpoint.
