@@ -42,7 +42,7 @@ Before choosing an engine or optimization, define model semantics, supported req
 
 LEAD: An LLM request is a distributed transaction with a long, streaming response. Correct measurement separates queueing, model phases, transport, and user-visible cadence instead of collapsing everything into one throughput number.
 
-The map starts here because every optimization in this part is judged against these measurements. For the running service the contract is concrete: a request must show its first token within 1.5 seconds at the 99th percentile and must never let the visible gap between tokens exceed 100 milliseconds.
+The map starts here because every optimization in this part is judged against these measurements. For the running service the contract is concrete: p99 time to first token is at most 1.5 seconds, and p99 visible inter-token gap is at most 100 milliseconds. These percentile targets allow a tail beyond the thresholds; a hard maximum-gap guarantee would be a stronger contract.
 
 :::diagram request_lifecycle|A request crosses gateway, queue, prefill, decode, and streaming boundaries. Each boundary needs an owner and a timestamp before any latency claim is meaningful.
 
@@ -70,17 +70,17 @@ Let `a` be arrival at the service boundary, `s` the first model-service start, `
 
 | Metric | Definition | What it reveals |
 | --- | --- | --- |
-| Queue delay | `s - a` | Admission pressure and scheduler delay |
+| Pre-model delay | `s - a` | Preprocessing, routing, admission, and waiting before model execution |
 | Time to first token | `f - a` | Queueing, preprocessing, prefill, first sampling, and transport |
 | Inter-token latency | `o_i - o_(i-1)` | Per-step cadence and stalls |
 | Time per output token | Usually `(o_last - f) / (N - 1)` | Average generation speed after the first token |
 | End-to-end latency | `o_last - a` | Total user wait for a completed response |
 
-Time per output token is an average; it can hide a one-second generation stall among many fast tokens. Report an inter-token latency distribution or a maximum-gap metric for interactive products. Also define whether the first token means sampled on the GPU, serialized by the server, received by the gateway, or observed by the client. A metric without a boundary is ambiguous.
+Measure queue delay from explicit queue-entry and queue-exit spans; `s-a` also includes preprocessing and routing. Time per output token is defined only for `N>1` and is an average: it can hide a one-second generation stall among many fast tokens. Report an inter-token latency distribution or a maximum-gap metric for interactive products. Distinguish final-token latency from terminal-response latency if cleanup or a final event follows. Also define whether the first token means sampled on the GPU, serialized by the server, received by the gateway, or observed by the client. A metric without a boundary is ambiguous.
 
 For non-streaming clients, end-to-end latency matters most, but internal first-token and cadence metrics still locate faults. For streaming clients, a reasonable SLO often has separate thresholds for time to first token and inter-token latency.
 
-Decompose the running service's budget before optimizing anything. Of the 1.5-second first-token allowance, transport and tokenization cost tens of milliseconds and prefill for a 2,000-token prompt costs tens to low hundreds of milliseconds on a healthy replica. The remainder - often more than a second - is queueing and scheduling slack. That allocation is why later sections spend more effort on admission, batching, and cache reuse than on shaving prefill kernels.
+Decompose the running service's budget before optimizing anything. An illustrative allocation might assign tens of milliseconds to transport and tokenization and tens to low hundreds to a 2,000-token prefill, leaving substantial allowance for queueing and scheduling. Those times are hypotheses to measure, not benchmark results. Component p99 values do not generally add to end-to-end p99, so validate the joint request trace. That measurement determines how much effort belongs in admission, batching, cache reuse, or prefill kernels.
 
 ### Throughput, goodput, and capacity
 
@@ -231,11 +231,11 @@ Let `W` be active model weight bytes per replica or model-parallel group and `BW
 
 `t_weights >= W / BW_w`
 
-Let `K(S, B)` be KV bytes read at current context and batch, `BW_kv` the sustainable bandwidth for that access pattern, `C` collective time, and `O` launch, scheduler, sampling, and synchronization overhead. A deliberately conservative step model is:
+Let `K(S, B)` be KV bytes read at current context and batch. When weights and KV share one HBM interface with bandwidth ceiling `BW`, their traffic consumes the same resource. Ignoring other traffic gives:
 
-`t_step >= max(t_weights, t_kv, t_compute) + C + O`
+`t_step >= max((W + K(S, B)) / BW, t_compute)`
 
-Some traffic and compute overlap, so do not blindly sum all resource bounds. Measure which terms overlap on the real engine. The model is valuable because it predicts how batch, precision, context, and topology should move the result.
+Compute may overlap memory traffic, but weight and KV bytes still count against the shared bandwidth budget. With distinct memory paths, use a separate traffic bound for each. Add collective and host overhead only to the extent that it is exposed on the critical path; summing all measured communication with the roofline term can double-count overlap. Use consistent per-device or group-wide byte and bandwidth units, and measure access-pattern efficiency rather than treating an unrelated throughput measurement as a ceiling.
 
 If latency is near the weight-read bound, optimizing scalar arithmetic cannot produce a large gain. Reduce bytes, increase batch reuse, improve placement, or change the model. If latency is far above every bound, examine kernel efficiency, launch gaps, collectives, and scheduling.
 
@@ -245,7 +245,7 @@ Plug in the numbers. Weights are approximately 14 GB in FP16 and the replica sus
 
 `t_weights >= 14e9 / 3e12 = 4.7 ms`
 
-That is a ceiling near 210 steps per second, shared by every sequence in the batch. KV traffic starts small by comparison: at batch 8 with 4,096-token contexts, a step reads about `8 * 4096 * 131 kB = 4.3 GB`, roughly 1.4 ms of additional bandwidth time. The two terms cross when the batch holds about 107,000 cached tokens (`14 GB / 131 kB`) - for example, eight sequences of about 13,000 tokens each. Below that point the service is mostly buying weight reads; beyond it, context length governs the step. This one number reappears in the KV, quantization, and disaggregation sections.
+That is a weight-only ceiling near 210 steps per second, shared by every sequence in the batch. At batch 8 with 4,096-token contexts, a step additionally reads about `8 * 4096 * 131 kB = 4.3 GB` of KV, raising the shared-HBM floor to about 6.1 ms before other costs. Weight and KV byte counts are equal when the batch holds about 107,000 cached tokens (`14 GB / 131 kB`) - for example, eight sequences of about 13,000 tokens each. This is a traffic crossover, not a guarantee about which kernel controls latency. It reappears in the KV, quantization, and disaggregation sections.
 
 ### KV-cache accounting
 
@@ -494,7 +494,7 @@ With phase costs and KV lifetime established, the scheduler is where they collid
 
 ### Iteration-level scheduling
 
-Autoregressive requests finish at different output lengths. A static batch keeps completed slots idle or delays their responses until the longest sequence finishes. Iteration-level scheduling rebuilds the active batch at token or bounded-chunk boundaries. Finished and cancelled requests leave; newly admitted work can enter.
+Autoregressive requests finish at different output lengths. A static batch keeps completed slots idle until the batch finishes; an implementation that also waits to return results can delay short responses further. Iteration-level scheduling rebuilds the active batch at token or bounded-chunk boundaries. Finished and cancelled requests leave; newly admitted work can enter.
 
 :::diagram continuous_batching|Continuous batching fills freed decode slots over time. The scheduler gains efficiency but must decide admission, phase mixing, fairness, and shape compatibility at every boundary.
 
@@ -536,7 +536,7 @@ A robust policy first reserves enough decode work to protect imminent deadlines,
 
 Pipeline-parallel execution may prefer iterations with similar compute to reduce bubbles. Chunk size should therefore consider stage balance as well as a single-device token budget.
 
-The running service shows why the compromise is necessary. An uninterrupted 2,000-token prefill occupies the replica for tens to low hundreds of milliseconds, which alone can exceed the 100 ms inter-token budget of every active decode. Chunking that prompt into a few hundred tokens per iteration bounds each gap while adding modest total prefill time; the long request pays a slightly later first token so that dozens of active streams keep their cadence.
+The running service shows why the compromise matters. If an uninterrupted 2,000-token prefill takes more than 100 ms, it can push active decodes past the gap threshold. Chunks of a few hundred tokens are a starting hypothesis; only measured iteration times show whether they protect cadence and how much first-token delay they add. Even small chunks do not guarantee a gap bound when decode, collectives, and host work already consume the budget.
 
 ### Fairness and priorities
 
@@ -575,17 +575,16 @@ Example status: Illustrative Python excerpt; not standalone.
 def schedule_tick(state, target_ms):
     candidates = state.ready_requests()
     selected = []
-    predicted_ms = 0.0
 
     for req in deadline_and_fairness_order(candidates):
         unit = next_feasible_unit(req, state)
         if not reserve_kv(unit, state.kv_pool):
             continue
-        if predicted_ms + estimate_ms(unit, selected) > target_ms:
+        trial_ms = estimate_ms(selected + [unit])
+        if trial_ms > target_ms:
             release_reservation(unit)
             continue
         selected.append(unit)
-        predicted_ms = estimate_ms(selected)
 
     return group_by_engine_shape(selected)
 ```
@@ -674,7 +673,7 @@ Do not promise the strongest level unless the whole logits pipeline, numeric pat
 
 ### Structured and constrained decoding
 
-Structured output restricts the next-token set according to a grammar, schema, regular expression, or application state. A common engine compiles the constraint into a finite-state representation and maintains a state per sequence. At each step it finds allowed tokens and masks the rest before sampling.
+Structured output restricts the next-token set according to a grammar, schema, regular expression, or application state. An engine compiles the constraint and maintains parser state per sequence. Regular constraints can use finite-state machinery; unbounded nesting generally requires a stack or an equivalent context-free parser. At each step the engine finds allowed tokens and masks the rest before sampling.
 
 The hard parts are often outside the model:
 
@@ -688,7 +687,7 @@ Precompute token-to-transition tables where possible, cache grammar artifacts by
 
 ### Beam search, best-of, and branch state
 
-Beam search maintains multiple scored hypotheses and selects expansions under a length-normalized objective. Best-of samples several candidates and returns a selected one. Both multiply KV state and scheduling work. Paged copy-on-write can share the common prefix, but diverged branches need private blocks.
+Beam search maintains multiple scored hypotheses and selects expansions under a declared sequence score, often with a length penalty or normalization. Best-of samples several candidates and returns a selected one. Both multiply KV state and scheduling work. Paged copy-on-write can share the common prefix, but diverged branches need private blocks.
 
 Define whether non-returned candidates count against token quotas and billing, how stop rules apply, and whether streaming is possible before the winner is known. Prune and release branches promptly. A scheduler that counts one API request rather than its active branches can under-reserve memory badly.
 
@@ -890,13 +889,13 @@ For transferred KV bytes `X` and sustainable path bandwidth `BW`, a lower bound 
 
 The actual path includes source readiness, registration, serialization or layout conversion, network queueing, destination placement, and synchronization. Long prompts create more state to transfer but also more prefill work that specialization may save.
 
-For the running service, a 2,000-token prompt hands off about 260 MB of KV (`2000 * 131 kB`). Over the assumed 50 GB/s path that is roughly 5 ms plus protocol overhead - cheap next to the prefill it frees the decode pool from repeating. The same transfer over a contended or slower path can erase the benefit, which is why the bound is a starting point and not a verdict.
+For the running service, a 2,000-token prompt hands off about 260 MB of KV (`2000 * 131 kB`). Over the assumed 50 GB/s path that is roughly 5 ms plus protocol overhead. The transfer lets the decode pool consume the prefill result while specializing independently; compared with colocated serving, it does not remove an otherwise duplicated prefill. A contended or slower path can erase the specialization and interference benefit, which is why the bound is a starting point and not a verdict.
 
 #### Different TP sizes for prefill and decode
 
 “Prefill TP” and “decode TP” usually refer to **the same tensor-parallel mechanism configured independently in two worker pools**, not two new forms of tensor parallelism. For example, one prefill instance could use TP=4 while each decode instance uses TP=2. Each engine still has its own weight shards, collectives, and KV ownership. The request crosses between engines; changing phase does not automatically resize a live TP group.
 
-[vLLM's disaggregated-prefilling documentation](https://docs.vllm.ai/en/latest/features/disagg_prefill/) explicitly supports choosing parallel strategies independently for TTFT and inter-token latency. The broader idea predates the recent vLLM conference: [DistServe at OSDI 2024](https://www.usenix.org/conference/osdi24/presentation/zhong-yinmin) co-optimized phase-specific resources and parallelism. Treat a conference presentation as an implementation or deployment update unless its novelty is established separately.
+[vLLM's disaggregated-prefilling documentation](https://docs.vllm.ai/en/latest/features/disagg_prefill/) describes choosing parallel strategies independently for TTFT and inter-token latency. [DistServe at OSDI 2024](https://www.usenix.org/conference/osdi24/presentation/zhong-yinmin) is an earlier example that co-optimized phase-specific resources and parallelism. Runtime support still depends on the connector and model layout used for the handoff.
 
 Why might the degrees differ? Large prefill matrix operations can amortize communication, and a tight first-token budget can justify a wider group. Small-batch decode performs frequent short steps; collective latency and local matrix shape can make a narrower group more efficient. But there is no rule that prefill TP must be larger. Weight fit, long-context KV reads, aggregate memory bandwidth, batch size, and a strict token-gap target may favor wider decode. Measure both phases rather than deriving the answer from “compute-bound” and “memory-bound” labels alone.
 
@@ -1077,9 +1076,9 @@ Accumulate sensitive reductions in an appropriate wider type. Protect normalizat
 
 ### MXFP8 and NVFP4: scales are hardware operands
 
-Blackwell-era low-precision paths use block scales to preserve useful local range. In the documented [Transformer Engine FP8/FP4 recipes](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/fp8_primer.html), MXFP8 groups 32 values with a power-of-two scale, while NVFP4 uses E2M1 four-bit values with finer blocks and additional scaling. Exact training recipes include operation-specific choices; consult the pinned runtime when selecting a layout rather than treating a format name as the complete recipe.
+Blackwell-era low-precision paths use block scales to preserve useful local range. In the documented [Transformer Engine FP8/FP4 recipes](https://docs.nvidia.com/deeplearning/transformer-engine/examples/fp8_primer.html), MXFP8 groups 32 values with a power-of-two scale, while NVFP4 uses E2M1 four-bit values with finer blocks and additional scaling. Exact training recipes include operation-specific choices; consult the pinned runtime when selecting a layout rather than treating a format name as the complete recipe.
 
-The [NVFP4 recipe documentation](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/features/low_precision_training/nvfp4/nvfp4.html) describes block-scale layout requirements and safeguards such as transformations and rounding choices for training. A packed checkpoint, the matrix instruction's operand layout, and the training quantizer are separate artifacts. In particular, quantizing a matrix by rows and then transposing its codes does not generally produce the same result as transposing the original matrix and quantizing its new rows.
+The [NVFP4 recipe documentation](https://docs.nvidia.com/deeplearning/transformer-engine/features/low_precision_training/nvfp4/nvfp4.html) describes block-scale layout requirements and safeguards such as transformations and rounding choices for training. A packed checkpoint, the matrix instruction's operand layout, and the training quantizer are separate artifacts. In particular, quantizing a matrix by rows and then transposing its codes does not generally produce the same result as transposing the original matrix and quantizing its new rows.
 
 For a small original example, imagine one row containing values `[1,1,1,100]`. A shared row scale sacrifices resolution for the three small values. After transposition into a different block grouping, those values may share scales with different neighbors. Both orientations may be required by forward and backward GEMMs. The extra representation and conversion work belongs in the memory/time ledger.
 
@@ -1093,7 +1092,7 @@ Scale choices include per-tensor, per-head, per-channel, per-token, or grouped b
 
 Evaluate long-context retrieval, position-sensitive tasks, multi-turn conversations, rare tokens, tool-use formats, and output distributions, not only short perplexity. A format that doubles theoretical capacity but slows attention can reduce serving capacity under latency SLOs.
 
-For the running service, FP8 KV doubles capacity toward 900,000 cached tokens - about 400 median conversations per replica - and a 4-bit format doubles it again. Each halving also halves long-context attention traffic, which matters once the batch's cached tokens approach the 107,000-token crossover where KV reads rival weight reads.
+For the running service, halving KV payload bytes moves ideal capacity toward 900,000 cached tokens - about 400 median conversations per replica - before scale metadata and reserve. Four-bit KV could halve payload again. At a fixed live-token count, each halving reduces ideal KV traffic, but increased admission can spend that saving on more state. The 107,000-token traffic crossover assumes FP16 weights and KV; it must be recomputed whenever either format changes.
 
 ### Compression shifts the optimum
 
@@ -1236,7 +1235,7 @@ At a stable high level, Little's Law relates average in-system concurrency `N`, 
 
 It is an accounting identity, not a tail-latency guarantee. Use it to cross-check concurrency and memory, then use replay or a queueing model for variability and percentiles.
 
-For the running service, a median request spends roughly 20 to 30 seconds in the system: 300 output tokens at a batch-shared decode cadence plus queueing. At `T = 25 s` and about 200 concurrent conversations of KV capacity, one replica sustains `lambda = N / T = 8` requests per second - before failure headroom, bursts, and long-context outliers, which is exactly why the reserve terms in this section exist.
+For an illustrative capacity check, suppose a representative replay measures a **mean** time in system of 25 seconds. If the replica could maintain a mean of 200 in-system requests under the SLOs, Little's Law would give `lambda = N / T = 8` requests per second. The roughly 200-conversation KV estimate alone does not establish that rate: it is a resident-state limit based on a median-sized example, whereas Little's Law uses averages over the same population, including queued work. Measure mean residence, KV lifetime, and compute capacity before using the result as a plan.
 
 For a worker, enforce:
 
@@ -1245,7 +1244,7 @@ For a worker, enforce:
 Use usable memory after runtime and fragmentation measurements, not device nameplate capacity. For the fleet, include at least one relevant failure or maintenance scenario and the startup delay of replacement capacity.
 
 :::callout insight|Capacity is a memory claim as much as a compute claim
-On the running replica, admission is bounded by roughly 200 conversations of KV before compute saturates. State autoscaling, drain, and failure reserve in cached tokens and replicas, not in GPU utilization percentages.
+On the running replica, the illustrative KV budget holds roughly 200 median-sized conversations. Compute or latency can limit admission sooner. State autoscaling, drain, and failure reserve in cached tokens and replicas alongside the measured service curves, not in GPU utilization percentages alone.
 :::
 
 ### Autoscaling signals
@@ -1296,7 +1295,7 @@ Test fault injection at token-commit, KV handoff, cancellation, adapter eviction
 
 ### Graceful degradation
 
-Safe overload actions preserve model semantics: reject new work, queue within a bound, route, shed batch traffic, lower speculative effort, disable best-of, or evict reusable caches. Actions that change model, precision, context, safety filters, or sampling require explicit product policy and response metadata.
+Overload actions that preserve admitted requests' generation semantics include rejecting new work, queueing within a bound, routing to a compatible replica, shedding queued batch traffic, lowering exact speculative effort, and evicting reusable caches. Disabling best-of changes candidate selection and therefore requires an authorized degradation policy, as do changes to model, precision, context, safety filters, or sampling. Record the selected mode in response metadata.
 
 Protect already admitted requests according to the published contract, but do not let an unbounded generation monopolize the service. Enforce declared maximum output and context, tenant budgets, stream idle timeouts, and cancellation.
 
@@ -1374,7 +1373,7 @@ Scheduler regressions change queue delay, batch composition, phase mixing, itera
 
 #### 6. Overload and rollback
 
-Bound queues and memory reservations, reject early with retry guidance, protect admitted interactive work, shed batch and optional best-of/speculative effort, and enforce tenant quotas. Any change to model, precision, context, sampling, or safety requires an authorized degradation mode and response metadata. Rollout isolates versions and caches, preserves a warm rollback path, drains incompatible in-flight state or reconstructs from tokens, and triggers on goodput, semantic, quality, error, and memory guardrails rather than utilization alone.
+Bound queues and memory reservations, reject early with retry guidance, protect admitted interactive work, shed queued batch work, reduce exact speculative effort, and enforce tenant quotas. Disabling best-of or changing model, precision, context, sampling, or safety requires an authorized degradation mode and response metadata. Rollout isolates versions and caches, preserves a warm rollback path, drains incompatible in-flight state or reconstructs from tokens, and triggers on goodput, semantic, quality, error, and memory guardrails rather than utilization alone.
 
 ### Further Study and Primary References
 

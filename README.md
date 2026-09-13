@@ -2,13 +2,13 @@
 
 A working technical book by Yury Kirpichev covering model training, data, distillation, LLM inference, CUDA, distributed systems, ML coding, system design, and technical leadership.
 
-This is a **working draft**, not a finished first edition. Start with the [front matter](manuscript/00_front_matter.md), [release checks](docs/release-readiness.md), or [original review and completion status](docs/editorial-review.md). The existing all-rights-reserved terms are explicit in [LICENSE](LICENSE); no open-source or open-content license is granted at this stage.
+This is a **working draft**, not a finished first edition. Start with the [front matter](manuscript/00_front_matter.md), [current release checks](docs/release-readiness.md), or [September 13 final Astra review](docs/final-astra-review-2026-09-13.md). The existing all-rights-reserved terms are explicit in [LICENSE](LICENSE); no open-source or open-content license is granted at this stage.
 
 The expanded versioned PDF is attached to the [September 2026 end-to-end learning release](https://github.com/ykirpichev/llm-book/releases/tag/draft-2026-09-07-expanded). The [earlier checkpoint](https://github.com/ykirpichev/llm-book/releases/tag/draft-2026-09-07) is preserved. The repository and both releases remain private; access requires repository permission.
 
 The [chapter coverage audit](docs/coverage-audit-2026-09.md) records the expanded pass, with a September 7, 2026 research cutoff. Core mechanisms are explained in the book with examples and failure boundaries; references provide supporting evidence. The book does not claim to catalogue every paper or reproduce frontier training runs.
 
-The [September 8 Part I review](docs/part1-review-2026-09-08.md) records a subsequent GPT-5.5 review, implemented corrections, and 76 passing CPU tests. Rebuild from these sources for the revisions; the September 7 release PDF remains an unchanged historical checkpoint.
+The [September 8 Part I review](docs/part1-review-2026-09-08.md) records an earlier independent pass. The [September 13 final review](docs/final-astra-review-2026-09-13.md) records the complete chapter-by-chapter Astra review, final assembled-manuscript pass, 77 passing CPU tests, and rebuilt 409-page PDF. Rebuild from the current sources for these revisions; the September 7 release PDFs remain unchanged historical checkpoints.
 
 ## Read the draft
 

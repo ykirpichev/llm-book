@@ -6,7 +6,7 @@ This part is self-contained. It does not require Part III open beside it. Wherev
 
 ### Running example used throughout
 
-Every major section returns to one illustrative workload so estimates stay comparable. Treat the numbers as a teaching machine class, not a product claim.
+Every major section returns to one illustrative workload so estimates stay comparable. The hidden and head dimensions match Part III's running model; the 2,048-token prefill and 4,096-token decode contexts below are separate kernel benchmark shapes, not a change to its request-level workload. Treat the hardware numbers as a teaching machine class, not a product claim.
 
 | Symbol | Meaning | Value in this part |
 | --- | --- | --- |
@@ -47,6 +47,7 @@ Establish a correct reference. Measure the real workload. Build a bytes-and-FLOP
 | Reductions, scans, histograms | Obtain the collective primitives softmax and routing need |
 | Softmax, norm, top-k | Compose those primitives into transformer epilogues |
 | FlashAttention | Fuse score, softmax, and value reduction without quadratic HBM |
+| Blackwell pipelines | Track asynchronous buffer ownership, tensor memory, and attention dependencies |
 | LLM inference kernels | Specialize the schedule for decode, paging, and quantization |
 | Profiling and correctness | Close the loop on the running example with evidence |
 
@@ -310,7 +311,7 @@ Graphs are valuable when:
 
 Graphs are less useful when the workload changes structure every iteration, graph updates are frequent and expensive, or one long kernel dominates latency.
 
-In the decode regime of the running example, each step may launch several short kernels: RoPE or cache append, attention, MLP GEMMs, normalization, logits, and sampling. If each launch costs tens of microseconds and the GPU work is also short at small batch, CPU submission becomes visible. Graph capture amortizes that overhead for stable shape buckets.
+In the decode regime of the running example, each step may launch several short kernels: RoPE or cache append, attention, MLP GEMMs, normalization, logits, and sampling. If measured CPU dispatch and launch gaps are comparable to the short GPU work at small batch, submission becomes visible. Graph capture amortizes that overhead for stable shape buckets; there is no universal per-launch latency to assume across runtimes and hardware.
 
 Example status: CUDA excerpt; not compiled or benchmarked.
 
@@ -473,7 +474,7 @@ __global__ void gemm_tiled(
 }
 ```
 
-Out-of-range loads become zero, all participating threads reach both barriers, and the output store is guarded. An early return before a later barrier would be incorrect for an edge block.
+Launch this kernel with a two-dimensional block of exactly `(TILE, TILE)` threads and a grid covering M and N; `TILE * TILE` must fit the device's block limit. Out-of-range loads become zero, all participating threads reach both barriers, and the output store is guarded. An early return before a later barrier would leave shared-tile entries uninitialized for an edge block.
 
 ### Arithmetic intensity from tile reuse
 
@@ -538,7 +539,7 @@ Fusing bias, scaling, activation, quantization, or residual operations can elimi
 
 When M and N expose too few output tiles but K is large, split K across blocks. Partial C tiles are combined with atomics or a workspace reduction. The extra reduction is worthwhile when it unlocks otherwise idle SMs.
 
-In the running example's decode GEMM with `M = 8`, ordinary output tiling may leave most of the GPU idle. Split-K or a persistent wave across the weight matrix recovers utilization, at the cost of partial-result traffic.
+In the running example's decode GEMM with `M = 8`, ordinary output tiling may leave most of the GPU idle. Splitting K creates more independently schedulable work, at the cost of partial-result traffic. Persistence alone cannot create parallelism when too few output tiles exist; it must be paired with a work decomposition that exposes enough tasks.
 
 Stream-K-like scheduling distributes K work more evenly across a fixed set of work units to reduce wave quantization and tail imbalance. Persistent kernels keep blocks resident and pull tiles from a global or hierarchical queue. These strategies improve utilization for awkward shapes but add coordination and deterministic-order questions.
 
@@ -606,12 +607,12 @@ A reduction replaces a linear dependency with a tree. Within a warp, shuffle ins
 Example status: CUDA excerpt; not compiled or benchmarked.
 
 ```cuda
-__device__ float warp_sum(float x, unsigned mask) {
+// Contract: all 32 lanes participate; invalid data contributes zero.
+__device__ float warp_sum(float x) {
   int lane = threadIdx.x & 31;
   for (int offset = 16; offset > 0; offset >>= 1) {
-    float other = __shfl_down_sync(mask, x, offset);
-    int source_lane = lane + offset;
-    if (source_lane < 32 && (mask & (1u << source_lane))) x += other;
+    float other = __shfl_down_sync(0xffffffffu, x, offset);
+    if (lane + offset < 32) x += other;
   }
   return x;
 }
@@ -620,23 +621,21 @@ __device__ float block_sum(float x) {
   __shared__ float partial[32];
   int lane = threadIdx.x & 31;
   int warp = threadIdx.x >> 5;
-  unsigned mask = __activemask();
-
-  x = warp_sum(x, mask);
+  x = warp_sum(x);
   if (lane == 0) partial[warp] = x;
   __syncthreads();
 
-  int warp_count = (blockDim.x + 31) >> 5;
+  int warp_count = blockDim.x >> 5;
   float value = (threadIdx.x < warp_count) ? partial[lane] : 0.0f;
   if (warp == 0) {
-    unsigned first_warp_mask = __ballot_sync(0xffffffff, lane < warp_count);
-    value = warp_sum(value, first_warp_mask);
+    value = warp_sum(value);
   }
+  __syncthreads();  // protect shared partials before a subsequent call
   return value;  // valid in lane 0 of warp 0
 }
 ```
 
-The ownership contract matters: only one lane owns the final value. A caller that lets every thread store `value` is incorrect.
+This excerpt requires a one-dimensional block with 32 to 1,024 threads in a multiple of 32, and every block thread must call it. Threads outside the logical input contribute zero rather than exit. This explicit full-warp contract avoids treating an arbitrary sparse mask as a valid shuffle reduction tree. Only thread zero owns the final value. A caller that lets every thread store `value` is incorrect; a caller that needs the sum everywhere must broadcast it through shared memory and a block barrier.
 
 ### Device-wide reduction
 
@@ -664,17 +663,18 @@ A work-efficient block scan has an upsweep that builds partial sums and a downsw
 Example status: CUDA excerpt; not compiled or benchmarked.
 
 ```cuda
-__device__ int warp_inclusive_scan(int x, unsigned mask) {
+// Contract: all 32 lanes participate; valid items form a lane prefix.
+__device__ int warp_inclusive_scan(int x) {
   int lane = threadIdx.x & 31;
   for (int offset = 1; offset < 32; offset <<= 1) {
-    int y = __shfl_up_sync(mask, x, offset);
+    int y = __shfl_up_sync(0xffffffffu, x, offset);
     if (lane >= offset) x += y;
   }
   return x;
 }
 ```
 
-For a device-wide scan, each block scans a tile, block totals are scanned, and the resulting offsets are added to each tile. A library handles edge cases, recursion, tuning, and temporary storage.
+Unused data lanes contribute zero but still execute the scan. This is not an arbitrary-mask scan: a sparse participation pattern requires a different lane mapping or a collective with that contract. For a device-wide scan, each block scans a tile, block totals are scanned, and the resulting offsets are added to each tile. A library handles edge cases, recursion, tuning, and temporary storage.
 
 ### Stream compaction
 
@@ -778,24 +778,33 @@ Subtracting the row maximum prevents overflow. A basic row kernel has three logi
 Example status: CUDA excerpt; not compiled or benchmarked.
 
 ```cuda
+__shared__ float row_stats[2];
 float local_max = -INFINITY;
 for (int i = threadIdx.x; i < cols; i += blockDim.x) {
   local_max = max(local_max, x[row * cols + i]);
 }
-float row_max = block_max(local_max);
+float max_at_thread_zero = block_max(local_max);
+if (threadIdx.x == 0) row_stats[0] = max_at_thread_zero;
+__syncthreads();
+float row_max = row_stats[0];
 
 float local_sum = 0.0f;
 for (int i = threadIdx.x; i < cols; i += blockDim.x) {
   local_sum += expf(x[row * cols + i] - row_max);
 }
-float row_sum = block_sum(local_sum);
+float sum_at_thread_zero = block_sum(local_sum);
+if (threadIdx.x == 0) row_stats[1] = sum_at_thread_zero;
+__syncthreads();
+float row_sum = row_stats[1];
 
 for (int i = threadIdx.x; i < cols; i += blockDim.x) {
   y[row * cols + i] = expf(x[row * cols + i] - row_max) / row_sum;
 }
 ```
 
-The code may recompute exponentials in the final loop. Keeping every value in registers can be faster for narrow rows but creates spills for wide rows. Recompute spends special-function arithmetic to avoid HBM or local-memory traffic.
+Here one block owns one row, `cols > 0`, inputs are finite, and the full-warp launch contract from `block_sum` applies. `block_max` is the analogous reduction with maximum and negative infinity as the identity; it also returns its result only in thread zero. Both row statistics are explicitly broadcast before other threads consume them. Masked rows need the policy below before this arithmetic runs.
+
+The code recomputes exponentials in the final loop. Keeping every value in registers can be faster for narrow rows but creates spills for wide rows. Recompute spends special-function arithmetic to avoid HBM or local-memory traffic.
 
 For attention in the running example, a softmax row length equals the attended context. Prefill rows can be length 2048; decode rows can be length 4096. Materializing those scores in HBM is the problem FlashAttention later removes. The reduction structure remains the same.
 
@@ -810,6 +819,8 @@ Rescale each partial into the new reference frame:
 `l = exp(m_a - m) l_a + exp(m_b - m) l_b`
 
 This state `(m, l)` is associative up to floating-point order. Adding an output accumulator produces the recurrence used in tiled attention.
+
+Represent an empty or fully masked tile by zero mass and handle it as a neutral state before evaluating exponentials. Merging two empty states by blindly subtracting their negative-infinity maxima produces NaNs. The same guard is needed for attention's weighted-output state.
 
 :::diagram online_softmax|Two tiles keep compact state instead of the full score vector. Merging rescales both sides into one maximum, then adds denominators and weighted outputs.
 
@@ -872,7 +883,7 @@ Fusion tradeoffs include:
 - backward-save requirements;
 - variant count across dtype and hidden size.
 
-For one residual stream of shape `[tokens, D]` in FP16, a separate residual add performs two tensor reads and one intermediate write. RMSNorm must then read that intermediate to compute statistics, read it again to apply the scale unless the row remains on chip, and write the output. The unfused lower bound is therefore five full activation-tensor transfers and the common two-pass case is six, before counting gamma. Fusion removes at least the intermediate write and reread. At prefill with `tokens = 2048` and `D = 4096`, each FP16 tensor is 16 MiB, so eliminating two full transfers saves at least 32 MiB per fused site. At decode with `tokens = 8`, the absolute byte saving is small, but avoiding a launch can still matter.
+For one residual stream of shape `[tokens, D]` in FP16, a separate residual add performs two tensor reads and one intermediate write. RMSNorm must then read that intermediate to compute statistics, read it again to apply the scale unless the row remains on chip, and write the output. The unfused lower bound is therefore five full activation-tensor transfers and the common two-pass case is six, before counting gamma. If the residual is not needed later, fusion can reduce this to two input reads and one normalized-output write. If a later layer needs the updated residual, its write remains: fusion saves the norm reread, or two rereads for the two-pass case. At prefill with `tokens = 2048` and `D = 4096`, each FP16 tensor is 16 MiB, so one eliminated transfer saves 16 MiB. At decode with `tokens = 8`, the absolute byte saving is small, but avoiding a launch can still matter. These are logical transfer counts; measured HBM savings also depend on cache reuse.
 
 ### Top-k selection
 
@@ -940,7 +951,7 @@ Fusion can change operation order, numerical rounding, tie behavior, RNG indexin
 
 LEAD: FlashAttention is not an approximate attention mechanism. It is an exact tiled schedule that avoids materializing the quadratic score and probability matrices in HBM.
 
-Online softmax made the merge rule available. FlashAttention is that rule applied to attention tiles so the running example's prefill path never writes `S` or `P` to HBM. The algorithm stays exact; the schedule changes.
+Online softmax made the merge rule available. FlashAttention is that rule applied to attention tiles so the running example's prefill path never writes `S` or `P` to HBM. Exact here means the same dense-attention operation without a sparsity or low-rank approximation; floating-point order and kernel precision can still change numerical results.
 
 :::diagram attention|Attention combines QK scores, masking and softmax, then a weighted V reduction. The performance question is which intermediates must cross HBM.
 
@@ -965,7 +976,7 @@ For one head during prefill with `S_q = 2048` and FP16 scores:
 - `S` or `P` alone is `2048^2 * 2 = 8 MiB` per head;
 - across `H = 32` heads, one complete score or probability tensor is 256 MiB;
 - merely storing both tensors consumes 512 MiB, and writing then rereading each produces at least 1 GiB of quadratic HBM traffic before counting Q, K, V, or output traffic;
-- FlashAttention keeps per-row state `(m, l)` and an output tile of size `S_q * d`, so activation traffic scales with sequence times head dimension rather than sequence squared.
+- FlashAttention keeps per-row state `(m, l)` and a query-tile output accumulator on chip, and writes an output of size `S_q * d`. Saved attention intermediates are linear in sequence length. Total HBM traffic is not necessarily linear: different query tiles may reread K/V, with the amount governed by tile size, on-chip capacity, and cache reuse.
 
 The arithmetic may increase because tiles are rescaled and scores are recomputed in backward. The wall-clock win comes from staying under the HBM roof.
 
@@ -1190,7 +1201,7 @@ Prefill attention and GEMM covered the compute-rich path. This section specializ
 
 ### Serving contracts restated for kernel work
 
-Autoregressive decode keeps, for every layer and every active sequence, the keys and values of all tokens generated or prefills so far. That working set is the **KV cache**. Its lifetime follows requests, not training batches. Capacity is measured in tokens times layers times KV heads times head dimension times dtype bytes, plus allocator fragmentation.
+Autoregressive decode keeps, for every layer and every active sequence, the keys and values of tokens processed so far, including the prompt. That working set is the **KV cache**. Its lifetime follows requests, not training batches. Capacity is measured as `2 * tokens * layers * KV_heads * head_dimension * bytes_per_element`, plus allocator fragmentation; the factor two counts K and V.
 
 A **paged KV cache** stores tokens in fixed-size physical pages and maintains a block table from logical token blocks to physical pages. Kernels must translate `(sequence, position)` into a page and offset, then load K/V vectors. The page size trades fragmentation against contiguous access and metadata overhead.
 
@@ -1255,15 +1266,15 @@ Smaller pages reduce fragmentation and copy cost but increase page-table entries
 
 #### Bandwidth sketch for the running example
 
-One decode attention step, for all heads, must read roughly:
+For one layer of a decode attention step, an ideal schedule that reuses each KV head across its query heads reads roughly:
 
 `B * H_kv * S * d * bytes_per_element * 2 (K and V)`
 
 With `B = 8`, `H_kv = 8`, `S = 4096`, `d = 128`, FP16:
 
-`8 * 8 * 4096 * 128 * 2 * 2 = 1,073,741,824` bytes = 1 GiB
+`8 * 8 * 4096 * 128 * 2 * 2 = 134,217,728` bytes = 128 MiB
 
-At an illustrative 3 TB/s HBM ceiling, the memory roof is a fraction of a millisecond before scoring arithmetic, softmax, and writes. Useful bandwidth falls if page jumps destroy coalescing. This is why layout and paging dominate decode attention more than peak tensor-core throughput.
+At an illustrative 3 TB/s HBM ceiling, streaming 128 MiB takes about 0.045 ms before scoring arithmetic, softmax, and writes. This is a per-layer lower bound assuming the KV reads reach HBM. Across Part III's 32 layers, the logical KV traffic is 4 GiB (about 4.3 GB), matching that part's decode ledger. Repeated loads across GQA query groups can raise traffic, while cache hits can reduce it. Useful bandwidth falls if page jumps destroy coalescing. This is why layout and paging dominate decode attention more than peak tensor-core throughput.
 
 ### Split-K decode attention
 

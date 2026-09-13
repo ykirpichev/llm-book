@@ -29,7 +29,7 @@ A common failure is to train the most capable model that fits the training clust
 
 :::equation Value = QualityGain - TrainCost - ServeCost - OperatingRisk|A training program optimizes lifetime utility, not validation loss in isolation.
 
-The terms are not directly commensurate, but writing them forces a complete decision.
+This is a qualitative decision model. To optimize it numerically, convert the terms into a common utility unit or express cost and risk as explicit constraints; subtracting raw quality points, dollars, and probabilities would be meaningless.
 
 ### Budget the program, not only the final run
 
@@ -382,7 +382,7 @@ def exact_identity(record, normalizer_version, digest):
     return digest(payload).hexdigest()
 ```
 
-The null separator prevents ambiguous concatenation. The production schema also stores digest algorithm, serialization version, byte length, and source revision IDs.
+The null separator makes this concatenation unambiguous only if the version field cannot itself contain a null byte. A production schema should enforce that restriction or use length-prefixed fields. It also stores digest algorithm, serialization version, byte length, and source revision IDs.
 
 Decide the scope:
 
@@ -833,7 +833,7 @@ A verifier's pass rate is not its precision. Let:
 
 Then:
 
-:::equation P(bad;accept) = β(1-p) / (αp + β(1-p))|Bayes' rule converts verifier error and generator quality into accepted-data risk.
+:::equation P(bad given accept) = β(1-p) / (αp + β(1-p))|Bayes' rule converts verifier error and generator quality into accepted-data risk.
 
 If 60 percent of candidates are good, `alpha=0.95`, and `beta=0.10`, then:
 
@@ -939,7 +939,7 @@ Sampling by documents rather than tokens changes the objective when lengths diff
 
 #### Importance weights and target distributions
 
-If product traffic has target distribution `p_d` but training samples domains from `q_d`, an unbiased estimate of product-distribution loss can use:
+If product traffic has target distribution `p_d` but training samples domains from `q_d`, an unbiased estimate of product-distribution loss can use the following weights, provided `q_d>0` wherever `p_d>0` and within-domain sampling matches the target conditional distribution:
 
 :::equation w_{d} = p_{d} / q_{d}|Importance weighting corrects a sampling distribution toward a declared target distribution.
 
@@ -951,7 +951,7 @@ Large weights create high-variance gradients. In practice, cap or smooth weights
 
 :::equation ESS = (Σ_{i} w_{i})^{2} / Σ_{i} w_{i}^{2}|Effective sample size reveals concentration hidden by the nominal example count.
 
-If 1,000 examples have weight one, `ESS=1,000`. If a few examples carry most weight, ESS can be far smaller than the row count. Token count without ESS hides concentration.
+If 1,000 examples have weight one, `ESS=1,000`. If a few examples carry most weight, ESS can be far smaller than the row count. This weight-based diagnostic does not account for dependence among duplicates or related examples; audit that separately. Token count alone hides both forms of concentration.
 
 #### Constrained capability objective
 
@@ -1099,7 +1099,7 @@ For transform `F_v`:
 
 `output_id = H(input_id || F_v || config_hash || deterministic_seed)`.
 
-A retry first checks whether that output already exists and verifies its digest. Nondeterministic generation includes generator checkpoint, decoding configuration, and per-record seed in identity.
+A retry first checks whether that output already exists and verifies its digest. Generation identity includes generator checkpoint, decoding configuration, and per-record seed, but a seed alone does not guarantee identical outputs across execution backends. For nondeterministic transforms, use this identity as an idempotency key: publish one completed artifact atomically and retain its actual content digest. Retries reuse that artifact rather than silently replacing it with another sample.
 
 Partition work by stable input IDs rather than worker count so changing cluster size does not reshuffle identity. Store per-partition completion manifests. A failed 10,000-partition job should rerun failed partitions, not rewrite successful output.
 
@@ -1408,7 +1408,7 @@ To estimate target product loss under product distribution `p_d` while sampling 
 
 `w_d=p_d/q_d`.
 
-This is unbiased in expectation, but large weights raise gradient variance. Clip or smooth with an explicit bias tradeoff. Report:
+This is unbiased when every target domain has positive sampling probability and its within-domain conditional distribution is preserved. Large weights raise gradient variance. Clip or smooth with an explicit bias tradeoff. Report:
 
 :::equation ESS = (Σ_{i} w_{i})^{2} / Σ_{i} w_{i}^{2}|Effective sample size reveals how concentrated weighting reduces statistical support.
 
@@ -1503,14 +1503,16 @@ Example status: Illustrative Python excerpt; not standalone.
 
 ```python
 def distillation_loss(student_logits, teacher_logits, labels, T=2.0, alpha=0.7):
-    teacher = softmax(teacher_logits / T, dim=-1)
+    # Inputs: aligned, valid-token logits [N, V] and labels [N], N > 0.
+    # T > 0; 0 <= alpha <= 1; teacher is a fixed target.
+    teacher = softmax(teacher_logits.detach() / T, dim=-1)
     student_logp = log_softmax(student_logits / T, dim=-1)
     soft = kl_div(student_logp, teacher, reduction="batchmean") * (T * T)
     hard = cross_entropy(student_logits, labels)
     return alpha * soft + (1.0 - alpha) * hard
 ```
 
-The production version masks padding, normalizes by valid tokens, handles sharded vocabulary, controls teacher precision, and avoids storing full teacher logits when bandwidth dominates.
+The excerpt assumes next-token alignment and masking have already selected valid tokens. With `[N,V]` logits, `batchmean` divides the KL sum by the same valid-token count used by hard cross entropy. Applying it directly to `[B,S,V]` would divide by `B` instead and change the loss balance with sequence length; see [PyTorch's KL reduction contract](https://docs.pytorch.org/docs/2.14/generated/torch.nn.functional.kl_div.html). A production version also handles sharded vocabulary, controls teacher precision, and avoids storing full teacher logits when bandwidth dominates.
 
 ### Engineer the teacher data path
 
@@ -1548,9 +1550,9 @@ The best draft maximizes end-to-end target throughput under memory and latency c
 
 A larger draft costs more per proposed token but can raise acceptance. A smaller draft is cheap but may create verification waste. Let:
 
-- `C_d(m)` be draft cost for model size `m`;
-- `C_v(gamma)` be target verification cost for `gamma` proposed tokens;
-- `A(m, gamma)` be expected accepted tokens;
+- `C_draft(m, gamma)` be draft time for model size `m` and `gamma` proposed tokens;
+- `C_verify(gamma)` be target verification time for those proposals;
+- `A(m, gamma)` be expected committed output tokens per cycle, including any correction or bonus token;
 - `C_base` be one ordinary target decode step.
 
 A simple speed model is:

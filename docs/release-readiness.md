@@ -1,11 +1,25 @@
 # Working-draft release checks
 
-## Source revision after the published checkpoint
+## Current reviewed source — September 13
 
-[Part I review, September 8](part1-review-2026-09-08.md) records the subsequent
-independent-model review and fixes. The revised source passes 76 CPU tests.
-The release evidence below describes the immutable September 7 artifacts,
-not the newer locally rebuilt PDF.
+The [final Astra review](final-astra-review-2026-09-13.md) records the complete
+chapter-by-chapter and assembled-manuscript review. The current source passes 77
+CPU tests. Its rebuilt PDF has 409 pages, 78 outline entries, 168 external link
+annotations, and no suspiciously empty pages. All pages were inspected at
+contact-sheet scale, with enlarged checks of representative and changed pages.
+
+The online checker reached 147 unique manuscript URLs with zero confirmed
+missing links; four publisher endpoints returned access blocks and remain
+unverified. The repository audit found no selected credential signatures and
+again reported the documented developer-local path in one historical Makefile
+blob. CUDA excerpts remain uncompiled and unbenchmarked locally.
+
+**Readiness:** suitable for limited broader sharing as a clearly labeled working
+draft. A finished public edition still needs an independent human technical/copy
+edit and a final rights, licensing, privacy, and repository-history review.
+
+The release evidence below describes the immutable September 7 artifacts rather
+than this newer locally rebuilt PDF.
 
 ## Current checkpoint: expanded end-to-end learning draft
 

@@ -28,7 +28,7 @@ The memo is not a transcript of analysis. Put supporting benchmarks and architec
 
 Separate **known**, **estimated**, **assumed**, and **unknown**. Attach ranges where they change the choice. Name the observation that would invalidate the recommendation.
 
-"We do not know" becomes actionable when followed by: "The uncertainty is draft acceptance on code traffic; a 48-hour replay of 100,000 anonymized prompts can bound it to within two points, and the architecture decision flips below 62 percent."
+"We do not know" becomes actionable when followed by a concrete plan. For example: "The uncertainty is draft acceptance on code traffic. We will replay 100,000 representative prompts over 48 hours, report uncertainty by workload slice, and revisit the architecture if acceptance falls below our modeled break-even point of 62 percent." These are hypothetical planning values. A sample count alone does not guarantee a narrow interval: repeated users, correlated prompts, and rare slices change the effective sample size.
 
 ### Technical deep dive structure
 
@@ -113,7 +113,7 @@ Metrics need counterweights. Optimizing GPU utilization alone can increase queue
 
 ### Define ownership at interfaces
 
-Most cross-team failures occur between nominal owners. A model team owns a checkpoint, a serving team owns an engine, and a product team owns traffic; nobody owns whether that exact combination is safe to release.
+Cross-team failures often expose gaps between nominal owners. A model team owns a checkpoint, a serving team owns an engine, and a product team owns traffic; without an explicit release owner, nobody may own whether that exact combination is safe to release.
 
 For each critical interface, define:
 
@@ -297,7 +297,7 @@ Use **SCORE** rather than a mechanical chronology:
 - **Response:** your decisions, influence, mechanisms, and execution.
 - **Effect:** measurable outcome, second-order impact, and what you learned.
 
-The account should make clear what *you* did without erasing the team. Use "I" for decisions and actions you owned, "we" for collective execution, and name partners' contributions.
+The account should make clear what *you* did without erasing the team. Use "I" for decisions and actions you owned, "we" for collective execution, and name partners' contributions. Use real evidence when describing your work; if an outcome was not measured, explain the observable change and the limit of the evidence instead of inventing a metric.
 
 ### Customer obsession
 
@@ -341,7 +341,7 @@ Prepare six to eight stories that can flex across prompts:
 | Product-quality tradeoff | Customer judgment | Data, metrics, ethics |
 
 :::callout insight|End with the mechanism that remained
-Durable impact is durable. Mention the interface, metric, review, tool, ownership model, or talent growth that continued after the immediate result.
+Mention the interface, metric, review, tool, ownership model, or talent growth that continued after the immediate result. Explain who maintained it and what evidence showed it still worked after you stepped back.
 :::
 
 ### Design Exercises
@@ -386,7 +386,7 @@ LEAD: The following scenarios connect the major technical layers of the book. Ea
 
 ### 1. Design a draft model for speculative decoding
 
-**Decision path:** Define target workload and exactness. Match tokenizer. Choose draft architecture from memory and latency budget. Train on production prompts with target logits or verified continuations, emphasizing rejection positions. Jointly tune draft size and proposal length. Evaluate acceptance per microsecond, committed tokens per cycle, target batch capacity, tail latency, and exact output distribution. Roll out by traffic slice with automatic fallback to ordinary decode.
+**Decision path:** Define target workload and exactness. Match tokenizer. Choose draft architecture from memory and latency budget. Train on production prompts with target logits or verified continuations, emphasizing rejection positions. Jointly tune draft size and proposal length. Evaluate acceptance per microsecond, committed tokens per cycle, target batch capacity, and tail latency. Establish target-distribution preservation from the verification algorithm and test its implementation on tractable distributions; finite task evaluations alone cannot prove exactness. Roll out by traffic slice with automatic fallback to ordinary decode.
 
 **Questions to resolve:** Why not only teacher outputs? What changes at high temperature? When does a larger draft win? How do you handle domain shift? Can K/V state be shared?
 

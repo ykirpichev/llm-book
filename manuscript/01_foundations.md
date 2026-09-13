@@ -73,7 +73,7 @@ Requirements describe desired outcomes. Invariants describe what must remain tru
 - a token may be streamed only from the model and policy versions recorded for the request;
 - two tenants may never share a prefix-cache entry without an authorized identity boundary;
 - a checkpoint is visible only after every required shard and manifest is durable;
-- an optimizer step either advances all participating ranks or none of them;
+- a run exposes a committed optimizer step only when all participating ranks have advanced consistently; partial failure triggers recovery;
 - a cancelled request eventually releases its KV blocks and scheduler state;
 - an evaluation result names immutable model, data, engine, prompt, and metric versions.
 
@@ -299,7 +299,7 @@ LayerNorm controls mean and variance; RMSNorm controls root-mean-square magnitud
 
 For the normalization mechanism and its evaluated benefits, see [Root Mean Square Layer Normalization](https://arxiv.org/abs/1910.07467); do not transfer its reported timings to another model without measurement.
 
-### A training step is a distributed transaction
+### A training step needs a distributed commit and recovery contract
 
 A production step contains more state than parameters and gradients. It advances optimizer moments, learning-rate schedule, random streams, data-sampler position, loss scale, gradient accumulation counters, and monitoring windows. Checkpoint recovery must restore these surfaces consistently.
 
@@ -807,7 +807,7 @@ Suppose a new layout is expected to reduce decode memory transactions by 18 perc
 6. a canary compares SLO-constrained goodput and critical quality outputs;
 7. rollout monitors regressions by sequence-length and hardware class.
 
-If profiler bytes fall but end-to-end latency does not, the result is not a failed experiment. It rejects the assumption that memory traffic controlled the observed workload and directs attention toward launch overhead, synchronization, queueing, or another phase.
+If profiler bytes fall but end-to-end latency does not, the result is informative. Reduced traffic may lie outside the critical path, or another cost may have offset the saving. Inspect launch overhead, synchronization, queueing, and phase timing before concluding that memory traffic was irrelevant.
 
 ### Design Exercises
 

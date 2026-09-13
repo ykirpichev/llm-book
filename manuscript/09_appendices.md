@@ -73,10 +73,10 @@ As a self-check, change one assumption at a time: double input length; revoke a 
 | Global batch | `microbatch * accumulation * DP` | Schedule and optimizer comparisons |
 | Dense training compute | proportional to `parameters * tokens` | Budget and scaling estimates |
 | Adam state | weights + gradients + two moments, precision dependent | Device and sharding memory |
-| Pipeline bubble | roughly `(stages - 1) / microbatches` for simple schedule | Pipeline efficiency |
-| Ring all-reduce traffic | `2 (n - 1) / n * tensor_bytes` per rank | Network estimate |
+| Pipeline bubble fraction | `(stages - 1) / (microbatches + stages - 1)` for balanced forward-only stages | Fraction of schedule spent idle |
+| Ring all-reduce traffic | `2 (n - 1) / n * tensor_bytes` sent per rank; the same volume received | Network estimate |
 
-Always specify which bytes are sharded, replicated, offloaded, or temporarily gathered. Activation memory depends on sequence, microbatch, hidden width, saved intermediates, and checkpointing.
+Always specify which bytes are sharded, replicated, offloaded, or temporarily gathered. Adam memory may also include higher-precision master weights. Activation memory depends on sequence, microbatch, hidden width, saved intermediates, and checkpointing. The pipeline expression assumes equal stage times and ignores communication; training schedules need their own backward and overlap accounting. `(stages - 1) / microbatches` is bubble overhead relative to useful work, not the idle fraction of total time.
 
 ### Transformer inference
 
@@ -89,6 +89,8 @@ Always specify which bytes are sharded, replicated, offloaded, or temporarily ga
 `attention_scores = O(sequence^2)` values if materialized
 
 FlashAttention preserves `O(sequence^2)` arithmetic for dense attention while reducing HBM materialization.
+
+The KV expression assumes equal sequence lengths and head dimensions, with every listed layer storing full-history K and V. For ragged batches, replace `batch * sequence` by the sum of retained sequence lengths; then account for shared prefixes, block padding, replication, and sharding. The weight-streaming expression is a time bound for one pass over the listed weights, not a per-request latency prediction for a batch.
 
 ### Hybrid and recurrent state
 
@@ -106,6 +108,8 @@ The expression assumes one matrix state per listed head and omits model-specific
 
 `PPO_surrogate = min(ratio * advantage, clip(ratio, 1-eps, 1+eps) * advantage)`
 
+The PPO expression is maximized; a minimized policy loss uses its negative. DPO preference log-ratios compare chosen versus rejected response probabilities conditional on the same prompt.
+
 `group_advantage = (reward - group_mean) / group_std` for the stated standardized GRPO variant; zero-variance groups require a defined policy.
 
 `ESS = sum(weights)^2 / sum(weight^2)` for nonnegative weights with a positive total.
@@ -122,9 +126,9 @@ Reference-policy KL, behavior-policy ratios, and a learned value baseline have d
 
 `E[accepted] = sum_(k=1..gamma) Pr(accepted_prefix >= k)`
 
-`speedup = committed_target_equivalent_work / total_draft_plus_verify_time`
+`speedup = baseline_time_for_same_committed_tokens / speculative_time`
 
-The final expression must include draft memory, target batch capacity, queueing, and scheduling when making a deployment decision.
+Here `p` is the target distribution and `q` is the actual proposal distribution at the same history, after their respective sampling transformations. Acceptance is evaluated on a sampled proposal with `q(x) > 0`; the correction distribution is normalized only after rejection. Committed output also includes the correction token, or the extra target token when every proposal is accepted. Compare matched output work and include draft, verification, sampling, queueing, and scheduling in elapsed time; account for draft memory and lost target batch capacity separately.
 
 ### Distillation
 
@@ -143,9 +147,9 @@ Classic logit distillation often uses `T^2 * KL(teacher_T || student_T)` plus a 
 | Min-heap top-k | `O(log k)` update | `O(k)` | Exact for insert-only global top-k |
 | Monotonic deque | amortized `O(1)` | window size worst case | Exact sliding min/max |
 | Reservoir | `O(1)` expected | `O(k)` | Uniform sample of unknown-length stream |
-| Count-Min Sketch | `O(depth)` | `O(width * depth)` | One-sided frequency overestimate |
+| Count-Min Sketch | `O(depth)` | `O(width * depth)` | One-sided overestimate for nonnegative current frequencies under standard linear updates |
 | HyperLogLog | `O(1)` | fixed registers | Probabilistic cardinality |
-| Bloom filter | `O(hashes)` | bit array | False positives, no false negatives |
+| Bloom filter | `O(hashes)` | bit array | False positives, no false negatives for insert-only membership |
 
 ### Queueing and capacity
 
@@ -368,7 +372,7 @@ Contain harm, state new evidence, reopen the choice, preserve trust by owning th
 
 **Data lineage:** the versioned relationship from source through transformations to datasets, checkpoints, evaluations, and releases.
 
-**Forward KL:** divergence weighted by the reference or teacher distribution, penalizing missing its supported outcomes.
+**Forward KL:** in this book's teacher/student convention, `KL(teacher || student)`, weighted by the teacher distribution and penalizing missing its supported outcomes.
 
 **GQA:** grouped-query attention, where multiple query heads share a smaller number of key/value heads.
 
@@ -382,7 +386,7 @@ Contain harm, state new evidence, reopen the choice, preserve trust by owning th
 
 **Prefill:** prompt processing phase that creates KV state and produces first-token logits.
 
-**Reverse KL:** divergence weighted by the learned distribution, often favoring a supported mode when covering all modes is costly.
+**Reverse KL:** in the same convention, `KL(student || teacher)`, weighted by the student distribution and often favoring a supported mode when covering all modes is costly. Always state the operands because naming conventions vary.
 
 **Speculative decoding:** exact or controlled approximate generation using cheap proposals and expensive parallel verification.
 

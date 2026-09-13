@@ -50,7 +50,7 @@ This is not the same as retrieving current documents from an enterprise corpus. 
 
 ### Reasoning from reinforcement learning
 
-DeepSeek-R1-Zero reports that large-scale reinforcement learning without a supervised fine-tuning warm start can elicit stronger reasoning behavior, but also reports readability and language-mixing problems. DeepSeek-R1 adds cold-start data and a multi-stage training process before and after reinforcement learning. The report also releases distilled dense models from 1.5B through 70B parameters and reports that reasoning behavior can transfer into smaller students.
+[DeepSeek-R1-Zero](https://arxiv.org/abs/2501.12948) reports that large-scale reinforcement learning without a supervised fine-tuning warm start can elicit stronger reasoning behavior, but also reports readability and language-mixing problems. DeepSeek-R1 adds cold-start data and a multi-stage training process before and after reinforcement learning. The report also releases distilled dense models from 1.5B through 70B parameters and reports that reasoning behavior can transfer into smaller students.
 
 This evidence changes the post-training design space in three ways.
 
@@ -102,7 +102,7 @@ The production acceptance test still needs ragged and causal shapes, head dimens
 
 ### Read the 2026 developments through the earlier chapters
 
-Part IV now derives Blackwell ownership and the FlashAttention-4 pipeline rather than stopping at Hopper. Part III compares feature-based and block-parallel speculative drafts, including EAGLE-3 and DFlash, while retaining the target-distribution verification contract. Part II develops group-relative RL, sequence-level ratios, and feedback-conditioned self-distillation; Part V explains why asynchronous training needs policy-freshness control. These are different changes to the system, not interchangeable ways of “making reasoning faster.”
+Part IV derives Blackwell ownership and the FlashAttention-4 pipeline. Part III compares feature-based and block-parallel speculative drafts, including EAGLE-3 and DFlash, while retaining the target-distribution verification contract. Part II develops group-relative RL, sequence-level ratios, and feedback-conditioned self-distillation; Part V explains why asynchronous training needs policy-freshness control. These changes act on different parts of the system, so each needs its own acceptance test.
 
 | Change | Quantity it tries to improve | Evidence that could reject it |
 | --- | --- | --- |
@@ -128,7 +128,7 @@ Disaggregation can improve independent scaling and isolation while adding networ
 
 ### Long-context memory is becoming hierarchical
 
-Recent work explores two complementary ways to reduce long-context pressure. [RocketKV](https://arxiv.org/abs/2502.14051) combines coarse eviction with fine-grained sparse attention and reports up to 3 times end-to-end decode speedup and up to 31 percent peak-memory reduction on H100 against a full-KV-cache baseline, with negligible loss on its evaluated tasks. [SparseServe](https://arxiv.org/abs/2509.24626v1) places unselected KV state in host memory, controls batch size from the active working set, and segments prefill by layer; it reports up to a 9.26-fold reduction in mean time to first token and up to 3.14 times higher generation throughput than its evaluated baselines. These maxima need not occur in the same configuration.
+Recent work explores two complementary ways to reduce long-context pressure. [RocketKV, version 1](https://arxiv.org/abs/2502.14051v1), combines coarse eviction with fine-grained sparse attention and reports up to 3 times end-to-end decode speedup and up to 31 percent peak-memory reduction on H100 against a full-KV-cache baseline, with negligible loss on its evaluated tasks. These numbers belong to the February 2025 version; later revisions report a different hardware evaluation. [SparseServe](https://arxiv.org/abs/2509.24626v1) places unselected KV state in host memory, controls batch size from the active working set, and segments prefill by layer; it reports up to a 9.26-fold reduction in mean time to first token and up to 3.14 times higher generation throughput than its evaluated baselines. These maxima need not occur in the same configuration.
 
 These are paper-reported maxima, not portable constants. They do establish a broader systems pattern: when attention becomes sparse, the bottleneck can move from HBM bandwidth to HBM capacity, irregular selection, or host-device movement. A valid comparison must include retrieval quality, task accuracy, selection overhead, cache thrashing, tail latency, and worst-case dense fallbacks.
 
@@ -178,7 +178,7 @@ A straightforward video pipeline samples frames, encodes each, and attaches time
 
 At two frames per second, a one-minute clip contains 120 sampled frames. With 196 visual tokens per frame, that is 23,520 tokens before text, audio, and temporal compression. A 100-millisecond event can occur entirely between the sampled frames. No downstream reasoning method can guarantee recovery of an unobserved event. Evaluate temporal localization, ordering, and evidence coverage separately from a general video summary.
 
-Grounded outputs need a coordinate contract. If a detector reports normalized `(x,y)` coordinates in a crop, first map them to crop pixels, then undo crop offset, scale, rotation, and padding to locate the point in the original image. A correct label with the wrong coordinate frame can trigger the wrong UI action. For video, preserve the source time base and dropped-frame policy similarly.
+Grounded outputs need a coordinate contract. If a detector reports normalized `(x,y)` coordinates, first map them to the pixel frame defined by its output schema, then invert the recorded preprocessing transforms in reverse order to locate the point in the original image. For example, remove model-input padding before undoing resize, then add the crop's original-image offset. Rotation requires its corresponding inverse transform. A correct label with the wrong coordinate frame can trigger the wrong UI action. For video, preserve the source time base and dropped-frame policy similarly.
 
 ### Speech has acoustic and linguistic time scales
 
@@ -192,7 +192,7 @@ The April 2026 [Qwen3.5-Omni report](https://arxiv.org/abs/2604.15804) describes
 
 ### Budget and evaluate the entire interaction
 
-Time to first audio includes input buffering, encoder work, decision latency, codec generation, waveform decoding, and playback buffering. An original budget of 80, 60, 140, 40, and 80 milliseconds for five sequential stages totals 400 milliseconds; overlap may reduce it, while queueing can enlarge it. A first text token is not a first audible response.
+Time to first audio includes input buffering, encoder work, decision latency, codec generation, waveform decoding, and playback buffering. An illustrative budget assigns 80 milliseconds to input buffering, 60 to encoding, 140 to the first response decision, 40 to codec generation plus waveform decoding, and 80 to playback buffering. These five sequential stages total 400 milliseconds; overlap may reduce the total, while queueing can enlarge it. A first text token is not a first audible response.
 
 For interruption, stop generation and playback coherently, release queued state, and record what the user actually heard. A tool action already committed cannot be canceled by muting its spoken confirmation. Define turn-taking, barge-in, maximum silence, and degradation on packet loss before optimizing throughput.
 
@@ -254,7 +254,7 @@ LEAD: Multimodal and agentic models turn context construction into an active sys
 
 ### Native-resolution vision and long video
 
-The Qwen2.5-VL technical report describes a native dynamic-resolution vision transformer, window attention, explicit temporal encoding, object localization, document parsing, and long-video processing. It reports competitive or leading results across several document, diagram, localization, and video benchmarks for the evaluated model sizes.
+The [Qwen2.5-VL technical report](https://arxiv.org/abs/2502.13923) connects the representation mechanisms above to document and interface tasks through dynamic resolution, window attention, temporal encoding, and geometric outputs. Its benchmark results are evidence for the evaluated tasks and model sizes; deployment still needs a contract for the actions those outputs can trigger.
 
 For engineers, variable visual resolution makes token count a function of input geometry and preprocessing. Capacity planning must model image area, frame sampling, patching, video duration, visual token compression, text length, and cross-modal attention. A request limit expressed only in text tokens is incomplete.
 
@@ -284,11 +284,11 @@ The engineering conclusion is stronger than "improve the system prompt." Natural
 - typed schemas and deterministic validation;
 - separation of untrusted content from control metadata;
 - information-flow labels for confidentiality and integrity;
-- explicit confirmation for destructive, financial, external, or privilege-changing actions;
+- explicit authorization rules and confirmation where the action exceeds the user's existing grant or the product's risk threshold;
 - rate, cost, and recursion limits;
 - immutable audit logs and replayable security tests.
 
-Recent information-flow-control research explores planners that track integrity and confidentiality labels and enforce policies independently of the model's textual judgment. The broad lesson is durable even while implementations evolve: authorization belongs in code that can deny an action deterministically.
+[Information-flow-control research](https://arxiv.org/abs/2505.23643) explores planners that track integrity and confidentiality labels and enforce policies independently of the model's textual judgment. The broad lesson is durable even while implementations evolve: authorization belongs in code that can deny an action deterministically.
 
 :::diagram agent_trust_boundary|Tool-using systems need a deterministic policy boundary between model proposals and side effects.
 
@@ -331,7 +331,7 @@ For every candidate technique, write a result card:
 | Failure | Unsupported shapes, overload, recovery, and fallback |
 | Currency | Paper version and reproduction date |
 
-Then map the claimed mechanism to a local bottleneck. An attention kernel cannot fix a service dominated by queueing. A KV offload system cannot help if weights dominate memory. Reasoning-time sampling cannot improve a task whose verifier selects confidently wrong candidates.
+Then map the claimed mechanism to a local bottleneck. A faster attention kernel may reduce queueing if it raises capacity at the saturated stage; it will have little effect when that queue is waiting on another resource. KV offload helps only to the extent that reclaimable KV capacity matters after weights and other state are reserved. Reasoning-time sampling depends on whether the reducer can recognize better candidates. Trace the causal path from the proposed change to the measured outcome.
 
 ### Reproduce in layers
 
@@ -361,15 +361,17 @@ At every layer, record negative results. A technique that loses under an importa
 3. Stop when the local bottleneck is absent, quality fails a hard floor, integration cost exceeds plausible value, the baseline closes the gap, or an unsupported production shape has no safe fallback.
 4. Assign an owner and snapshot date, prefer primary sources, preserve old claims with version history, distinguish peer-reviewed from preliminary work, and schedule review when hardware, model architecture, or serving workload changes materially.
 
-### Primary Sources for the 2024-2026 Snapshot
+### Selected Primary Sources for the 2024-2026 Snapshot
+
+Additional architecture, multimodal, and generation references appear beside their mechanisms above. Version-specific result links identify the experiment being quoted; a newer revision may change hardware, baselines, or conclusions.
 
 - [DeepSeek-V3 Technical Report](https://arxiv.org/abs/2412.19437) - sparse activation, load balancing, multi-token prediction, training scale, and reported training cost.
 - [DeepSeek-R1](https://arxiv.org/abs/2501.12948) - reinforcement learning for reasoning, cold-start and multi-stage training, and reasoning distillation.
-- [Test-Time Scaling in Reasoning LLMs](https://arxiv.org/abs/2608.04001) - inference regimes, compute accounting, evaluation, and reproducibility.
+- [Test-Time Scaling in Reasoning LLMs, version 2](https://arxiv.org/abs/2608.04001v2) - inference regimes, compute accounting, evaluation, and reproducibility.
 - [FlashAttention-3](https://arxiv.org/abs/2407.08608) - asynchronous attention pipelines and low-precision attention on Hopper.
 - [Mooncake](https://arxiv.org/abs/2407.00079) - KV-centric disaggregated serving, hierarchical cache, scheduling, and overload control.
-- [RocketKV](https://arxiv.org/abs/2502.14051) - two-stage KV-cache compression for long-context decode.
-- [SparseServe](https://arxiv.org/abs/2509.24626) - hierarchical KV placement and working-set control for dynamic sparse attention.
+- [RocketKV, version 1](https://arxiv.org/abs/2502.14051v1) - two-stage KV-cache compression and the H100 results quoted above.
+- [SparseServe, version 1](https://arxiv.org/abs/2509.24626v1) - hierarchical KV placement and working-set control for dynamic sparse attention.
 - [Qwen2.5-VL Technical Report](https://arxiv.org/abs/2502.13923) - native-resolution vision, temporal encoding, document understanding, and visual agents.
 - [AgentDojo](https://arxiv.org/abs/2406.13352) - dynamic evaluation of indirect prompt injection in tool-using agents.
 - [ChatInject](https://openreview.net/forum?id=WVhgFSKniL) - ICLR 2026 evaluation of chat-template and multi-turn prompt injection attacks.

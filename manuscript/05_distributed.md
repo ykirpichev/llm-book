@@ -44,7 +44,7 @@ A collective is both data movement and a participation contract. Every rank in t
 
 ### Ring all-reduce
 
-For `p` ranks and a tensor of `N` bytes per rank, a ring all-reduce is commonly decomposed into a reduce-scatter and an all-gather. Each rank sends and receives approximately:
+For `p` ranks and a tensor of `N` bytes per rank, a ring all-reduce is commonly decomposed into a reduce-scatter and an all-gather. Each rank sends approximately the following volume and receives the same volume; it is not their sum:
 
 `2 (p - 1) N / p bytes`
 
@@ -353,7 +353,7 @@ Strong scaling eventually stops when smaller local work no longer amortizes coll
 
 ### Sequence parallelism
 
-Within a tensor-parallel region, operations such as layer normalization and dropout do not need the full hidden dimension to be replicated across ranks for every token. Sequence parallelism can partition activations along sequence for these regions, reducing replicated activation memory.
+Within a tensor-parallel region, LayerNorm and dropout can operate on separate sets of tokens. Sequence parallelism assigns each rank a sequence shard with the full hidden vector for every locally owned token, reducing replicated activation memory. LayerNorm still needs that token's full hidden dimension for its statistics; splitting the hidden dimension would require an additional distributed reduction.
 
 Transitions often use reduce-scatter to produce sequence shards and all-gather before operations that require another layout. It complements tensor parallelism; it does not by itself partition attention's all-token dependency.
 
@@ -765,7 +765,7 @@ The fastest single request plan can lower fleet goodput if it consumes more devi
 
 Tensor parallelism shards weights and compute but adds reductions or gathers in many layers. Decode local matrix height is approximately active batch size, so high TP degree produces small per-rank GEMMs and latency-bound collectives.
 
-A simplified step decomposition is:
+A simplified step decomposition, with local compute excluding the separately counted KV-attention time, is:
 
 `T_step ~= T_local_compute + T_exposed_collectives + T_KV + T_host`
 
@@ -810,7 +810,7 @@ Two implementation families make different memory-communication trades:
 
 The first is simpler but can reproduce the full-KV memory cost. The second bounds local KV working memory but introduces ordered communication and causal-load-balancing work. Contiguous causal partitions are imbalanced because late query blocks see more history; zigzag or interleaved mappings distribute early and late positions more evenly.
 
-PCP is normally an additional process-group dimension. In vLLM's current group geometry, PCP is separate from tensor parallelism and therefore increases the world size for a fixed tensor-parallel group. Support remains version- and attention-backend-dependent, so a deployment must validate the exact release and kernel path rather than assuming that every context-parallel prefill algorithm is production-ready.
+PCP is normally an additional process-group dimension. In the vLLM revision cited below, PCP is separate from tensor parallelism and therefore increases the world size for a fixed tensor-parallel group. Support remains version- and attention-backend-dependent, so a deployment must validate the exact release and kernel path rather than assuming that every context-parallel prefill algorithm is production-ready.
 
 #### Decode context parallelism
 
@@ -821,6 +821,8 @@ Decode context parallelism (DCP) instead partitions the historical KV cache alon
 :::equation l = Σ_{r} exp(m_{r} - m) l_{r}|Shifted local normalizers combine into the exact global softmax denominator.
 
 :::equation o = (1 / l) Σ_{r} exp(m_{r} - m) o_{r}|Only compact statistics need to be reduced; the historical KV tensors need not be gathered.
+
+Each history shard must first receive the query heads whose KV it owns, by replication or exchange according to the TP layout. The merge then needs a common maximum before rescaling and summing denominators and output numerators, or a collective that directly combines these states. An empty or fully masked shard contributes zero mass and a zero numerator; handle it explicitly so `exp(-inf - -inf)` is never evaluated. If every shard is empty, apply the declared fully masked-row policy instead of dividing by zero. The compact reduction saves historical-KV transfer, but it does not eliminate query exchange, collective latency, or local KV reads.
 
 Interleaving token blocks across DCP ranks spreads future cache growth and attention work more evenly than assigning each rank one permanently contiguous interval.
 
