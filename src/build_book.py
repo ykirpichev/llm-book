@@ -43,6 +43,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 from reportlab.platypus.tableofcontents import TableOfContents
+from book_figures import FIGURES, render_figure
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -495,6 +496,8 @@ def box(d: Drawing, x, y, w, h, label, fill=WHITE, stroke=TEAL, font=7.8, label_
 
 
 def diagram(name: str, width: float) -> Drawing:
+    if name in FIGURES:
+        return render_figure(name, width, (FONT, FONT_BOLD), globals())
     # Author all diagrams on one fixed canvas; scale the whole drawing into
     # the page instead of shrinking only its background around fixed nodes.
     w = 430
@@ -604,13 +607,13 @@ def diagram(name: str, width: float) -> Drawing:
             y = 135 - row * 19
             for col in range(7 - row * 2):
                 d.add(Rect(105 + col * 30, y, 25, 13, rx=2, ry=2, fillColor=colors_[row], strokeColor=None))
-        for row in range(3):
-            y = 49 - row * 19
-            start = row * 2
-            for col in range(start, 10):
-                color = colors_[(row + col // 3) % len(colors_)]
-                d.add(Rect(105 + col * 27, y, 22, 13, rx=2, ry=2, fillColor=color, strokeColor=None))
-        d.add(String(w - 50, 12, "time ->", textAnchor="end", fontName=FONT_BOLD, fontSize=7.2, fillColor=MUTED))
+        # Three slots initially occupied; replacement requests enter at boundaries.
+        schedules = [[0]*7+[3]*3, [1]*5+[0]*5, [2]*3+[1]*7]
+        for row, schedule in enumerate(schedules):
+            y = 55 - row * 18
+            for col, request in enumerate(schedule):
+                d.add(Rect(105 + col * 27, y, 22, 12, rx=2, ry=2, fillColor=colors_[request], strokeColor=None))
+        d.add(String(105, 7, "slots refill at request completion; time ->", fontName=FONT, fontSize=7.2, fillColor=MUTED))
     elif name == "request_lifecycle":
         d.add(String(w / 2, 172, "ONE REQUEST, MEASURED AT EVERY BOUNDARY", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
         stages = [
@@ -649,21 +652,19 @@ def diagram(name: str, width: float) -> Drawing:
         d.add(String(w / 2, 32, "transfer time + extra queueing + operational complexity", textAnchor="middle", fontName=FONT, fontSize=7.4, fillColor=MUTED))
     elif name == "memory_hierarchy":
         levels = [
-            ("Registers", 85, CORAL),
-            ("Shared / L1", 122, GOLD),
-            ("L2 cache", 170, TEAL),
-            ("HBM", 222, HexColor("#81766D")),
-            ("Host / network", 284, MUTED),
+            ("Registers: thread-local state", 188, CORAL),
+            ("Shared memory / L1: SM locality", 218, GOLD),
+            ("L2: device-wide cache", 248, TEAL),
+            ("HBM: device memory", 278, HexColor("#81766D")),
+            ("Host / remote memory: transfer boundary", 308, MUTED),
         ]
-        cy = 96
+        d.add(String(w / 2, 172, "MEMORY LEVELS: SCOPE, CAPACITY, AND MOVEMENT", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
         for i, (label, ww, color) in enumerate(levels):
-            hh = 25
             x = (w - ww) / 2
-            y = cy - i * 8 - 14
-            d.add(Rect(x, y, ww, hh + i * 15, rx=6, ry=6, fillColor=None, strokeColor=color, strokeWidth=1.8))
-            d.add(String(w / 2, y + 8, label, textAnchor="middle", fontName=FONT_BOLD, fontSize=7.4, fillColor=color))
-        d.add(String(18, 168, "faster / smaller", fontName=FONT_BOLD, fontSize=7.5, fillColor=CORAL))
-        d.add(String(w - 18, 18, "slower / larger", textAnchor="end", fontName=FONT_BOLD, fontSize=7.5, fillColor=MUTED))
+            y = 140 - i * 27
+            d.add(Rect(x, y, ww, 22, rx=4, ry=4, fillColor=WHITE, strokeColor=color, strokeWidth=1.2))
+            d.add(String(w / 2, y + 7, label, textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=INK))
+        d.add(String(w / 2, 13, "schematic width indicates broader capacity; levels are not nested containers", textAnchor="middle", fontName=FONT, fontSize=7.4, fillColor=MUTED))
     elif name == "gemm_tiling":
         d.add(String(w / 2, 169, "TILED GEMM: DATA REUSE BEFORE MORE MATH", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
         for r in range(6):
@@ -675,7 +676,7 @@ def diagram(name: str, width: float) -> Drawing:
                 fill = PALE_GOLD if 2 <= c <= 4 else WHITE
                 d.add(Rect(166 + c * 18, 48 + r * 18, 16, 16, fillColor=fill, strokeColor=HexColor("#BBBAB4"), strokeWidth=.4))
         box(d, w - 119, 78, 88, 48, "C tile\nregisters", fill=PALE_CORAL, stroke=CORAL)
-        arrow(d, 140, 101, 163, 101)
+        d.add(String(150, 98, "x", textAnchor="middle", fontName=FONT_BOLD, fontSize=10, fillColor=INK))
         arrow(d, 276, 101, w - 121, 101)
         d.add(String(82, 32, "A tile -> shared memory", textAnchor="middle", fontName=FONT, fontSize=7, fillColor=MUTED))
         d.add(String(218, 32, "B tile -> shared memory", textAnchor="middle", fontName=FONT, fontSize=7, fillColor=MUTED))
@@ -699,17 +700,15 @@ def diagram(name: str, width: float) -> Drawing:
         d.add(String(w / 2, 12, "optimize the regime you are in; do not reuse the other tile plan blindly", textAnchor="middle", fontName=FONT, fontSize=7.2, fillColor=MUTED))
     elif name == "parallelism_map":
         labels = [
-            ("Data", 30, 123, TEAL),
-            ("Tensor", 150, 123, CORAL),
-            ("Pipeline", 270, 123, GOLD),
-            ("Sequence", 90, 54, HexColor("#81766D")),
-            ("Expert", 220, 54, MUTED),
+            ("Data\nexample batches", 30, 118, TEAL),
+            ("Tensor\nweight dimensions", 165, 118, CORAL),
+            ("Pipeline\nlayer ranges", 300, 118, GOLD),
+            ("Sequence / context\ntoken-axis work", 95, 51, HexColor("#81766D")),
+            ("Expert\nexpert weights", 235, 51, MUTED),
         ]
         for label, x, y, color in labels:
-            box(d, x, y, 100, 38, label + "\nparallel", fill=WHITE, stroke=color)
+            box(d, x, y, 100, 42, label, fill=WHITE, stroke=color)
         d.add(String(w / 2, 174, "PARALLELISM AXES SOLVE DIFFERENT BOTTLENECKS", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
-        for x1, y1, x2, y2 in [(80,122,138,84),(200,122,200,94),(320,122,260,84)]:
-            arrow(d, x1, y1, x2, y2, MUTED, 1)
         d.add(String(w / 2, 20, "compose only after estimating communication, memory, and pipeline bubbles", textAnchor="middle", fontName=FONT, fontSize=7.3, fillColor=MUTED))
     elif name == "system_design":
         box(d, 18, 116, 72, 38, "Clients", fill=WHITE)
@@ -743,9 +742,9 @@ def diagram(name: str, width: float) -> Drawing:
         nodes = [
             (center[0], 157, "Frame"),
             (center[0] + 120, 115, "Align"),
-            (center[0] + 75, 40, "Commit"),
-            (center[0] - 75, 40, "Learn"),
-            (center[0] - 120, 115, "Decide"),
+            (center[0] + 75, 40, "Decide"),
+            (center[0] - 75, 40, "Commit"),
+            (center[0] - 120, 115, "Learn"),
         ]
         for i, (x, y, label) in enumerate(nodes):
             d.add(Circle(x, y, 25, fillColor=WHITE, strokeColor=[TEAL, GOLD, CORAL, HexColor("#81766D"), INK][i], strokeWidth=1.6))
@@ -753,9 +752,10 @@ def diagram(name: str, width: float) -> Drawing:
             nx, ny, _ = nodes[(i + 1) % len(nodes)]
             angle = math.atan2(ny - y, nx - x)
             arrow(d, x + 27 * math.cos(angle), y + 27 * math.sin(angle), nx - 27 * math.cos(angle), ny - 27 * math.sin(angle), MUTED, 1.1)
-        d.add(String(center[0], center[1] - 3, "intent\n+ evidence", textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=TEAL))
+        d.add(String(center[0], center[1] + 3, "intent", textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=TEAL))
+        d.add(String(center[0], center[1] - 9, "+ evidence", textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=TEAL))
     else:
-        box(d, 36, 65, w - 72, 64, name.replace("_", " ").title(), fill=WHITE, stroke=TEAL, font=12)
+        raise ValueError(f"Unknown diagram: {name}")
     scale = min(1.0, width / w)
     d.scale(scale, scale)
     d.width = w * scale
@@ -1071,7 +1071,13 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
             args = stripped[len(":::diagram"):].strip().split("|", 1)
             name = args[0].strip()
             caption = args[1].strip() if len(args) > 1 else name.replace("_", " ").title()
-            story.extend([Spacer(1, 6), diagram(name, width), Paragraph(inline_markup(caption), STYLES["caption"])])
+            # A section heading immediately introducing a figure belongs to the
+            # same unsplittable group; keepWithNext alone stops at KeepTogether.
+            introduction = [story.pop()] if story and isinstance(story[-1], Heading) else []
+            story.append(KeepTogether(introduction + [
+                Spacer(1, 6), diagram(name, width),
+                Paragraph(inline_markup(caption), STYLES["caption"]),
+            ]))
             i += 1
             continue
         if stripped.startswith(":::equation"):
@@ -1082,9 +1088,10 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
             args = equation_source.split("|", 1)
             expression = args[0].strip()
             caption = args[1].strip() if len(args) > 1 else ""
-            story.append(Paragraph(equation_markup(expression), STYLES["equation"]))
+            equation_group = [Paragraph(equation_markup(expression), STYLES["equation"])]
             if caption:
-                story.append(Paragraph(inline_markup(caption), STYLES["caption"]))
+                equation_group.append(Paragraph(inline_markup(caption), STYLES["caption"]))
+            story.append(KeepTogether(equation_group))
             i += 1
             continue
         if stripped == ":::toc":

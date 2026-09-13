@@ -162,6 +162,8 @@ LEAD: A multimodal model must turn signals with space and time into a representa
 
 ### From pixels to language-model inputs
 
+:::diagram multimodal_path|A common conceptual arrangement maps visual, audio, and text representations into language-model context. Position and time metadata preserve meaning across the interfaces; the exact encoder, projection, and fusion arrangement is model-specific.
+
 Begin with an image of height H and width W. A simple patch encoder divides it into patches of side p, producing approximately `(H/p) × (W/p)` tokens when dimensions divide evenly. Each flattened patch is projected into a vector; a vision transformer mixes these vectors with position information. A projector then maps visual features to the language model's hidden width. Insert them into a declared multimodal sequence or expose them through cross-attention.
 
 In sequence insertion, visual embeddings occupy positions alongside text and consume backbone context/attention work. In cross-attention, text queries read a separate visual representation; visual-token count still changes cross-attention and encoder cost, but it is not necessarily identical to text KV growth. Early joint training can learn richer integration across modalities; it does not remove modality-specific preprocessing or alignment requirements. [Visual Instruction Tuning](https://arxiv.org/abs/2304.08485) is a primary example of connecting a vision encoder and language model for instruction-following behavior.
@@ -240,6 +242,8 @@ assert no_required_position_is_masked(tokens)
 An eight-position sequence revealed two positions per round requires four denoiser calls. Eight autoregressive output positions require eight sequential decode steps, but each denoiser call can process all eight output positions, while cached autoregressive decode processes only the new position against prior state. Comparing four to eight without FLOPs, memory traffic, batch size, and quality is misleading. Independent guesses can also disagree: choosing a subject and verb simultaneously may commit an incompatible pair.
 
 ### Block diffusion and cache validity
+
+:::diagram diffusion_blocks|A simplified three-round reveal schedule leaves the causal prefix fixed while the current block changes. Question marks denote masked positions. Cache validity depends on which representations can change under the method's attention mask.
 
 [Block Diffusion](https://arxiv.org/abs/2503.09573) interpolates between autoregressive blocks and within-block diffusion. Earlier blocks can become fixed context while positions in the current block are refined together. This introduces a tunable tradeoff among block size, denoising steps, parallelism, and quality.
 

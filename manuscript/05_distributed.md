@@ -205,6 +205,8 @@ The inference request's KV budget also does not transfer into training unchanged
 
 ### ZeRO stages
 
+:::diagram zero_shards|A four-rank ownership sketch. Ordinary data parallelism retains every model-state partition; successive ZeRO stages shard optimizer state, gradients, then parameters. Cells encode ownership, not equal byte sizes across state types.
+
 ZeRO-style sharding progressively removes data-parallel redundancy:
 
 | Stage | Sharded across data ranks | Main new communication/lifetime issue |
@@ -588,6 +590,8 @@ LEAD: Mixture-of-experts models increase parameter capacity while activating onl
 
 ### The MoE layer
 
+:::diagram moe_dispatch|For one token with top-2 routing, two selected experts execute and return outputs to its original owner for weighted combination. Expert dispatch and return may cross ranks; unselected experts still consume parameter storage.
+
 For each token representation, a router scores experts and selects top `k`. The layer then:
 
 1. computes expert assignments and weights;
@@ -796,6 +800,8 @@ Grouped-query and multi-query attention may have fewer KV heads than TP ranks. R
 Block tables and prefix references must use the same distributed ownership. A request is not admitted until every required rank can reserve its shard; otherwise one rank can OOM after peers have advanced.
 
 ### Phase-specific context parallelism
+
+:::diagram phase_sharding|Prefill context parallelism partitions query rows. Decode context parallelism partitions historical KV tokens and merges partial attention statistics. These are within-model mechanisms; a transfer between separate prefill and decode pools is a different boundary.
 
 “Context parallelism” is not one inference plan. Prefill applies many queries to an expanding context and is usually optimized for time to first token. Decode applies one new query per active sequence to a large paged history and is usually optimized for inter-token latency, KV capacity, or batch goodput. A system can use different degrees and even different algorithms for these phases.
 
@@ -1059,6 +1065,8 @@ This separation enables resharded restore. A checkpoint saved with DP8-TP8-PP4 m
 Optimizer state follows parameter identity, not current rank. Flattening, padding, expert placement, or pipeline cuts can change physical layout. Stable logical IDs and versioned transformation rules are essential.
 
 ### Atomic publication
+
+:::diagram checkpoint_commit|Every required shard must be durable and validated before publication. The atomic pointer selects a complete manifest; a reader must never discover a partially written step through the latest-checkpoint pointer.
 
 One safe protocol is:
 

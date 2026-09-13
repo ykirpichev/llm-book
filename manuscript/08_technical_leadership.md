@@ -204,6 +204,8 @@ Verify closure. A runbook is not complete until someone unfamiliar with the inci
 
 ### Lead migrations as products
 
+:::diagram migration_gates|Each stage increases commitment and needs evidence from the affected workloads. The old path is retired only after exit criteria are met; rollback must account for the state already changed during adoption.
+
 Large technical changes fail more often at adoption than implementation. Treat a migration as a product with users, economics, compatibility, support, and an end state.
 
 Segment adopters by complexity and value. Start with workloads that exercise the important path without requiring every exception. Provide an automated inventory, compatibility test, cost comparison, migration tooling, and staffed escalation path. Publish known gaps rather than allowing each team to rediscover them.

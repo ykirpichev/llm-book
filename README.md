@@ -91,4 +91,4 @@ Compact content for a highlighted box.
 
 ## Editorial design
 
-The book is set in a 7 x 10 inch technical-book format with a navy/teal/coral system, embedded fonts, vector architecture diagrams, code panels, table styling, chapter openers, PDF outlines, and page headers/footers.
+The book is set in a 7 x 10 inch technical-book format with a forest-green, sage, ivory, brass, and terracotta palette, embedded fonts, original vector teaching diagrams, code panels, table styling, chapter openers, PDF outlines, and page headers/footers. Diagram labels are measured during the build and each figure stays with its caption. The new figure library is in `src/book_figures.py`; its diagrams explain tensor layouts, state ownership, timing, and component relationships.

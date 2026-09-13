@@ -130,6 +130,8 @@ Measure tokens per byte or character by language and domain, not only on English
 
 ### Autoregression is a factorization, not a decoding trick
 
+:::diagram token_alignment|Inputs and targets refer to different positions. Each prediction uses its causal prefix; the supervised target is the following token. BOS and EOS denote sequence boundaries.
+
 A causal language model represents a sequence probability as a product of next-token conditional probabilities. Taking logs converts that product into a sum:
 
 :::equation log p(x_{1:S}) = Σ_{t=1}^{S} log p(x_{t} given x_{<t})|The prediction at position t must not observe its own target or a later token.
@@ -174,6 +176,8 @@ Version tokenizer files, normalization, special-token policy, template, stopping
 ## Optimization as a Coupled Dynamical System
 
 LEAD: Training is not an optimizer acting on a fixed objective. It is a coupled dynamical system whose trajectory depends on data order, batch construction, numerical representation, distributed execution, and the rules used to recover from failure.
+
+:::diagram optimization_loop|Follow the state around one optimizer step. The next forward pass uses updated weights; optimizer moments and scheduler progress persist across steps.
 
 ### From population risk to a training step
 
@@ -365,6 +369,8 @@ LEAD: A transformer is a schedule for moving information among tokens and channe
 
 ### Follow one token through a decoder block
 
+:::diagram decoder_block|The two residual additions preserve a direct path around attention and the MLP. Attention includes its output projection; each sublayer returns to the residual stream's width.
+
 Let the input to layer `l` be a matrix `X_l` with sequence length `S` and hidden width `D`. A pre-normalized decoder block can be written schematically as:
 
 :::equation U_{l} = X_{l} + Attention(Norm(X_{l}))|Attention mixes information across token positions.
@@ -511,6 +517,8 @@ This review prevents local optimization. An MoE model can be compute-efficient a
 LEAD: Modern language models do not all retain one explicit key and value per head per token. To compare architectures, ask what information is stored, how a new token reads it, and which approximation or learned bottleneck makes the state cheaper.
 
 ### Start from the dense attention contract
+
+:::diagram attention_state_map|Three read patterns over eight historical positions, followed by two different storage mechanisms. A local or sparse read pattern does not itself specify eviction, head sharing, or latent compression.
 
 For one query, softmax attention compares that query with every permitted key and returns a normalized weighted sum of values. GQA shares K/V heads but retains token-addressable history. FlashAttention changes the execution schedule while preserving this mathematical operator, up to floating-point differences. Sparse attention, latent compression, and recurrent state change different parts of that contract.
 

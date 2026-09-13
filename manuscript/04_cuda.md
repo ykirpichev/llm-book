@@ -1126,6 +1126,8 @@ CUTLASS documents SM100 GEMM organization and supported instruction/layout combi
 
 ### Derive a two-buffer ownership protocol
 
+:::diagram double_buffer|A dependency-valid schedule for the example below: loads take 3 microseconds and consumption takes 5. Numbered tiles alternate buffers. Arrows connect transfer completion to eligible consumption; slot reuse also waits for the prior consumer's final read.
+
 Start with a portable dependency model before writing architecture-specific instructions. Buffer zero carries even tiles; buffer one carries odd tiles. Each reuse has a generation number so completion of an old tile cannot satisfy a wait for a new tile. The valid lifetime is `FREE → FILLING → READY → IN_USE → FREE`.
 
 | Event | Producer permission | Consumer permission |

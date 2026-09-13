@@ -263,6 +263,8 @@ This is a count-window algorithm. Event-time disorder still needs watermark and 
 
 ### Event time, watermarks, and late data
 
+:::diagram event_time|Arrival order and event timestamps disagree. With the illustrative watermark at 18, the window ending at 20 has not reached its completion boundary. Allowed lateness and the late-update policy determine retention and corrections.
+
 Streaming systems distinguish:
 
 - **event time:** when the source says the event occurred;
@@ -600,6 +602,8 @@ The ordinary Space-Saving update is nonlinear, so two tables cannot be merged by
 
 ### Count-Min Sketch and its error derivation
 
+:::diagram count_min|Three independent row hashes select counters for a key. Querying takes their minimum; collision mass explains why the result can overestimate a nonnegative frequency. Blank cells contain other counters whose values are irrelevant to this query.
+
 A Count-Min Sketch estimates nonnegative key frequencies using a table with depth `d` and width `w`. Row `j` has an independent pairwise-independent hash `h_j`. An increment `(x, c)` with `c >= 0` adds `c` to cell `(j, h_j(x))` in every row. The estimate is:
 
 `f_hat(x) = min_j table[j, h_j(x)]`.
@@ -844,6 +848,8 @@ For every summary, say what is approximated, the unit of error, whether the erro
 :::
 
 ### A complete event-time heavy-hitter design
+
+:::diagram telemetry_pipeline|A streaming service carries event identity, key ownership, window state, and output versions across distinct boundaries. Split-key counts must be merged before ranking. Recovery binds the summary state to consumed offsets; late data follows a declared correction policy.
 
 Consider a service that reports the top `k` error signatures per tenant for each five-minute event-time window. Traffic peaks at millions of events per second, events can arrive 20 minutes late, and results should update quickly.
 
@@ -1348,6 +1354,8 @@ A strong response states the workload and SLO, quantifies the dominant state or 
 ## RAG, Vector Search, and Evaluation Pipelines
 
 LEAD: Retrieval-augmented generation is a data and evaluation system wrapped around a model. Retrieval quality, access control, freshness, and citation behavior matter as much as the generator.
+
+:::diagram rag_pipeline|The offline path creates a versioned index with source identities. The online path retrieves, filters, reranks, packs evidence, and generates an answer with citations. Retrieval authorization and evidence quality must survive every stage.
 
 ### Ingestion
 

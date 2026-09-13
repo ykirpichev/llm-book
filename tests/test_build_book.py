@@ -85,13 +85,51 @@ class BuildBookTests(unittest.TestCase):
     def test_diagram_content_stays_inside_canvas(self) -> None:
         import re
         source = (ROOT / "src" / "build_book.py").read_text()
-        for name in re.findall(r'name == "([a-z_]+)"', source):
+        names = re.findall(r'name == "([a-z_]+)"', source) + list(build_book.FIGURES)
+        for name in names:
             drawing = build_book.diagram(name, 407)
             x0, y0, x1, y1 = drawing.getBounds()
             self.assertGreaterEqual(x0, -1, name)
             self.assertGreaterEqual(y0, -1, name)
             self.assertLessEqual(x1, drawing.width + 1, name)
             self.assertLessEqual(y1, drawing.height + 1, name)
+
+    def test_manuscript_diagram_names_resolve(self) -> None:
+        import re
+        for path in sorted((ROOT / "manuscript").glob("*.md")):
+            for name in re.findall(r"^:::diagram ([a-z_]+)\|", path.read_text(), re.M):
+                with self.subTest(name=name):
+                    build_book.diagram(name, 407)
+        with self.assertRaises(ValueError):
+            build_book.diagram("missing_figure", 407)
+
+    def test_figure_and_caption_share_keep_group(self) -> None:
+        from unittest.mock import Mock
+        source = Mock()
+        source.read_text.return_value = ":::diagram token_alignment|A caption.\n"
+        _, story = build_book.build_story([source], 407)
+        group = story[-1]
+        self.assertIsInstance(group, build_book.KeepTogether)
+        self.assertIsInstance(group._content[1], build_book.Drawing)
+        self.assertEqual(group._content[2].getPlainText(), "A caption.")
+
+    def test_figure_keeps_its_introducing_heading(self) -> None:
+        from unittest.mock import Mock
+        source = Mock()
+        source.read_text.return_value = "### Supervision\n\n:::diagram token_alignment|A caption.\n"
+        _, story = build_book.build_story([source], 407)
+        group = story[-1]
+        self.assertIsInstance(group, build_book.KeepTogether)
+        self.assertIsInstance(group._content[0], build_book.Heading)
+        self.assertIsInstance(group._content[2], build_book.Drawing)
+
+    def test_equation_keeps_its_explanation(self) -> None:
+        from unittest.mock import Mock
+        source = Mock()
+        source.read_text.return_value = ":::equation O = A V|Weighted values.\n"
+        _, story = build_book.build_story([source], 407)
+        self.assertIsInstance(story[-1], build_book.KeepTogether)
+        self.assertEqual(story[-1]._content[-1].getPlainText(), "Weighted values.")
 
 
 if __name__ == "__main__":

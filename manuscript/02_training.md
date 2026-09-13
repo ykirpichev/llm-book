@@ -356,6 +356,8 @@ Before publishing normalized data, verify:
 
 LEAD: Filtering changes the empirical distribution learned by the model. Deduplication, quality scoring, and contamination controls must therefore be evaluated as statistical interventions, not treated as generic cleaning steps.
 
+:::diagram dedup_clusters|A candidate-generation stage proposes pairs, verification creates edges, and grouping creates units for retention or split assignment. Similarity is not transitive: a connected component need not be a clique.
+
 ### Deduplication at several radii
 
 Deduplication changes the empirical training distribution. It can reduce wasted compute, benchmark overlap, and repeated memorization, but an overly broad rule can erase legitimate repetition, minority sources, translations, version history, or pedagogically useful variants.
@@ -753,6 +755,8 @@ LEAD: Synthetic data is useful when generation, verification, and sampling creat
 
 ### Synthetic generation pipeline
 
+:::diagram synthetic_gate|Verified candidates enter deduplication and mixture construction. Rejections provide diagnostic evidence about the generator and verifier; neither acceptance rate nor generation volume establishes training value.
+
 Synthetic data is a programmable acquisition process, not a free source of truth:
 
 `seed -> generate -> verify -> score -> deduplicate -> balance -> audit -> train`
@@ -1040,6 +1044,8 @@ To isolate filtering from mixture changes, first hold per-language sampling prop
 LEAD: A data pipeline becomes a training platform when it can reproduce releases, absorb partial failure, enforce policy, explain examples, and connect every selected sequence to the models and evaluations that consumed it.
 
 ### Data pipeline system design
+
+:::diagram data_release|Immutable objects carry payloads; a lineage catalog records how they were acquired and transformed. Selection combines versioned features with policy and mixture rules, then publishes a manifest that identifies the training inputs.
 
 At large scale, the architecture should make the correct path reproducible and the incorrect path visible. Separate immutable payloads, metadata and lineage, distributed transforms, indexes, scores, release manifests, and policy decisions.
 
@@ -1612,6 +1618,8 @@ Inspect a tiny overfitting test before a full run: can the model drive loss down
 
 ### LoRA reduces trainable state, not all training memory
 
+:::diagram lora_paths|A frozen base projection and a trainable low-rank branch contribute to the same output. The diagram uses row-vector notation; the adapter scale multiplies the low-rank branch before addition.
+
 [LoRA](https://arxiv.org/abs/2106.09685) freezes a base matrix and learns a low-rank update. Using the book's row-vector convention, let `W` have shape `[d_in,d_out]`, `A` shape `[d_in,r]`, and `B` shape `[r,d_out]`:
 
 :::equation Y = X W + s (X A) B|Only the low-rank matrices are trained when the base weight W is frozen.
@@ -1768,6 +1776,8 @@ A policy-gradient update increases log probability for actions with positive adv
 Terminal reward offers weak credit assignment: every sampled action may inherit a signal from the final result, including unnecessary prose and accidental shortcuts. A process reward can give finer feedback but may itself be incorrect. Neither establishes that a visible chain of thought faithfully describes the computation that produced an answer.
 
 ### PPO: distinguish the old policy from the reference
+
+:::diagram policy_learning|Rollouts carry sampled actions and their behavior-policy probabilities into the learner. Rewards and advantages provide the learning signal, while a separate reference policy can regularize the update. Newly published weights refresh the behavior policy.
 
 [PPO](https://arxiv.org/abs/1707.06347) uses a clipped surrogate to limit incentives for large policy changes on sampled actions. Let `r_t` be the new policy's probability of the sampled action divided by its probability under the behavior policy that collected the rollout. A simplified term to maximize is:
 

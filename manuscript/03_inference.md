@@ -387,6 +387,8 @@ Output length is uncertain, so “reserve the declared maximum” and “reserve
 
 ### Prefix cache identity
 
+:::diagram kv_page_sharing|Two compatible requests map their shared full prefix to the same physical pages and keep separate writable tails. Logical block order is independent of physical placement; reference counts protect shared pages from premature reuse.
+
 KV for a prefix is reusable only when the computation that produced it is identical under the product contract. A key commonly includes:
 
 - model weights and engine-compatible model version;
@@ -924,6 +926,8 @@ The architecture wins when phase specialization, independent scaling, and interf
 
 ### Handoff protocol
 
+:::diagram kv_handoff|Reserve destination capacity, transfer state, validate its contract, and publish ownership before decoding. Source release follows the protocol's acknowledgement and recovery rules; failed attempts must be idempotent.
+
 A correct handoff identifies model/adapter version, token range, position state, KV dtype and layout, source blocks, destination allocation, and ownership. One safe sequence is:
 
 1. destination admission reserves capacity;
@@ -1054,6 +1058,8 @@ For the scale-redistribution idea, insert an invertible diagonal matrix `D`: `XW
 Calibrate on the target input distribution, then evaluate on a held-out distribution. Long reasoning, code, vision tokens, and rare languages can produce ranges missing from short generic prose. If the quantization method is tuned repeatedly on one calibration benchmark, retain an untouched quality set. Compare against a simple round-to-nearest baseline and report both quality and deployed kernel time.
 
 ### Weight-only quantization
+
+:::diagram quantization_path|The packed weights and their scale metadata form one artifact contract. The serving kernel must consume that exact representation; reduced storage alone does not establish faster execution.
 
 In small-batch decode, weight reads often dominate dense linear layers. Weight-only quantization stores packed low-bit weights, loads scales, reconstructs or directly consumes low-precision values, and multiplies by higher-precision activations.
 
