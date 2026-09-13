@@ -383,6 +383,8 @@ A robust allocator maintains:
 
 Reserve before launch rather than discovering out-of-memory after some requests in a batch have advanced. For uncertain output length, reserve a bounded horizon and repeat admission checks. A reservation is a promise to the scheduler, not necessarily immediate physical zero-filling.
 
+Output length is uncertain, so “reserve the declared maximum” and “reserve only the next token” are both poor universal policies. The first strands capacity; the second admits combinations that can fail together. Recent work on [robust KV-cache management under output-length uncertainty](https://arxiv.org/abs/2607.16892) makes this a joint decision across parallelism, reservation, routing, and prefix reuse. The durable lesson is to calibrate a length distribution by workload slice, reserve against an explicit tail-risk budget, and re-admit as evidence arrives. Treat paper-reported gains as workload-specific until replayed on the service's own arrival, prefix, and output correlations.
+
 ### Prefix cache identity
 
 KV for a prefix is reusable only when the computation that produced it is identical under the product contract. A key commonly includes:
@@ -432,6 +434,8 @@ In a replicated fleet, the router chooses between queue delay and cached state. 
 Sticky routing maximizes locality but can create hot spots. Pure least-loaded routing destroys reuse. A cache-aware router considers both, places common prefixes on enough replicas, and falls back when a cache owner is unhealthy or overloaded.
 
 Do not transfer a prefix merely because it exists elsewhere. Compare transfer time and network contention with recomputation. For a short prefix or a compute-rich prefill worker, recomputing may be cheaper and simpler.
+
+Several maintained systems now make this design concrete. [NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo) consumes worker cache events for KV-aware routing and supports separate prefill and decode pools; [LMCache](https://github.com/LMCache/LMCache) extends reusable KV across GPU, CPU, local storage, and remote backends; [llm-d](https://github.com/llm-d/llm-d) exposes heuristic and event-driven prefix routing, a cache index, tiered offload, and disaggregated transfer; and [Mooncake](https://github.com/kvcache-ai/Mooncake) is a reference implementation of KV-centric disaggregation. These are implementation maps, not interchangeable libraries. Before adopting one, trace five contracts end to end: block identity, source-of-truth cache state, ownership and invalidation, transfer format and transport, and routing under stale events or worker failure.
 
 ### Offload and migration
 
@@ -1386,6 +1390,7 @@ Bound queues and memory reservations, reject early with retry guidance, protect 
 - [SmoothQuant](https://proceedings.mlr.press/v202/xiao23c.html) and [AWQ](https://proceedings.mlsys.org/paper_files/paper/2024/file/42a452cbafa9dd64e9ba4aa95cc1ef21-Paper-Conference.pdf) - activation-aware quantization methods.
 - [Punica: Multi-Tenant LoRA Serving](https://proceedings.mlsys.org/paper_files/paper/2024/hash/054de805fcceb78a201f5e9d53c85908-Abstract-Conference.html) - shared-base multi-adapter serving.
 - [TensorRT-LLM Documentation](https://nvidia.github.io/TensorRT-LLM/latest/index.html) - maintained engine features, KV reuse, quantization, and deployment guidance.
+- [NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo), [LMCache](https://github.com/LMCache/LMCache), [llm-d](https://github.com/llm-d/llm-d), and [Mooncake](https://github.com/kvcache-ai/Mooncake) - maintained reference implementations for KV-aware routing, tiered cache storage, and prefill-decode disaggregation.
 - [MLPerf Inference Documentation](https://docs.mlcommons.org/inference/submission/) - benchmark scenarios and reproducibility requirements.
 
 ### Final Inference Principle

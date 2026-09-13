@@ -881,6 +881,8 @@ If source TP and destination TP degrees differ, the transfer includes resharding
 
 Remote KV memory is useful for inactive sessions or pooled capacity when transfer/recompute cost is below holding scarce device memory. Fetching remote pages on every token makes the network part of the attention critical path and requires a much stronger availability and tail-latency contract.
 
+Modern reference stacks split this path into independently observable components. [Dynamo's documented disaggregated path](https://docs.nvidia.com/dynamo/dev/knowledge-base/concepts/system-architecture/disaggregated-serving) routes a request through a prefill worker, transfers KV directly between accelerator memories through [NIXL](https://github.com/ai-dynamo/nixl), and continues on a decode worker without blocking unrelated forward passes. [llm-d's KV architecture](https://github.com/llm-d/llm-d/blob/main/docs/architecture/advanced/kv-management/README.md) separates prefix-aware routing, an event-fed cache index, and multi-tier offload. The decomposition is more important than either product name: the router's belief can lag the allocator, the transfer can succeed after the destination loses admission, and transport completion is not ownership publication. Instrument and test those boundaries independently.
+
 ### Replica routing with distributed state
 
 Route on estimated completion, not request count. Inputs include queue delay, model/adapter residency, prefix locality, KV capacity on every rank, transfer or recompute time, topology health, and deadline.

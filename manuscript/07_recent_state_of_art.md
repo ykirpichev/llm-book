@@ -1,6 +1,6 @@
 # Part VII - Recent State of the Art
 
-This part connects selected research available by September 7, 2026 to the mechanisms developed throughout the book. It is a dated engineering snapshot, not an exhaustive catalogue or permanent leaderboard. Older results remain when they establish a useful mechanism; they are not presented as the newest available implementation. Reported speedups and benchmark scores belong to the cited paper's hardware, software, model, workload, baseline, and quality threshold.
+This part connects selected research and maintained implementation evidence available by September 13, 2026 to the mechanisms developed throughout the book. It is a dated engineering snapshot, not an exhaustive catalogue or permanent leaderboard. Older results remain when they establish a useful mechanism; they are not presented as the newest available implementation. Reported speedups and benchmark scores belong to the cited paper's hardware, software, model, workload, baseline, and quality threshold.
 
 The durable value of a recent result is usually not its rank. It is the mechanism that changed the resource model: sparse activation, better load balancing, reinforcement learning with verifiable rewards, explicit inference-time compute, asynchronous attention pipelines, disaggregated KV state, hierarchical memory, native-resolution multimodality, or enforceable trust boundaries for tools.
 
@@ -127,6 +127,8 @@ The general lesson is that disaggregation works only when state movement is firs
 - observability for cache hit, transfer, queue, recompute, and abandoned state.
 
 Disaggregation can improve independent scaling and isolation while adding network dependence and a new distributed lifecycle. It wins when phase imbalance and placement flexibility repay the transfer and coordination cost.
+
+The implementation frontier now exposes this lifecycle as composable subsystems. [Dynamo](https://github.com/ai-dynamo/dynamo) combines event-informed KV routing with prefill/decode worker pools and NIXL transfer. [LMCache](https://github.com/LMCache/LMCache) focuses on reusable KV across accelerator, host, disk, and remote tiers. [llm-d](https://github.com/llm-d/llm-d) separates approximate or precise prefix routing, cache indexing, offload, and disaggregated orchestration. Their feature matrices and compatibility notes change faster than the mechanism, so record a tested revision. A useful bake-off replays the same trace and measures stale-route rate, reusable-token fraction, transfer versus recompute choice, admission failures after prefill, failover, and SLO goodput—not just a warm-cache microbenchmark.
 
 ### Long-context memory is becoming hierarchical
 
@@ -372,12 +374,14 @@ Additional architecture, multimodal, and generation references appear beside the
 - [Test-Time Scaling in Reasoning LLMs, version 2](https://arxiv.org/abs/2608.04001v2) - inference regimes, compute accounting, evaluation, and reproducibility.
 - [FlashAttention-3](https://arxiv.org/abs/2407.08608) - asynchronous attention pipelines and low-precision attention on Hopper.
 - [Mooncake](https://arxiv.org/abs/2407.00079) - KV-centric disaggregated serving, hierarchical cache, scheduling, and overload control.
+- [Dynamo documentation](https://docs.nvidia.com/dynamo/dev/knowledge-base/concepts/system-architecture/disaggregated-serving), [LMCache](https://github.com/LMCache/LMCache), and [llm-d KV management](https://github.com/llm-d/llm-d/blob/main/docs/architecture/advanced/kv-management/README.md) - maintained implementations of KV-aware routing, transfer, indexing, and tiered offload.
 - [RocketKV, version 1](https://arxiv.org/abs/2502.14051v1) - two-stage KV-cache compression and the H100 results quoted above.
 - [SparseServe, version 1](https://arxiv.org/abs/2509.24626v1) - hierarchical KV placement and working-set control for dynamic sparse attention.
 - [Qwen2.5-VL Technical Report](https://arxiv.org/abs/2502.13923) - native-resolution vision, temporal encoding, document understanding, and visual agents.
 - [AgentDojo](https://arxiv.org/abs/2406.13352) - dynamic evaluation of indirect prompt injection in tool-using agents.
 - [ChatInject](https://openreview.net/forum?id=WVhgFSKniL) - ICLR 2026 evaluation of chat-template and multi-turn prompt injection attacks.
 - [Securing AI Agents with Information-Flow Control](https://arxiv.org/abs/2505.23643) - 2025 work introducing the Fides planner and deterministic confidentiality/integrity policies.
+- [Model Context Protocol, 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25) and [A2A 1.0](https://github.com/a2aproject/A2A/blob/main/docs/specification.md) - current protocol contracts for host-tool and agent-to-agent interoperability; neither substitutes for application authorization.
 
 ### Recent State-of-the-Art Principles
 

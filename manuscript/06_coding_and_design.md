@@ -1565,6 +1565,8 @@ For a documentation assistant, begin with a narrow task: read authorized sources
 
 Tool output is an observation, even when it says “SYSTEM: ignore your rules.” A schema prevents malformed calls, not malicious but well-formed arguments. The authorization layer must resolve paths, tenants, domains, operation types, and effects independently. Credentials belong in the execution service, not in model-visible prompts. Source trust is metadata outside the text being evaluated.
 
+Interoperability protocols standardize envelopes, not trust. The [Model Context Protocol specification](https://modelcontextprotocol.io/specification/2025-11-25) defines negotiated capabilities and typed tools, resources, prompts, and task-like operations between a host and servers. The [A2A 1.0 specification](https://github.com/a2aproject/A2A/blob/main/docs/specification.md) defines discovery through Agent Cards plus messages and durable tasks between agent systems. Either can reduce bespoke integration, but neither turns advertised metadata or remote output into authority. Pin supported protocol versions, authenticate both endpoints, authorize every effect against current caller identity, constrain discovery, and preserve idempotency, deadlines, provenance, and audit records in the host.
+
 ### A complete local fixture
 
 Run `python -m examples.agent_loop`. It prints `finished 1 0`: one permitted document-read attempt, no saved drafts. The module includes the decision loop, typed actions and observations, a tool allowlist, a draft capability, bounded attempts, and receipt-based retries. Its policy is scripted so failures are deterministic and require no model account or network.

@@ -55,18 +55,18 @@ MARGIN_X = 17 * mm
 MARGIN_TOP = 20 * mm
 MARGIN_BOTTOM = 18 * mm
 
-INK = HexColor("#152238")
-MUTED = HexColor("#5B687A")
-NAVY = HexColor("#0B1736")
-TEAL = HexColor("#00A6A6")
-CYAN = HexColor("#41D3D3")
-CORAL = HexColor("#FF6B5E")
-GOLD = HexColor("#F2B84B")
-PAPER = HexColor("#F7F5F0")
-PANEL = HexColor("#EEF2F5")
-PALE_TEAL = HexColor("#E5F7F5")
-PALE_CORAL = HexColor("#FFF0ED")
-PALE_GOLD = HexColor("#FFF7E4")
+INK = HexColor("#2F312E")
+MUTED = HexColor("#6A6C67")
+CHARCOAL = HexColor("#41423E")
+TEAL = HexColor("#5F776C")
+CYAN = HexColor("#C9D4CD")
+CORAL = HexColor("#A77564")
+GOLD = HexColor("#9B865C")
+PAPER = HexColor("#FAF9F6")
+PANEL = HexColor("#F0EFEA")
+PALE_TEAL = HexColor("#EDF1EE")
+PALE_CORAL = HexColor("#F4ECE8")
+PALE_GOLD = HexColor("#F3EFE5")
 WHITE = colors.white
 
 
@@ -135,7 +135,7 @@ def inline_markup(text: str) -> str:
     text = re.sub(r"`([^`]+)`", _stash_code, text)
     text = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<i>\1</i>", text)
-    text = re.sub(r"\[([^]]+)]\(([^)]+)\)", r'<link href="\2" color="#008C8C">\1</link>', text)
+    text = re.sub(r"\[([^]]+)]\(([^)]+)\)", r'<link href="\2" color="#5F776C">\1</link>', text)
     for index, code in enumerate(code_spans):
         text = text.replace(_code_token(index), f'<font name="Courier">{code}</font>')
     return text
@@ -266,7 +266,7 @@ def make_styles() -> dict[str, ParagraphStyle]:
             fontName="Courier",
             fontSize=6.75,
             leading=8.7,
-            textColor=HexColor("#D9E4F2"),
+            textColor=HexColor("#ECEAE4"),
             leftIndent=8,
             rightIndent=8,
             spaceBefore=5,
@@ -361,12 +361,12 @@ class ChapterBand(Flowable):
     def draw(self):
         c = self.canv
         c.saveState()
-        c.setFillColor(NAVY)
+        c.setFillColor(CHARCOAL)
         c.roundRect(0, 0, self.width, self.height, 12, fill=1, stroke=0)
         c.setFillColor(TEAL)
         c.roundRect(0, self.height - 9, self.width, 9, 4, fill=1, stroke=0)
         if self.number:
-            c.setFillColor(HexColor("#20335D"))
+            c.setFillColor(HexColor("#5A5B56"))
             c.setFont(FONT_BOLD, 66)
             c.drawRightString(self.width - 18, self.height - 70, self.number)
         c.setFillColor(CYAN)
@@ -458,9 +458,9 @@ class CodePanel(Flowable):
     def draw(self):
         c = self.canv
         c.saveState()
-        c.setFillColor(HexColor("#F0F4F8"))
+        c.setFillColor(HexColor("#F2F1ED"))
         c.roundRect(0, 0, self.width, self.height, 7, fill=1, stroke=0)
-        c.setFillColor(HexColor("#18284D"))
+        c.setFillColor(HexColor("#4A4B47"))
         c.roundRect(0, self.height - self.header_h, self.width, self.header_h, 7, fill=1, stroke=0)
         c.setFillColor(CYAN)
         c.setFont(FONT_BOLD, 6.8)
@@ -500,7 +500,7 @@ def diagram(name: str, width: float) -> Drawing:
     w = 430
     h = 190
     d = Drawing(w, h)
-    d.add(Rect(0, 0, w, h, rx=9, ry=9, fillColor=PANEL, strokeColor=HexColor("#DCE3E8")))
+    d.add(Rect(0, 0, w, h, rx=9, ry=9, fillColor=PANEL, strokeColor=HexColor("#D8D7D1")))
 
     if name == "training_pipeline":
         labels = ["Raw data", "Curate", "Pretrain", "Post-train", "Evaluate", "Serve"]
@@ -599,7 +599,7 @@ def diagram(name: str, width: float) -> Drawing:
     elif name == "continuous_batching":
         d.add(String(20, 168, "STATIC BATCH", fontName=FONT_BOLD, fontSize=8.5, fillColor=MUTED))
         d.add(String(20, 80, "CONTINUOUS BATCH", fontName=FONT_BOLD, fontSize=8.5, fillColor=TEAL))
-        colors_ = [TEAL, GOLD, CORAL, HexColor("#6F7BF7")]
+        colors_ = [TEAL, GOLD, CORAL, HexColor("#7F7A73")]
         for row in range(3):
             y = 135 - row * 19
             for col in range(7 - row * 2):
@@ -652,7 +652,7 @@ def diagram(name: str, width: float) -> Drawing:
             ("Registers", 85, CORAL),
             ("Shared / L1", 122, GOLD),
             ("L2 cache", 170, TEAL),
-            ("HBM", 222, HexColor("#6F7BF7")),
+            ("HBM", 222, HexColor("#7F7A73")),
             ("Host / network", 284, MUTED),
         ]
         cy = 96
@@ -669,11 +669,11 @@ def diagram(name: str, width: float) -> Drawing:
         for r in range(6):
             for c in range(6):
                 fill = PALE_TEAL if 1 <= r <= 3 else WHITE
-                d.add(Rect(30 + c * 18, 48 + r * 18, 16, 16, fillColor=fill, strokeColor=HexColor("#B7C3CC"), strokeWidth=.4))
+                d.add(Rect(30 + c * 18, 48 + r * 18, 16, 16, fillColor=fill, strokeColor=HexColor("#BBBAB4"), strokeWidth=.4))
         for r in range(6):
             for c in range(6):
                 fill = PALE_GOLD if 2 <= c <= 4 else WHITE
-                d.add(Rect(166 + c * 18, 48 + r * 18, 16, 16, fillColor=fill, strokeColor=HexColor("#B7C3CC"), strokeWidth=.4))
+                d.add(Rect(166 + c * 18, 48 + r * 18, 16, 16, fillColor=fill, strokeColor=HexColor("#BBBAB4"), strokeWidth=.4))
         box(d, w - 119, 78, 88, 48, "C tile\nregisters", fill=PALE_CORAL, stroke=CORAL)
         arrow(d, 140, 101, 163, 101)
         arrow(d, 276, 101, w - 121, 101)
@@ -702,7 +702,7 @@ def diagram(name: str, width: float) -> Drawing:
             ("Data", 30, 123, TEAL),
             ("Tensor", 150, 123, CORAL),
             ("Pipeline", 270, 123, GOLD),
-            ("Sequence", 90, 54, HexColor("#6F7BF7")),
+            ("Sequence", 90, 54, HexColor("#7F7A73")),
             ("Expert", 220, 54, MUTED),
         ]
         for label, x, y, color in labels:
@@ -748,7 +748,7 @@ def diagram(name: str, width: float) -> Drawing:
             (center[0] - 120, 115, "Decide"),
         ]
         for i, (x, y, label) in enumerate(nodes):
-            d.add(Circle(x, y, 25, fillColor=WHITE, strokeColor=[TEAL, GOLD, CORAL, HexColor("#6F7BF7"), INK][i], strokeWidth=1.6))
+            d.add(Circle(x, y, 25, fillColor=WHITE, strokeColor=[TEAL, GOLD, CORAL, HexColor("#7F7A73"), INK][i], strokeWidth=1.6))
             d.add(String(x, y - 3, label, textAnchor="middle", fontName=FONT_BOLD, fontSize=7.6, fillColor=INK))
             nx, ny, _ = nodes[(i + 1) % len(nodes)]
             angle = math.atan2(ny - y, nx - x)
@@ -821,9 +821,9 @@ class HandbookDocTemplate(BaseDocTemplate):
         canvas.setKeywords(self.meta.keywords)
         canvas.showOutline()
         canvas._doc.Catalog.Lang = PDFString("en-US")
-        canvas.setFillColor(NAVY)
+        canvas.setFillColor(CHARCOAL)
         canvas.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
-        canvas.setFillColor(HexColor("#122650"))
+        canvas.setFillColor(HexColor("#555650"))
         for i in range(7):
             canvas.circle(PAGE_W - 24 - i * 30, PAGE_H - 38 - i * 34, 88 - i * 7, fill=0, stroke=1)
         canvas.setFillColor(TEAL)
@@ -842,7 +842,7 @@ class HandbookDocTemplate(BaseDocTemplate):
         canvas.setFillColor(WHITE)
         canvas.setFont(FONT_BOLD, 35)
         canvas.drawString(42, PAGE_H - 244, "MODELS")
-        canvas.setFillColor(HexColor("#B9C8DE"))
+        canvas.setFillColor(HexColor("#D0CEC6"))
         canvas.setFont(FONT, 11)
         subtitle = ["TRAINING  /  INFERENCE  /  CUDA", "DISTRIBUTED SYSTEMS  /  TECHNICAL LEADERSHIP"]
         canvas.drawString(44, PAGE_H - 290, subtitle[0])
@@ -863,7 +863,7 @@ class HandbookDocTemplate(BaseDocTemplate):
         canvas.saveState()
         page = canvas.getPageNumber()
         if page > 1:
-            canvas.setStrokeColor(HexColor("#D8DEE4"))
+            canvas.setStrokeColor(HexColor("#D8D7D1"))
             canvas.setLineWidth(.45)
             canvas.line(MARGIN_X, PAGE_H - 13 * mm, PAGE_W - MARGIN_X, PAGE_H - 13 * mm)
             canvas.setFont(FONT, 6.8)
@@ -930,11 +930,11 @@ def table_flowable(rows: list[list[str]], width: float, leading: Flowable | None
     col_widths = [width / cols] * cols
     table = Table(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
     table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+        ("BACKGROUND", (0, 0), (-1, 0), CHARCOAL),
         ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
         ("FONTNAME", (0, 0), (-1, 0), FONT_BOLD),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("GRID", (0, 0), (-1, -1), .35, HexColor("#CCD5DC")),
+        ("GRID", (0, 0), (-1, -1), .35, HexColor("#D0CFC9")),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, PANEL]),
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
@@ -1184,7 +1184,7 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
             continue
         if stripped == "---":
             flush_paragraph(buffer, story)
-            story.extend([Spacer(1, 6), Rule(HexColor("#CAD3DA"), width, .65, 0, 7)])
+            story.extend([Spacer(1, 6), Rule(HexColor("#CECDC7"), width, .65, 0, 7)])
             i += 1
             continue
         buffer.append(stripped)
