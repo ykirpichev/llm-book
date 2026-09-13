@@ -46,6 +46,8 @@ This experiment checks optimization and serialization behavior on a tiny fixture
 
 The CPU references teach and test semantics. They do not benchmark a model server, train a transformer, or validate CUDA programs. The hardware chapters explain how to move from semantic references to profiled implementations; their GPU acceptance checks remain work to perform on the actual target system.
 
+When the capstone compares accelerator paths, use the baseline/candidate acceptance record linked from the repository's **Verified teaching examples** index. It keeps model identity, workload, quality, service tails, and cost together; unavailable target measurements stay explicitly unmeasured.
+
 ### Design the complete documentation service
 
 Use the running 7B documentation assistant as a capstone. Start with the hypothetical workload and budgets in the RAG chapter, not a preferred framework. Deliver the following artifacts in order; each should be understandable by someone who has not watched the experiments.

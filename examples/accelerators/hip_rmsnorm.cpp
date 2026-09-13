@@ -15,6 +15,10 @@
 #include <string>
 #include <vector>
 
+#ifndef BOOK_SOURCE_REVISION
+#define BOOK_SOURCE_REVISION "unknown"
+#endif
+
 namespace {
 
 constexpr int kThreads = 256;
@@ -124,6 +128,19 @@ float weight_value(int64_t column) {
     return (column & 1) == 0 ? magnitude : -magnitude;
 }
 
+void print_provenance() {
+    hipDeviceProp_t properties{};
+    int runtime_version = 0;
+    HIP_CHECK(hipGetDeviceProperties(&properties, 0));
+    HIP_CHECK(hipRuntimeGetVersion(&runtime_version));
+    std::printf("PROVENANCE source_revision=%s hip_header=%d hip_runtime=%d "
+                "device=%s gcn_arch=%s capability=%d.%d warp_size=%d "
+                "fixture=rows:3;widths:3,129,4097;x_strides:2*N+3,2;weight_stride:2;"
+                "epsilon=1e-6;atol=2e-4;rtol=3e-4\n",
+                BOOK_SOURCE_REVISION, HIP_VERSION, runtime_version, properties.name, properties.gcnArchName,
+                properties.major, properties.minor, properties.warpSize);
+}
+
 void compare_with_cpu(const std::vector<float>& input, const std::vector<float>& weights,
                       const std::vector<float>& actual, int rows, int64_t n,
                       int64_t sx0, int64_t sx1, int64_t sw) {
@@ -200,6 +217,7 @@ int main() {
             throw std::runtime_error("no HIP device is available");
         }
         HIP_CHECK(hipSetDevice(0));
+        print_provenance();
         for (const int64_t n : {int64_t{3}, int64_t{129}, int64_t{4097}}) {
             run_case(n);
         }

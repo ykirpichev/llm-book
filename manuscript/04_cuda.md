@@ -1535,14 +1535,6 @@ CUDA names more than a kernel language: an application may depend on its runtime
 
 :::diagram accelerator_portability|Keep the model contract above the porting boundary. Below it, choose a supported implementation path and revalidate kernels, state layout, and distributed execution. These are representative paths, not an exhaustive compatibility matrix; Pallas also has GPU backends.
 
-| Name | What it is | What it does not promise |
-| --- | --- | --- |
-| Triton | Language and compiler for tiled custom kernels | A replacement for the entire CUDA stack |
-| ROCm / HIP | AMD software stack / C++ programming interface | Every CUDA extension compiles or performs unchanged |
-| XLA / Pallas | Graph compiler / JAX custom-kernel language | Every operation has the same backend implementation |
-| AWS Neuron / NKI | AWS accelerator SDK / custom-kernel interface | Support for every model on every Neuron device |
-| SYCL | Standard C++ heterogeneous programming model | Identical libraries or performance across implementations |
-
 There are three separate acceptance tests. **Source portability** asks how much code can be reused. **Semantic portability** asks whether it still implements the required computation and state transitions. **Performance portability** asks whether the target meets the workload's service objective. A successful import or compilation establishes none of the latter two by itself.
 
 We will follow that boundary in three stages: port an operator, place the model's state and compiled variants, then judge a deployment against the assistant's workload. Triton supplies the worked tiled kernel; HIP exposes block synchronization; TPU and NKI illustrate different tile schedules. At each stop, ask who owns the row, where working values live, how tails remain correct, and what evidence establishes performance.
@@ -1553,13 +1545,13 @@ The [SYCL standard](https://www.khronos.org/sycl/) offers another heterogeneous 
 
 Use RMSNorm as a small porting exercise before moving the whole assistant. For an input row `x` of actual width `N`, learned weights `w`, and positive epsilon, the operation is `y[i] = x[i] * rsqrt(sum(x[j]^2) / N + epsilon) * w[i]`. Unlike LayerNorm, it does not subtract a mean. The contract is short; the implementation decisions are not. Who owns a row? Where does its partial sum live? Which participants synchronize? What happens to a padded lane?
 
-For the examples here, input rows and weights are separate read-only tensors; the output is newly allocated. Accumulate squared inputs in FP32 after converting the loaded values, and convert the final result to the output storage dtype. Restrict the values to a bounded activation range: even finite FP32 inputs can overflow when squared, and a positive Python epsilon can round to zero in FP32. Higher-precision accumulation is a useful choice, not a proof that every input is safe. Training would need a backward implementation and gradient tests as well.
+For the examples here, input rows and weights are separate read-only tensors; the output is newly allocated. Convert loaded values to FP32 before squaring and accumulating, then convert the final result to the output storage dtype.
 
 :::diagram rmsnorm_port|Padding changes the tile, not the mathematical row width.
 
 For `x = [3, 4, 0]`, unit weights, and epsilon `1e-6`, the squared sum is 25. Using the actual width `N=3` in the mean-square term produces approximately `[1.0392304, 1.3856406, 0]`. Mistakenly using the padded width four produces approximately `[1.1999999, 1.5999999, 0]`. Both look plausible. A width-4096-only test would never expose this bug. The repository's `examples/accelerator_portability.py` provides a higher-precision CPU oracle and rejection tests for out-of-range arithmetic.
 
-Keep two references when validating a real kernel: higher-precision arithmetic for the intended mathematics, and an explicit framework expression for the chosen accumulation and output dtypes. Agreement need not be bitwise across reduction trees or reciprocal-square-root implementations. Set tolerances from the relevant value range and dtype, then check the model's quality; a permissive operator tolerance can conceal a systematic mistake.
+Keep two references when validating a real kernel: higher-precision arithmetic for the mathematics, and a framework expression with the chosen accumulation and output dtypes. Set tolerances for a bounded activation range: finite FP32 inputs can still overflow when squared, and a very small positive epsilon can round to zero. Reduction trees and reciprocal-square-root implementations need not agree bitwise, but an overly loose tolerance can conceal a systematic error. Follow operator tests with model-quality checks; a training port also needs backward and gradient tests.
 
 ### Triton: change the kernel language, not necessarily the GPU
 
@@ -1571,7 +1563,7 @@ For a first port, use the framework's supported operator. Write or retune a Trit
 
 Here is the body of the accompanying forward-only implementation. A program handles one row; `BLOCK` is the next power of two at least as large as `N`. Input strides are measured in elements. Output rows are contiguous, so their stride is `N`, not the input row stride. Promoting indices before stride multiplication avoids an accidental 32-bit offset limitation.
 
-Example status: Source-only Triton excerpt. Complete wrapper and on-target smoke tests: `examples/accelerators/triton_rmsnorm.py`; no GPU execution recorded.
+Example status: Source-only Triton kernel excerpt; no device run recorded.
 
 ```python
 @triton.jit
@@ -1588,7 +1580,7 @@ def rmsnorm_rows(X, W, Y, sx0, sx1, sw,
     tl.store(Y + row*N + col, y, mask=valid)
 ```
 
-The host wrapper is part of the operation. This inference-only example accepts matched input types, positive strides, width at most 8192, and epsilon in `1e-12..1e-2`. It allocates contiguous output on the input device and skips empty launches. Its four-warp configuration needs target-specific tuning. The companion file lists the full argument checks; the bounded-value contract avoids a synchronizing scan on every call.
+The host wrapper is part of the operation. This inference-only example accepts matched input types, positive strides, width at most 8192, and epsilon in `1e-12..1e-2`. It allocates contiguous output on the input device and skips empty launches. Its four-warp configuration needs target-specific tuning. The complete wrapper and optional target tests are in `examples/accelerators/triton_rmsnorm.py`; the bounded-value contract avoids a synchronizing scan on every call.
 
 Test a strided view, not just a contiguous matrix: if storage has shape `(M, 2*N+3)` and the view is `storage[:, 1:1+2*N:2]`, the row stride is `2*N+3`, the column stride is 2, and the new output's row stride is `N`. Sweep unit widths, either side of powers of two, and the implementation limit. Moving from 4096 to 4097 doubles this kernel's logical tile size; that can change register pressure and occupancy. Correct indexing and coalesced access are separate goals.
 
@@ -1602,13 +1594,15 @@ The reduction kernels earlier in this part explain why names alone are insuffici
 
 For multi-device work, RCCL supplies AMD-oriented collective operations, including reductions, gathers, and all-to-all communication. API familiarity does not imply the same collective schedule or latency on a different topology. Measure representative payloads on the actual node and network. The [RCCL overview](https://rocm.docs.amd.com/projects/rccl/en/latest/what-is-rccl.html) describes its communication scope.
 
-Start with a supported framework and serving-engine build, then enumerate custom extensions, attention backends, quantization formats, and MoE kernels. Pin the GPU, operating system, driver, ROCm release, framework, and engine together. The [ROCm compatibility matrix](https://rocm.docs.amd.com/en/develop/compatibility/compatibility-matrix.html) is the starting point; an AMD product name alone is not a support guarantee. Unsupported code may fail loudly, but an unnoticed fallback or layout conversion can be equally costly.
+Start with a supported framework and serving-engine build, then enumerate custom extensions, attention backends, quantization formats, and MoE kernels. Pin the GPU, operating system, driver, ROCm release, framework, and engine together. The [ROCm compatibility matrix](https://rocm.docs.amd.com/en/develop/compatibility/compatibility-matrix.html) is the starting point; an AMD product name alone is not a support guarantee.
+
+Suppose the assistant needs separate prefill and decode pools. Local attention support is only the first gate. In the official vLLM [`ROCM_ATTN` implementation](https://docs.vllm.ai/en/latest/api/vllm/v1/attention/backends/rocm_attn/) inspected on September 13, 2026, `supports_kv_connector()` returns false: that backend's KV layout is incompatible with the blocks-first connector layout. This is a restriction of the inspected backend, not every ROCm deployment. Record the installed build, actual attention dispatch, head geometry, cache layout, and required connector together. If the connector gate fails, keep those phases on one compatible path or select a separately supported backend.
 
 #### A HIP reduction makes ownership explicit
 
-A simple HIP baseline uses one 256-thread block per row. Each thread accumulates columns `tid, tid+256, ...`; shared memory combines the partial sums. This is deliberately independent of warp/wave width. The following excerpt is only the reduction portion: a complete kernel also loads weights and stores normalized values in a second loop.
+A simple HIP baseline uses exactly one 256-thread block per nonempty row, valid FP32 pointers, and positive element strides. Each thread accumulates columns `tid, tid+256, ...`; shared memory combines the partial sums, independently of warp/wave width. The excerpt is the reduction portion: a complete kernel also loads weights and stores normalized values in a second loop.
 
-Example status: Hardware-dependent HIP kernel-body excerpt; not compiled or executed here. Requires exactly 256 threads per block, valid FP32 input pointers, positive element strides, and a nonempty row.
+Example status: Source-only HIP kernel excerpt; no compile or device run recorded.
 
 ```cpp
 const int64_t row = static_cast<int64_t>(blockIdx.x);
@@ -1632,7 +1626,9 @@ For a three-element row, 253 threads contribute zero, but all 256 still reach ev
 
 The launch boundary matters too. Check allocation/copy calls, check the launch error, and synchronize at a test boundary to detect asynchronous execution errors. Do not free or reuse input, output, or transfer buffers until their consumers finish. A producer on another stream needs an explicit dependency; residing on the same device does not order it. See the [HIP asynchronous execution guide](https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/hip_runtime_api/asynchronous.html). Do not put a global synchronization after every production operation merely because it simplifies the test.
 
-Example status: Source-only HIP launch excerpt. Assumes checked allocations, positive dimensions, valid pointers, and a live stream; `HIP_CHECK` reports an error and stops the test.
+The launch below assumes checked buffers, positive dimensions, and a live stream; `HIP_CHECK` stops the test on an error.
+
+Example status: Source-only HIP launch excerpt; no compile or device run recorded.
 
 ```cpp
 hipLaunchKernelGGL(rmsnorm_f32, dim3(rows), dim3(256), 0, stream,
@@ -1649,7 +1645,7 @@ Some familiar names intentionally remain: ROCm PyTorch uses the `torch.cuda` int
 
 Start with an unprofiled correctness run and warm timings, then capture host calls, dispatches, and copies. On current ROCm, the ROCprofiler-SDK workflow uses `rocprofv3`; older `rocprof`/`rocprofv2` tooling is marked deprecated. The [SDK quick reference](https://rocm.docs.amd.com/projects/rocprofiler-sdk/en/latest/quick-reference/quick_guide.html) gives current trace and counter commands.
 
-Example status: Illustrative on-target shell workflow; requires a built HIP test program and compatible profiling tools. Not run in this book's CPU environment.
+Example status: Source-only rocprofv3 recipe; not run here.
 
 ```sh
 rocprofv3 --version
@@ -1674,7 +1670,7 @@ For the assistant, prefill presents many query rows and opportunities for matrix
 
 Begin with a dtype-matched JAX RMSNorm reference, then choose a window for the custom kernel. Suppose the input is `(128, 4096)`, weights are presented as `(1, 4096)`, and each program handles eight complete rows. The input and output windows advance along rows; every program sees the same weight window.
 
-Example status: Source-only Pallas window specification; omits the kernel body and launch. Requires release-matched JAX/jaxlib.
+Example status: Source-only Pallas window specification; kernel body and launch omitted.
 
 ```python
 from jax.experimental import pallas as pl
@@ -1702,19 +1698,17 @@ Pallas offers `pallas_call(..., interpret=True)` for CPU-accessible semantic deb
 
 Trainium and Inferentia are AWS accelerator families. Inferentia targets inference; Trainium supports training and inference. Neuron is their software stack, including compiler, runtime, framework integrations, libraries, and profiling tools. Native PyTorch through TorchNeuron is a closed-beta path in the checked SDK 2.32 documentation; PyTorch NeuronX and JAX are distinct integrations. Confirm access as well as feature support. See the [Neuron SDK overview](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/) and [native PyTorch access note](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/frameworks/torch/pytorch-native-overview.html).
 
-NKI, the Neuron Kernel Interface, exposes tiled custom computation and explicit data movement. HBM holds large tensors, SBUF holds on-chip working tiles, and PSUM provides distinct accumulation storage for applicable matrix results. Partition dimensions, tile constraints, and lifetimes determine the schedule. The current [memory hierarchy guide](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/nki/get-started/about/memory-hierarchy-overview.html) is the conceptual starting point.
-
-There is an important release boundary. Neuron's release notes place NxD Inference in maintenance mode starting with SDK 2.32.0. The newer vLLM Neuron plugin is documented as beta and no longer depends on NxD Inference; the current announcement targets Trn2 and Trn3. Do not infer that this path covers older Inferentia hardware just because the umbrella SDK does. Older NxD examples remain useful but should not be presented as the default architecture for a new deployment. See the [NxD release notes](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/release-notes/components/nxd-inference.html) and [Neuron update announcement](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/about-neuron/whats-new.html).
-
-The [vLLM Neuron migration guide](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/vllm-neuron/docs/getting-started/migration-nxdi-to-vllm-neuron.html) separates moving a supported model from reimplementing custom modeling code. Apply that distinction to the assistant: validate its exact attention, quantization, sampling, and cache features before budgeting a full port. A familiar serving API can conceal a different compilation and state-management path.
+For a new serving evaluation, begin with the vLLM Neuron plugin's supported models and targets. The checked [announcement](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/about-neuron/whats-new.html) describes a beta path for Trn2 and Trn3 that no longer depends on NxD Inference; [NxD entered maintenance mode](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/release-notes/components/nxd-inference.html) with SDK 2.32. The [migration guide](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/vllm-neuron/docs/getting-started/migration-nxdi-to-vllm-neuron.html) separates a supported model move from custom-modeling work. Check the assistant's attention, quantization, sampling, and cache features against that path, including target generation: support in the umbrella SDK does not establish plugin support for older Inferentia hardware.
 
 #### NKI: follow the tile between memory spaces
+
+NKI, the Neuron Kernel Interface, exposes tiled custom computation and explicit data movement. HBM holds large tensors, SBUF holds on-chip working tiles, and PSUM provides distinct accumulation storage for applicable matrix results. Partition dimensions, tile constraints, and lifetimes determine the schedule. The [memory hierarchy guide](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/nki/get-started/about/memory-hierarchy-overview.html) is the conceptual starting point.
 
 The checked SDK 2.32 pairs with NKI 0.6 and uses the `nki`, `nki.language`, and `nki.isa` namespaces. Use the [migration guide](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/migration/index.html) when adapting older examples, especially for returned-buffer and runtime-loop rules.
 
 Use this schedule to read the maintained RMSNorm implementation. It is intentionally pseudocode: supported tile shapes, reduction operations, and dtype conversions must come from the selected SDK and target.
 
-Example status: Explanatory NKI schedule; not executable code.
+Example status: Explanatory pseudocode; NKI tile schedule.
 
 ```text
 For a bounded tile containing complete rows:
@@ -1727,9 +1721,9 @@ If a row spans tiles, combine its partial sums before normalizing it.
 
 SBUF is software-managed working storage, not merely a hardware cache. PSUM is distinct accumulation storage used for matrix results; it should not be drawn as an obligatory stop for every scalar reduction. Returning an output tensor also has a buffer contract: modern NKI uses shared HBM for returned tensors. Read the [memory hierarchy guide](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/nki/get-started/about/memory-hierarchy-overview.html) with the SDK 2.32 [`nki.language.rms_norm` reference](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/nki/api/generated/nki.language.rms_norm.html). That API's documented targets and input contract are narrower than a universal framework operator; an old tutorial with a similar name may use a different namespace or SDK.
 
-Make the operator arguments concrete. For a `(128, 512)` input tile already in SBUF, dimension zero identifies the 128 partitions and dimension one contains each row's 512 values. Present the learned scale as a same-shaped weight tile repeating the row weights. This explicit layout is easy to read; reusing or broadcasting a smaller weight tile is a separate implementation choice.
+Make the operator arguments concrete. For an FP32 `(128, 512)` input tile already in SBUF, dimension zero identifies the 128 partitions and dimension one contains each row's 512 values. Present the learned scale as a same-shaped FP32 weight tile repeating the row weights. This explicit layout is easy to read; reusing or broadcasting a smaller weight tile is a separate implementation choice.
 
-Example status: Source-only NKI 0.6 API fragment; assumes FP32 `(128, 512)` input and weight tiles in SBUF. No simulator or device run recorded.
+Example status: Source-only NKI 0.6 API fragment; no simulator or device run recorded.
 
 ```python
 import nki.language as nl
@@ -1758,11 +1752,15 @@ Keep the assistant's checkpoint, tokenizer, GQA geometry, and quality evaluation
 
 The earlier model's roughly 14 GB of weights and 4.3 GB of logical KV reads give a useful first decode ledger under the stated full-read assumptions. Replace the illustrative GPU bandwidth with the target's measured sustainable bandwidth; do not reuse the earlier 3 TB/s number as a TPU, AMD, or Trainium specification. Likewise, aggregate memory across devices is not freely pooled memory. Weight shards and KV shards must fit where the executable places them.
 
+Before applying the 4 GiB ledger, ask which precision changed: the weight artifact's packing and scales, the compute dtype, or KV storage and its scale layout. In the checked [vLLM Neuron feature guide](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/vllm-neuron/docs/guides/features-guide.html#kv-cache-fp8-quantization), FP8 KV is dequantized to BF16 for attention; weight loading is a separate path with its own checkpoint and target restrictions.
+
+Changing weights alone leaves this assistant's two-byte KV payload at 4 GiB. A supported one-byte KV format stores 2 GiB of elements before scales, padding, replication, and reservations. Measure the full allocation and latency. Treat a requantized checkpoint as a new artifact, preserve the original baseline, and rerun the quality gate.
+
 #### More ranks can replicate state
 
 Assume uniform full-history GQA, no pipeline partition, and tensor parallelism that partitions whole KV heads when possible. With eight KV heads and TP=4, each rank owns two heads: the 4 GiB logical cache becomes 1 GiB per rank. At TP=16, suppose the implementation instead replicates each KV head across two ranks. Each rank holds 512 MiB, but aggregate physical KV becomes 8 GiB. Lower per-rank memory and greater aggregate memory are compatible outcomes.
 
-Now combine TP=4 with context parallelism CP=2, assuming these groups partition heads and token positions independently. Each of eight ranks stores two heads for half the history: 512 MiB per rank and 4 GiB aggregate. This is a placement calculation, not evidence that a chosen engine supports that group combination. Uneven context partitions add padding; pipeline partitions, sliding windows, latent caches, and different replication policies require a different model.
+Now combine TP=4 with an abstract independent context axis, CP=2: the groups partition heads and token positions independently. Each of eight ranks stores two heads for half the history, giving 512 MiB per rank and 4 GiB aggregate. This capacity model is neither an engine flag nor a schedule. Part V distinguishes phase-specific prefill PCP from decode DCP. Uneven context partitions add padding; pipeline partitions, sliding windows, latent caches, and other replication policies require different arithmetic.
 
 :::diagram kv_port_placement|The same 4 GiB logical cache has different physical layouts. Counts describe ranks, not interchangeable devices. The example isolates KV state; weights, activations, workspace, and reserved pools are additional allocations.
 
@@ -1783,10 +1781,16 @@ for tp, cp in [(4, 1), (16, 1), (4, 2)]:
     modeled_total = local_kv * tp * cp
     results.append((local_kv // 2**20, modeled_total // 2**20))
 assert logical_kv == 4 * 2**30
+one_byte_kv = logical_kv // element_bytes
+assert one_byte_kv == 2 * 2**30  # excludes scale metadata
 assert results == [(1024, 4096), (512, 8192), (512, 4096)]
 ```
 
 Each result is `(MiB per rank, aggregate modeled KV MiB)`. The general helper in `examples/accelerator_portability.py` validates integer and head-divisibility assumptions; the printed calculation intentionally evaluates only the three named configurations.
+
+The preceding CP example adds ranks; with prefill context parallelism disabled, [vLLM DCP](https://docs.vllm.ai/en/latest/serving/context_parallel_deployment/) reuses them within TP. In the [Neuron SDK 2.32 decode mapping](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.32.0/vllm-neuron/docs/design/parallelism/dcp.html), TP=16 and DCP=2 form pairs of ranks that would otherwise replicate a KV head. Each rank owns interleaved blocks covering half that head's history. For the assistant's 32 query heads and eight KV heads, the modeled payload becomes `512 / 2 = 256 MiB` per rank and `16 * 256 MiB = 4 GiB` aggregate. There are 16 ranks, not 32.
+
+This mapping requires TP greater than the KV-head count, DCP no greater than TP/KV-heads, and DCP to divide both TP and the query-to-KV-head ratio; attention data parallelism is excluded. Our geometry passes these checks. Prefill groups and whole-model support need their own validation. Record group membership and keep the independent-CP helper separate from this nested-DCP calculation.
 
 For admission, use the most constrained rank's peak live allocation, not the average across the cluster. A useful per-rank ledger is `weights + live KV + peak workspace/activations + runtime reservations + safety margin`. If one rank cannot fit its largest supported prefill chunk while retaining admitted decode state, spare bytes elsewhere do not rescue that executable. Reducing TP can remove collectives but increase per-rank weight traffic; adding CP reduces local history while introducing partial-attention communication. Measure both phases after each placement change.
 
@@ -1823,11 +1827,13 @@ The serving decision is not “always add more buckets.” Choose a bounded set 
 | Prefill | Prompt masks, ragged lengths, KV writes, chunk scheduling | TTFT by length; useful tokens/s; padding and compile misses |
 | Decode | Paged state, sampling, cancellation, cache reuse | Token-gap tails; admitted concurrency; KV traffic and collectives |
 
-A working forward pass is not a training port: gradients, optimizer updates, distributed normalization, and resumed data order need validation. Similarly, fast prefill does not establish a useful decode service. Preserve the assistant's request distribution and p99 targets when comparing serving candidates. Check logits against a trusted reference with justified tolerances, then run task-level quality evaluation. Different reduction orders can change generated tokens without implying a bug; convincing-looking output can also hide one.
+Compare serving candidates on the assistant's request distribution and p99 targets. Check logits against a trusted reference with justified tolerances, then run task-level quality evaluation. Different reduction orders can change generated tokens without implying a bug; convincing-looking output can also hide one.
 
-Parallelism must be reselected, not copied. Prefill context parallelism distributes prompt work; decode context parallelism distributes reads of cached history and combines partial attention results. Tensor parallelism adds communication within layers in both phases. A target may support one decomposition but not the engine's desired combination. Record the actual process groups, KV ownership, reductions, and supported topology. The following part derives these mechanisms; this chapter adds the requirement to verify their implementation on the chosen backend.
+Replay eight active decodes while a long prompt arrives. Does the installed scheduler put prompt chunks and decode work in one batch, or alternate phase-specific batches? Which interval creates the worst visible token gap? The checked [vLLM Neuron feature guide](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/vllm-neuron/docs/guides/features-guide.html#segmented-prefill) describes segmented prefill and continuous batching with separate prefill and decode batches. Separate batches still permit request interleaving; they change how to interpret the trace.
 
-For disaggregated serving, keep initial prefill and decode pools on a compatible implementation path. Cross-vendor KV transfer is not automatically available: peers must agree on logical token identity, dtype, head mapping, layout, quantization metadata, and ownership. Repacking and transport must fit inside the transfer budget. A shared model checkpoint does not establish a shared cache ABI.
+For that replay, record the prefill and decode rank groups, KV ownership, and reductions, including which collectives cross hosts. Identical payload arithmetic can travel over very different communication paths. Judge the configuration by TTFT and token-gap tails under the existing load and quality gate. Part V's *Distributed Inference and Stateful Placement*, after its collective foundations, derives those decompositions; here the scheduler trace connects those choices to a user's wait.
+
+For disaggregated serving, apply the backend, connector, and representation gates above even when both pools use the same vendor. Then budget repacking and transport. A shared checkpoint is a useful starting point, not a shared cache ABI.
 
 Name the handoff unit before calculating its cost: one request, a microbatch, or a pool migration. The earlier 4 GiB represents the whole batch of eight sequences with 4096 committed tokens each. One 2000-token request instead has 250 MiB of logical KV under the same full-history, uncompressed geometry. Transfer bytes also depend on physical representation and which shards move.
 
@@ -1848,13 +1854,13 @@ For the assistant, retain the existing p99 first-token target of 1.5 seconds and
 | Integrated engine | Same model/features, quality gate, warm replay | Cold recovery, overload, sustained operating cost |
 | Deployment trial | Arrival replay, SLO tails, failure/recovery, total cost | Universal superiority on other workloads |
 
-The repository validates CPU planning and oracle tests. Accelerator listings remain source-only unless explicitly marked device-tested; no accelerator compilation or benchmark is recorded for this chapter. Companion files carry the full validation checklist.
+The repository validates CPU planning and oracle tests. Accelerator listings remain source-only unless explicitly marked device-tested; no accelerator compilation or benchmark is recorded for this chapter. The companion examples carry target-validation checklists, and `docs/accelerator-acceptance-template.md` supplies a baseline/candidate report with unmeasured fields left explicit.
 
 ### Design Exercises
 
 1. A custom RMSNorm passes a CPU interpreter or simulator at widths 4096 and 4097. What must happen before reporting a device speedup?
-2. A TPU or Neuron serving port has fast warm decode but poor TTFT after scaling out. What evidence separates compilation from prefill inefficiency?
-3. An alternative device has more memory per chip. Can the assistant reduce tensor parallelism safely?
+2. A TPU or Neuron serving port has fast warm decode but poor TTFT after scaling out. Once warm, a long prompt also interrupts eight active decodes. Which traces separate the two problems?
+3. Why does the independent TP=4, CP=2 example use eight ranks, while the nested TP=16, DCP=2 example uses sixteen? Could a larger-memory target safely reduce TP?
 4. A 2000-token request uses this chapter's cache geometry. A proposed cross-vendor handoff has a 25 GiB/s effective link, serialized pack/unpack costs of 2 ms each, and a 15 ms transfer budget. Is that enough evidence to approve it?
 5. A three-element row uses a four-element Triton tile or a 256-thread HIP block. A developer divides by four in the first kernel and adds `if (tid >= n) return;` to the second. Diagnose both changes.
 
@@ -1866,11 +1872,11 @@ Compile for the named device and pinned stack; check supported operations, layou
 
 #### 2. Cold-start attribution
 
-Trace compilation, artifact loading, allocation, warm-up, queue time, and prefill separately. Replay the same shapes on already-warm workers. Count new executable variants and inspect padded work. If only cold workers regress, prewarming and artifact distribution are candidates; if long prompts remain slow when warm, investigate attention, padding, and scheduling. Require the autoscaling test as well as the microbenchmark.
+Trace compilation, artifact loading, allocation, warm-up, queue time, and prefill separately. Replay the same shapes on already-warm workers and count new executable variants. A cold-only regression points toward readiness and artifact distribution. For the warm interruption, inspect padded work and the scheduler's mixed or separate batches; align phase boundaries and collective intervals with visible token gaps. Require both the autoscaling test and the eight-decode replay before attributing the problem to a slow attention kernel.
 
 #### 3. Memory is necessary, not sufficient
 
-Recompute per-device weights, KV, workspace, activations, and head replication for the proposed layout. Confirm the backend supports it. Fewer ranks may remove collective latency but also reduce compute and memory bandwidth available to one request. Compare TTFT, decode tails, and admitted concurrency under the same traffic before changing placement.
+Independent CP adds a second rank dimension: `4 * 2 = 8`. Nested DCP partitions history among the existing sixteen TP ranks, giving 256 MiB/rank for the stated geometry. Passing DCP=2 as the helper's independent CP argument would double-count ranks. To reduce TP on a larger-memory target, recompute weights, KV, workspace, activations, and replication on the constraining rank. Confirm backend support, then compare TTFT, decode tails, and admitted concurrency under the same traffic: fewer ranks can remove collectives while reducing the bandwidth available to a request.
 
 #### 4. A small margin and an unproven cache contract
 

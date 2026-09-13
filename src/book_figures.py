@@ -624,24 +624,24 @@ def rmsnorm_port(f):
 
 def rmsnorm_fragments(f):
     for x, name in [(18, "Fragment A"), (234, "Fragment B")]:
-        f.node(x, 242, 178, 43, name+"\nload its row values", size=8.5)
-        f.node(x, 165, 178, 43, "Partial squared sum\nnot a complete row norm", size=8.4)
-        f.arrow([(x+89, 242), (x+89, 208)])
-    f.node(108, 85, 214, 43, "Combine sums, then inverse RMS\nuse the full row width N", tone="GOLD", size=8.2)
-    f.arrow([(107, 165), (107, 147), (163, 147), (163, 128)], "GOLD")
-    f.arrow([(323, 165), (323, 147), (267, 147), (267, 128)], "GOLD")
+        f.node(x, 204, 178, 43, name+"\nload its row values", size=8.5)
+        f.node(x, 145, 178, 43, "Partial squared sum\nnot a complete row norm", size=8.4)
+        f.arrow([(x+89, 204), (x+89, 188)])
+    f.node(108, 77, 214, 43, "Combine sums, then inverse RMS\nuse the full row width N", tone="GOLD", size=8.2)
+    f.arrow([(107, 145), (107, 133), (163, 133), (163, 120)], "GOLD")
+    f.arrow([(323, 145), (323, 133), (267, 133), (267, 120)], "GOLD")
     f.text(18, 58, "Scale A with shared inverse", size=8.3, width=180)
     f.text(234, 58, "Scale B with shared inverse", size=8.3, width=180)
-    f.arrow([(108, 104), (71, 104), (71, 74)], "CORAL")
-    f.arrow([(322, 104), (359, 104), (359, 74)], "CORAL")
+    f.arrow([(108, 96), (71, 96), (71, 74)], "CORAL")
+    f.arrow([(322, 96), (359, 96), (359, 74)], "CORAL")
     f.footer("Logical dependency: choose a supported multi-stage implementation.",
              "Keep or reload each fragment's values; a global divisor is not enough.")
 
 
 def kv_port_placement(f):
-    f.node(18, 252, 394, 43, "Logical KV: 4 GiB\n8 heads; same batch, history, layers and dtype", size=8.7)
-    rows = [(174, "TP 4, CP 1", "4 ranks x 1 GiB", "4 GiB aggregate", "TEAL"),
-            (110, "TP 16, CP 1", "16 ranks x 512 MiB", "8 GiB: each head replicated twice", "CORAL"),
+    f.node(18, 212, 394, 43, "Logical KV: 4 GiB\n8 heads; same batch, history, layers and dtype", size=8.7)
+    rows = [(157, "TP 4, CP 1", "4 ranks x 1 GiB", "4 GiB aggregate", "TEAL"),
+            (102, "TP 16, CP 1", "16 ranks x 512 MiB", "8 GiB: each head replicated twice", "CORAL"),
             (46, "TP 4, CP 2", "8 ranks x 512 MiB", "4 GiB: heads and history partitioned", "GOLD")]
     for y, label, size, note, tone in rows:
         f.node(18, y, 112, 43, label, tone=tone, size=8.6)
@@ -669,9 +669,9 @@ def compile_lifecycle(f):
 
 
 FIGURES = {
-    "rmsnorm_fragments": (331, "ROW FRAGMENTS MUST SHARE THE FULL-ROW NORM", rmsnorm_fragments),
+    "rmsnorm_fragments": (293, "ROW FRAGMENTS MUST SHARE THE FULL-ROW NORM", rmsnorm_fragments),
     "rmsnorm_port": (304, "RMSNORM: ACTUAL WIDTH AND MASKED LANES", rmsnorm_port),
-    "kv_port_placement": (338, "PER-RANK CAPACITY AND TOTAL MEMORY CAN DIVERGE", kv_port_placement),
+    "kv_port_placement": (298, "PER-RANK CAPACITY AND TOTAL MEMORY CAN DIVERGE", kv_port_placement),
     "compile_lifecycle": (326, "COLD COMPILATION IS NOT WARM REQUEST EXECUTION", compile_lifecycle),
     "serving_stack": (320, "AN ENGINE SCHEDULES WORK AND OWNS ITS STATE", serving_stack),
     "accelerator_portability": (328, "PORT THE CONTRACT; REVALIDATE THE EXECUTION", accelerator_portability),

@@ -62,6 +62,8 @@ Generated PDFs and previews are ignored by Git. A GitHub Release preserves the r
 
 See [examples/README.md](examples/README.md) for runnable CPU references covering a complete tiny-model lifecycle, tokenization/loss, recurrent state, post-training, speculative sampling, quantization, attention, streaming, retrieval, and a bounded agent loop. Each has explicit assumptions and tests. Manuscript snippets distinguish runnable code from illustrative excerpts and pseudocode. CUDA excerpts have not been compiled or benchmarked in this release.
 
+For an accelerator evaluation, start with the [optional target examples](examples/accelerators/README.md) and the [baseline/candidate acceptance record](docs/accelerator-acceptance-template.md). The latter is an unfilled reporting template, not a recorded benchmark.
+
 The [claim audit](docs/claim-audit.md) records selected source/version checks and the running-model arithmetic. It is not a line-by-line technical certification.
 
 ## Source layout
