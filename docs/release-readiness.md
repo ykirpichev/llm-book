@@ -1,11 +1,28 @@
 # Working-draft release checks
 
-## Current reviewed source — September 13
+## Current reviewed source — five-pass revision, September 13
+
+The [five-pass review](five-pass-review-2026-09-13.md) records five sequential
+coverage, mechanism, source, editorial, and adversarial/production-check cycles,
+with a disposition for all 70 chapters. The current local PDF has 445 pages,
+80 outline entries, and 245 external link annotations; 95 CPU tests pass.
+All pages were inspected at contact-sheet scale and all 44 distinct diagram
+proofs were inspected with captions, with enlarged changed-page checks.
+
+The final link probe reached 196 unique manuscript URLs: 192 HTTP successes,
+no confirmed missing targets, and the same four publisher access blocks listed
+below. GPU kernels, real serving engines, distributed cache behavior, and
+accelerator ports were not executed or benchmarked. The source and PDF remain
+a working draft suitable for technical-reviewer circulation, not a finished
+public edition. Independent human technical/copy review and publication-boundary
+checks remain necessary. The historical releases below are unchanged.
+
+## Historical reviewed source — earlier September 13 multi-model pass
 
 The [multi-model editorial review](multi-model-review-2026-09-13.md) records the
 complete Astra technical, Sol prose, and Terra pedagogy review, followed by
-post-integration Terra and Astra gates. The current source passes 77 CPU tests.
-Its rebuilt PDF has 410 pages, 78 outline entries, 168 external link annotations,
+post-integration Terra and Astra gates. That source passed 77 CPU tests.
+Its rebuilt PDF had 410 pages, 78 outline entries, 168 external link annotations,
 and no suspiciously empty pages. All pages were inspected at contact-sheet
 scale, with enlarged checks of every materially changed region.
 
@@ -23,7 +40,7 @@ privacy, and repository-history review.
 The release evidence below describes the immutable September 7 artifacts rather
 than this newer locally rebuilt PDF.
 
-## Current checkpoint: expanded end-to-end learning draft
+## Historical checkpoint: expanded end-to-end learning draft
 
 The current release is `draft-2026-09-07-expanded`. It preserves the earlier
 checkpoint below and keeps the repository private. See

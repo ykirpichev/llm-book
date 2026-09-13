@@ -20,6 +20,13 @@ class ManuscriptTests(unittest.TestCase):
                 if line.startswith(":::equation "):
                     self.assertEqual(line.count("|"), 1, f"{path.name}:{number}")
 
+    def test_five_pass_review_covers_current_chapters(self):
+        ledger = (ROOT / "docs" / "five-pass-review-2026-09-13.md").read_text()
+        for path in sorted((ROOT / "manuscript").glob("*.md")):
+            for line in path.read_text().splitlines():
+                if line.startswith("## "):
+                    self.assertEqual(ledger.count(f"| {line[3:]} |"), 1, line)
+
     def test_code_blocks_have_status_and_are_closed(self):
         for path in sorted((ROOT / "manuscript").glob("*.md")):
             inside = False

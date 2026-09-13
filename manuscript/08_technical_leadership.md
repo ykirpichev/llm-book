@@ -269,6 +269,10 @@ Publish the decision and roadmap. Secure owners and capacity, define interfaces 
 
 ### Prioritization
 
+For the documentation assistant, suppose the first month's evidence shows that most release delay comes from rebuilding evaluation by hand, while existing serving capacity meets demand. This is a fictional diagnosis to test, not a forecast. A useful first-quarter commitment is then a repeatable model/index release and canary path for one team—not a fleet-wide engine migration.
+
+By day 60, run one release through that path and measure elapsed lead time, manual interventions, and missed defects. By day 90, demonstrate a second release, including rollback and a permission-revocation test, without the original implementer guiding every step. Keep quality and disclosure gates fixed so a faster release cannot win by omitting checks. If queue traces instead show a capacity problem, reopen the priority with that evidence. The calendar organizes learning; it does not justify keeping a disproved diagnosis.
+
 Score opportunities by impact, risk reduction, leverage, effort, dependency, and reversibility. Use scoring to expose assumptions, not replace judgment. Quantify adoption and duplicated work removed: a platform with no migration path has zero realized leverage.
 
 :::callout decision|Strategy includes a sequence

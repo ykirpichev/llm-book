@@ -72,6 +72,7 @@ adjacent chapters and are not duplicated at every chapter boundary.
 | Parallel, Replicated, and Disaggregated Serving | Retained | Distinct phase groups, KV transfer, pinned PCP/TP/DCP source check |
 | Quantization, Compression, and Adapter Serving | Expanded | Scalar error/scales, GPTQ/AWQ/SmoothQuant/SpinQuant, MXFP8/NVFP4 |
 | Production Architecture, Capacity, and Reliability | Retained | Capacity, release identity, failure domains, canaries and SLO goodput |
+| Serving Engines and Cache Backends in Practice | Added in five-pass review | vLLM V1, SGLang radix/overlap/HiCache, current TensorRT LLM backend boundary, layer map, controlled engine comparison, cancellation lifetime; no cross-engine benchmarks reproduced |
 | GPU Execution, Memory, and Resource Accounting | Retained | Coalescing, banks, occupancy and synchronization with worked solutions |
 | Host-Device Orchestration, Streams, and CUDA Graphs | Retained | Async host boundaries, graph lifecycle and measured-region semantics |
 | Hierarchical Matrix Multiplication | Retained | Scalar/tiled references, register reuse, tensor cores, split-K and grouped GEMM |

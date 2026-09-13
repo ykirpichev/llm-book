@@ -58,6 +58,23 @@ class BuildBookTests(unittest.TestCase):
         self.assertNotIn("<i>", rendered)
         self.assertNotIn("\x00", rendered)
 
+    def test_code_status_keeps_with_panel_across_spacer(self) -> None:
+        from unittest.mock import Mock
+        source = Mock()
+        source.read_text.return_value = "Example status: Explanatory pseudocode.\n\n```text\nrun()\n```\n"
+        _, story = build_book.build_story([source], 400)
+        panel_index = next(i for i, item in enumerate(story) if isinstance(item, build_book.CodePanel))
+        self.assertTrue(story[panel_index - 2].getKeepWithNext())
+        self.assertTrue(story[panel_index - 1].getKeepWithNext())
+
+    def test_table_keeps_short_introduction(self) -> None:
+        from unittest.mock import Mock
+        source = Mock()
+        source.read_text.return_value = "A compact contract includes:\n\n| A | B |\n| --- | --- |\n| one | two |\n"
+        _, story = build_book.build_story([source], 400)
+        self.assertIsInstance(story[-1], build_book.KeepTogether)
+        self.assertEqual(story[-1]._content[0].getPlainText(), "A compact contract includes:")
+
     def test_slug_is_stable_and_bounded(self) -> None:
         first = build_book.slugify("A Heading With Punctuation!")
         second = build_book.slugify("A Heading With Punctuation!")
@@ -120,6 +137,13 @@ class BuildBookTests(unittest.TestCase):
                       "Neuron / NKI", "NVIDIA", "AMD", "TPU", "AWS Trainium"]:
             self.assertIn(label, labels)
         self.assertTrue(any("not feature parity" in label for label in labels))
+
+    def test_serving_stack_keeps_state_management_outside_kernels(self):
+        labels = self.figure_labels("serving_stack")
+        for label in ["Scheduler", "Model runner", "KV manager", "Device kernels",
+                      "Optional connector", "Remote KV tiers"]:
+            self.assertIn(label, labels)
+        self.assertIn("Connectors move state; they do not admit requests.", labels)
 
     def test_decoder_diagram_separates_sums_from_outputs(self):
         labels = self.figure_labels("decoder_block")

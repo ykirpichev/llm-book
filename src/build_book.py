@@ -998,7 +998,14 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
             while i < len(lines) and not lines[i].strip().startswith("```"):
                 code.append(lines[i])
                 i += 1
-            story.extend([Spacer(1, 4), CodePanel("\n".join(code), language, width), Spacer(1, 7)])
+            gap = Spacer(1, 4)
+            if (story and isinstance(story[-1], Paragraph)
+                    and story[-1].getPlainText().startswith("Example status:")):
+                # Keep the status with the start of the (splittable) code panel.
+                # The spacer must participate in the chain as well.
+                story[-1].keepWithNext = True
+                gap.keepWithNext = True
+            story.extend([gap, CodePanel("\n".join(code), language, width), Spacer(1, 7)])
             i += 1
             continue
         if stripped.startswith(":::callout"):
@@ -1063,7 +1070,15 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
                 i += 1
             # A heading's automatic keepWithNext does not reliably cross the
             # table's KeepTogether wrapper. Put both in the SAME group.
-            leading = story.pop() if story and isinstance(story[-1], Heading) else None
+            leading = None
+            if story and isinstance(story[-1], Heading):
+                leading = story.pop()
+            elif (story and isinstance(story[-1], Paragraph)
+                  and story[-1].getPlainText().endswith(":")
+                  and len(story[-1].getPlainText()) < 250):
+                # A short table introduction should not be stranded on the
+                # previous page while the table starts on the next one.
+                leading = story.pop()
             story.append(table_flowable(parse_table(table_lines), width, leading))
             continue
         if stripped.startswith("# "):

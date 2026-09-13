@@ -15,7 +15,7 @@ the standard library and do not download models, call APIs, or require a GPU.
 | Speculation and quantization | `python -m unittest tests.test_inference_mechanisms` | 5 passing tests | Exact output mass including support gaps; randomized distributions; scalar quantization error/outliers. |
 | Agent loop | `python -m examples.agent_loop` | `finished 1 0` | Denied capabilities, retry after commit, budgets, key conflicts, revocation/removal. Scripted policy, no LLM. |
 | Retrieval ranking | `python -m unittest tests.test_agent_loop.RetrievalMethodTests` | 2 passing tests | Reciprocal rank fusion and normalized token-level MaxSim; no learned encoder or ANN implementation. |
-| Foundation calculations | `python -m unittest tests.test_foundations` | 9 passing tests | Loss gradient, causal mask/permutation, rank weighting, clipping, resource and cost models, scaling allocation, paired uncertainty. |
+| Foundation calculations | `python -m unittest tests.test_foundations` | 11 passing tests | Loss gradient, causal mask/permutation, rank weighting, clipping, resource and cost models, scaling allocation, paired uncertainty, zero-failure bounds, coarsened KL. |
 
 Run `make test` for all tests. The RAG experiment is a five-case synthetic
 fixture with labeled facts and a deterministic answer function. It is not a

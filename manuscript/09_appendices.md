@@ -31,7 +31,7 @@ assert restored.generate("a", max_new_tokens=6) == "abababa"
 
 Run `python -m examples.tiny_lm` to see the loss decrease and generated sequence. Training data defines the vocabulary; the checkpoint stores both vocabulary order and logits. The decoder uses greedy selection and a hard generation bound, with no learned end token. The examples never join separate documents to create an artificial cross-document training pair.
 
-This experiment proves optimization and serialization behavior on a tiny fixture, not generalization. Evaluating more alternating characters repeats the same transition rule. A real validation split must challenge the intended capability without duplicating training examples, and a real tokenizer needs a declared unknown/byte-fallback policy. Here unknown characters raise an error so the limitation is visible.
+This experiment checks optimization and serialization behavior on a tiny fixture, not generalization. Evaluating more alternating characters repeats the same transition rule. A real validation split must challenge the intended capability without duplicating training examples, and a real tokenizer needs a declared unknown/byte-fallback policy. Here unknown characters raise an error so the limitation is visible.
 
 ### Connect the references in learning order
 
@@ -54,13 +54,17 @@ Use the running 7B documentation assistant as a capstone. Start with the hypothe
 2. **Unadapted baseline:** serve an existing compatible checkpoint with a bounded retrieval workflow. Record tokenizer/template, precision, context budget, and generation policy. Measure retrieval and generation separately.
 3. **Adaptation decision:** use SFT/LoRA only for demonstrated behavior gaps; use retrieval for changing facts. Require an independent verifier and enough interaction data before adding RL. Compare against the unadapted baseline at the same workload boundary.
 4. **Capacity ledger:** calculate weights, layer-specific state, workspaces, reserved memory, phase compute, and transfer budgets. A hybrid model requires a new state ledger; copying the dense transformer's KV formula is not a migration plan.
-5. **Performance experiment:** identify the measured bottleneck, then change one relevant mechanism—batching, quantization, speculation, attention, or placement. Keep correctness, quality, and SLO gates fixed.
+5. **Engine and performance experiment:** establish one compatible engine baseline, then compare a second using the controlled/deployment distinction in **Serving Engines and Cache Backends in Practice**. Identify the measured bottleneck before adding batching, quantization, speculation, remote cache, or phase sharding. Keep correctness, quality, and SLO gates fixed. If accelerator portability is required, repeat the full acceptance path on one alternative stack; translated code alone is not the result.
 6. **Bounded agent extension:** permit only the tools the task requires. Define action identity, timeout/reconciliation, memory provenance, stopping conditions, and final-state verification. Compare completed authorized tasks per budget with the fixed workflow.
 7. **Operational release:** bind model/data/index/harness versions, canary, inject failures, rehearse rollback, and assign ownership. Preserve both positive and negative results.
 
 ### What a good capstone answer contains
 
-A strong answer can explain why the next proposed technique should affect the actual bottleneck, calculate its resource tradeoff, name a plausible failure, and describe a test that would reject it. It does not need to use every advanced method. If the task is solved by a small model and a fixed workflow, adding MoE, distributed RL, and several agents is not evidence of mastery.
+Keep the checkpoint/engine revisions, rejected alternatives, workload trace, resource ledger, quality uncertainty, and latency decomposition together. Distinguish calculations, CPU tests, reported results, and your own measurements. Attach cache ownership through lookup, reservation, transfer, cancellation, and eviction; for a port, include the model/precision/sharding combination and cold-start/recovery results.
+
+If target hardware was unavailable, submit semantic tests and the proposed experiment with performance explicitly unmeasured. Peak specifications cannot fill those cells.
+
+A strong answer explains the bottleneck, calculates a tradeoff, and supplies a rejection test. It need not use every technique: a small model and fixed workflow may solve the task without MoE, distributed RL, or multiple agents.
 
 As a self-check, change one assumption at a time: double input length; revoke a document permission mid-request; replace attention layers with recurrent layers; lose the reply after a successful tool write; or make rollout production faster than the learner. Trace which state, budget, and acceptance rule changes. The relevant derivations and failure protocols are developed in the preceding parts; the reference sheets below help locate them.
 

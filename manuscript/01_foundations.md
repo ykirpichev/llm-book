@@ -19,9 +19,9 @@ LEAD: An ML system begins with a contract among behavior, workload, resources, a
 
 “Train a better model” is not an engineering objective. Better for whom, on which tasks, under what constraints, and compared with what baseline? A useful objective identifies the behavior to improve and the failures that may not worsen.
 
-Suppose a code assistant must improve repository-level debugging. The behavior contract might require that the model locate a defect, propose a patch that passes tests, explain the relevant invariant, and abstain when repository context is insufficient. The system contract adds a 4-second time-to-first-token target, a 32,000-token working context, regional data-handling restrictions, and a cost ceiling per completed task.
+Consider the documentation assistant introduced in the preface. It must answer from current authorized sources, cite the relevant passage, and abstain when the evidence is missing or conflicting. Its hypothetical service targets are a p99 time to first token of 1.5 seconds and a p99 token gap of 100 milliseconds. The complete workload appears in Parts III and VI; these are design requirements, not measured results.
 
-Those requirements immediately shape the technical design. Repository context creates long prefills and large KV state. Executable verification affects training-data construction and evaluation. The latency target constrains model size and parallelism. The abstention requirement needs calibrated evaluation rather than pass rate alone. The data restriction affects retrieval, logging, and where inference may run.
+Those requirements already shape the design. Retrieved passages create prefill work and persistent KV state. Changing policies belong in versioned retrieval rather than an expectation that model weights stay current. Latency constrains model size and placement; abstention needs calibrated evaluation rather than answer rate alone. Permissions affect retrieval, caching, logging, and the final disclosure boundary. Later chapters develop these consequences without assuming that a larger model fixes them.
 
 A compact contract includes:
 
@@ -731,7 +731,7 @@ Every evaluation result should bind the model checkpoint, tokenizer, prompt or p
 
 ### Match the experiment to the claim
 
-Evidence should live at the same boundary as the claim. A unit test can establish an algebraic invariant. A kernel benchmark can establish local speed and numerical error. An engine replay can establish behavior under representative shapes. A shadow or canary can establish integration and operational effects. An online experiment can establish user response.
+Evidence should live at the same boundary as the claim. A derivation can establish an algebraic invariant under stated assumptions; unit tests check selected cases and catch regressions. A kernel benchmark measures local speed and numerical error. An engine replay observes behavior under representative shapes. A shadow or canary tests integration and operational effects. A well-designed online experiment estimates user response.
 
 A robust progression is:
 
@@ -773,6 +773,16 @@ Statistical significance does not establish practical importance. Predefine the 
 For a concrete paired comparison, run both systems on the same 100 independent tasks. Suppose the new system alone succeeds on 15 and the baseline alone succeeds on 5. Define each paired difference as +1, -1, or 0. The mean improvement is 0.10; its sample standard deviation is `sqrt((20 - 100*0.10²)/99)`, about 0.438, giving standard error about 0.0438. A rough normal 95 percent interval is `0.10 ± 1.96*0.0438`, or about 1.4 to 18.6 percentage points. That uncertainty matters even though the point estimate is ten points. This approximation is not a guarantee for small or highly unbalanced samples; use an appropriate paired analysis, and resample repositories or users instead if those are the independent units. To establish a minimum useful improvement of five points, this interval is not yet convincing.
 
 Inspecting many slices creates multiple-comparison risk. Organize metrics into declared primary outcomes, hard guardrails, and exploratory diagnostics. Exploratory findings generate hypotheses for confirmation; they should not be presented as if they were pre-registered conclusions.
+
+Zero observed failures is also an estimate, not a zero-risk result. Under independent Bernoulli trials with one fixed failure probability `p`, the chance of observing zero failures in `n` trials is `(1-p)^n`. Setting that chance to 0.05 gives the one-sided 95 percent upper confidence limit `1 - 0.05^(1/n)`, approximately `3/n` for large `n`. With 300 clean independent trials, the limit is about 0.994 percent; with 3000, about 0.100 percent. This is a repeated-sampling confidence procedure, not a 95 percent posterior probability about a particular model. See the [NIST exact binomial confidence-limit definition](https://www.itl.nist.gov/div898/software/dataplot/refman2/auxillar/exacbino.htm).
+
+Repeated variants of the same task do not supply that many independent trials. Nor can this bound cover an untested language, an adaptive attacker, or a failure detector that misses violations. Use it to size a fixed-population evaluation, and pair it with targeted challenge cases rather than declaring safety from a small clean sample.
+
+### Validate the evaluator too
+
+An LLM judge is a model inside the measurement pipeline. It can prefer an answer's position or style, miss technical errors, or follow instructions embedded in the candidate answer. The [MT-Bench judge study](https://arxiv.org/abs/2306.05685) documents position, verbosity, and self-enhancement biases in its evaluated judges; it does not establish reliability for a new domain.
+
+For the documentation assistant, give the evaluator the question, authorized source revision, candidate answer, and a rubric separating factual support, citation accuracy, and usefulness. Hide engine identity, swap candidate order for paired judgments, and retain disagreements for adjudication. Calibrate on a held-out set with expert labels and deliberately wrong but polished answers. Run executable or deterministic checks where they apply; reserve judgment for the remaining questions. Multiple judges with shared failure modes are not independent votes, and a fluent judging rationale is not evidence that its verdict is right.
 
 ### Reason causally about system changes
 

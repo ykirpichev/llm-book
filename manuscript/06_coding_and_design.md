@@ -45,7 +45,7 @@ The space lower bound follows the query. Exact arbitrary-frequency counts requir
 
 ### Notation and error vocabulary
 
-The rest of the chapter uses the following notation:
+The four-chapter streaming sequence uses the following notation:
 
 - `N` is the number of processed updates or the current window width, as stated locally;
 - `f(x)` is the true nonnegative frequency of key `x`;

@@ -1507,7 +1507,7 @@ With temperature `T`, logits `z` become:
 
 :::equation p_{i}(T) = exp(z_{i}/T) / Σ_{j} exp(z_{j}/T)|Temperature reveals or suppresses probability structure among non-argmax tokens.
 
-Higher temperature softens the distribution and exposes relationships among non-argmax tokens. Lower temperature sharpens it. In classic distillation, multiplying the KL term by `T^2` compensates for the gradient scale change introduced by temperature.
+Higher temperature softens the distribution and exposes relationships among non-argmax tokens. Lower temperature sharpens it. In [classic distillation](https://arxiv.org/abs/1503.02531), multiplying the KL term by `T^2` compensates for the approximate inverse-square gradient scaling in the high-temperature regime. It does not make the objective or all finite-temperature gradients invariant to temperature.
 
 Example status: Illustrative Python excerpt; not standalone.
 
@@ -1529,6 +1529,8 @@ The excerpt assumes next-token alignment and masking have already selected valid
 Full-vocabulary logits can exceed the storage cost of the original training examples by orders of magnitude. A data path must choose among online teacher inference, offline dense logits, top-k logits plus residual mass, quantized scores, or sampled sequences.
 
 Online inference avoids a static logit corpus and can follow student-relevant prompts, but it couples training throughput to teacher capacity and version availability. Offline targets make runs reproducible but can become stale and create heavy object-store traffic. Top-k storage is effective when most useful probability mass is concentrated, provided the omitted tail is represented consistently rather than silently renormalized into a different target.
+
+Preserving the tail's total mass still discards its internal distribution. For teacher probabilities `[0.6,0.3,0.1]` and student probabilities `[0.6,0.1,0.3]`, full forward KL is `0.2*log(3)`, about 0.220 nats. If only the first token is stored and the remaining tokens become one tail event, both distributions are `[0.6,0.4]` and the coarsened KL is zero. That objective cannot see how probability is divided inside the tail. Specify whether a sparse target is a coarsened loss, a reconstructed approximation, or a sampled estimator of the full loss; they are different training signals.
 
 Version every teacher artifact with teacher checkpoint, tokenizer, prompt template, decoding or temperature configuration, precision, and generation code. If the student and teacher tokenize differently, sequence alignment and probability transfer require an explicit mapping; matching strings does not imply matching token events.
 
@@ -1871,4 +1873,4 @@ Track answer length, entropy, group reward variance, discarded prompts, clipping
 
 ### Part II closing principle
 
-A training system is credible when every behavioral claim can be traced through a versioned signal, an explicit objective, and an independent evaluation gate. Scale does not repair an ambiguous data contract, and a sophisticated objective does not repair a verifier the model can exploit. Preserve the evidence chain from source data to released checkpoint.
+The training output is more than weights: retain the data release, objective, update configuration, and evaluation that justify the checkpoint. For the documentation assistant, adaptation might improve citation format or abstention while retrieval supplies changing facts. Part III takes that exact checkpoint and asks whether its behavior can be delivered within a latency and memory budget. A training improvement that disappears after deployment is not yet a product improvement.

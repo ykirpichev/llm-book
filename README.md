@@ -2,15 +2,17 @@
 
 A working technical book by Yury Kirpichev covering model training, data, distillation, LLM inference, CUDA, distributed systems, ML coding, system design, and technical leadership.
 
-This is a **working draft**, not a finished first edition. Start with the [front matter](manuscript/00_front_matter.md), [current release checks](docs/release-readiness.md), or [September 13 multi-model review](docs/multi-model-review-2026-09-13.md). The existing all-rights-reserved terms are explicit in [LICENSE](LICENSE); no open-source or open-content license is granted at this stage.
+This is a **working draft**, not a finished first edition. Start with the [front matter](manuscript/00_front_matter.md), [current release checks](docs/release-readiness.md), or [five-pass review and 70-chapter ledger](docs/five-pass-review-2026-09-13.md). The existing all-rights-reserved terms are explicit in [LICENSE](LICENSE); no open-source or open-content license is granted at this stage.
 
 The expanded versioned PDF is attached to the [September 2026 end-to-end learning release](https://github.com/ykirpichev/llm-book/releases/tag/draft-2026-09-07-expanded). The [earlier checkpoint](https://github.com/ykirpichev/llm-book/releases/tag/draft-2026-09-07) is preserved. The repository and both releases remain private; access requires repository permission.
 
-The [chapter coverage audit](docs/coverage-audit-2026-09.md) records the expanded pass, with a September 7, 2026 research cutoff. Core mechanisms are explained in the book with examples and failure boundaries; references provide supporting evidence. The book does not claim to catalogue every paper or reproduce frontier training runs.
+The [chapter coverage audit](docs/coverage-audit-2026-09.md) records the expansion and subsequent additions. The current manuscript's research cutoff is September 13, 2026, with dated implementation checks. Core mechanisms are explained with examples and failure boundaries; references provide supporting evidence. The book does not claim to catalogue every paper or reproduce frontier training runs.
 
 The [September 8 Part I review](docs/part1-review-2026-09-08.md) records an earlier independent pass. The [September 13 multi-model review](docs/multi-model-review-2026-09-13.md) records the Astra technical, Sol prose, and Terra pedagogy reviews, final Astra gate, 77 passing CPU tests, and rebuilt 410-page PDF. Rebuild from the current sources for these revisions; the September 7 release PDFs remain unchanged historical checkpoints.
 
 ## Read the draft
+
+The latest [five-pass revision](docs/five-pass-review-2026-09-13.md) builds to 445 pages with 95 passing CPU tests. It adds [Serving Engines and Cache Backends in Practice](manuscript/03_inference.md#serving-engines-and-cache-backends-in-practice): vLLM, SGLang, TensorRT LLM, FlashInfer, llama.cpp, and the cache/fleet ecosystem. It also updates FSDP2 and training/RL implementation paths, corrects numerical and recovery details, and strengthens the capstone. These are source-grounded explanations, not reproduced engine or accelerator benchmarks. All 44 distinct diagram proofs and the full PDF at contact-sheet scale were visually checked; see the review for limitations.
 
 The new chapter [Accelerator Ecosystems Beyond CUDA and NVIDIA](manuscript/04_cuda.md#accelerator-ecosystems-beyond-cuda-and-nvidia) covers Triton, ROCm/HIP, TPU/XLA/Pallas, AWS Neuron/NKI, and a bounded porting evaluation. Its [source and validation record](docs/accelerator-ecosystems-review-2026-09-13.md) is dated September 13, 2026; it does not claim cross-device benchmark results.
 

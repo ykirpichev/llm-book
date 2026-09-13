@@ -230,9 +230,17 @@ A fully sharded module generally performs:
 5. reduce-scatter gradients to owners;
 6. update local optimizer shards.
 
-Wrapping granularity controls this schedule. Very small units issue many latency-bound gathers. Very large units raise peak memory and delay prefetch. Flattening compatible parameters reduces metadata and improves collective efficiency but complicates per-parameter tooling and checkpoints.
+Communication-group granularity controls this schedule. Very small units issue many latency-bound gathers. Very large units raise peak memory and delay prefetch. Older flattened-parameter implementations combine parameter storage; do not assume that representation when reading a newer sharding API.
 
 Backward prefetch can overlap the next parameter gather with current gradient computation. Forward prefetch is useful when execution order is static and CPU issue cannot stay ahead. Too much prefetch creates multiple live gathered units and causes OOM.
+
+### Read a current training implementation
+
+PyTorch's [FSDP2 tutorial](https://docs.pytorch.org/tutorials/intermediate/FSDP_tutorial.html) uses `fully_shard` and per-parameter DTensor representations; it marks FSDP1 deprecated. Apply sharding to selected submodules and then the root, and construct the optimizer afterward. The grouping still controls collective timing even though parameters retain individual identities. Read the tutorial's state-dictionary and prefetch examples alongside the lifetime sequence above rather than translating old wrapper flags mechanically.
+
+[TorchTitan](https://github.com/pytorch/torchtitan) provides a PyTorch-native path through a training loop, parallelization, activation checkpointing, compilation, and distributed checkpointing. Follow one transformer block from model definition through parallelization to the checkpoint representation. [Megatron-LM and Megatron Core](https://github.com/NVIDIA/Megatron-LM) provide another reference for composing tensor, pipeline, context, and expert parallelism. These are implementation study paths, not a claim that either has the best configuration for every model.
+
+For a first experiment, compare one unsharded update with a sharded update on identical effective data. Check loss, gradients after the appropriate gathering, updated parameters, and checkpoint reload within declared tolerances. Only then profile communication and peak live memory. A configuration that launches successfully has not yet demonstrated the intended optimization problem.
 
 ### Reshard-after-forward decisions
 
@@ -242,11 +250,11 @@ Choose by available memory, module size, recomputation, pipeline schedule, and b
 
 ### Activation checkpointing and offload
 
-Activation checkpointing saves selected boundary tensors and recomputes internal forward operations during backward. It trades compute for activation memory and can change overlap timing. Selective checkpointing targets expensive saved tensors while avoiding recomputation of IO-heavy or nondeterministic work.
+Activation checkpointing saves selected boundary tensors and recomputes internal forward operations during backward. It trades compute for activation memory and can change overlap timing. Selective policies decide which operation outputs to save and which to recompute: preserving an expensive matrix multiplication while recomputing cheap pointwise operations is one useful starting hypothesis, not a universal rule.
 
 CPU or storage offload expands capacity but introduces transfer and page-fault risk. It is viable when transfers overlap and the interconnect sustains the required bytes per step. An offload plan that fits but extends step time beyond the training budget is not a solution.
 
-Checkpointed regions must preserve random-number behavior for dropout or other stochastic operations. Distributed recomputation also needs the same collective order as the original forward.
+Checkpointed regions must preserve random-number behavior for dropout or other stochastic operations. Distributed recomputation also needs the same collective order as the original forward. Mutable globals or buffers can make recomputation differ even with the same RNG state. PyTorch's [checkpoint reference](https://docs.pytorch.org/docs/2.14/checkpoint.html) documents non-reentrant behavior and selective policies; test gradients after changing the policy, not only peak memory.
 
 ### Mixed precision and global numerical state
 
@@ -1027,6 +1035,10 @@ An original capacity calculation: if rollout workers produce 120,000 action toke
 
 ### Publication, replay, and recovery
 
+[verl](https://github.com/verl-project/verl) is a practical reference for this separation of roles: its documented training backends include FSDP2 and Megatron-LM, while rollout generation can use vLLM or SGLang. Trace one rollout batch across generation, reward, log-probability calculation, update, and weight publication. Backend support is not evidence that every combination is validated on every accelerator; pin and test the complete combination.
+
+Pay particular attention to training-versus-rollout numerical mismatch. Even nominally identical weights can produce different log-probabilities under different precision, kernels, batching, or token processing. Record the actual behavior probabilities when the algorithm requires them and compare a fixed sequence across both paths. Policy version alone does not identify the distribution that generated a sample.
+
 Publish weights through a manifest only after every required shard is available and validated. Rollout workers finish or invalidate incompatible in-flight state before acknowledging a version switch. Retain immutable behavior metadata even after an old weight checkpoint is garbage-collected. Store enough information to distinguish replay of an optimizer batch from regeneration of its samples; regeneration may produce different data.
 
 Checkpoint learner/optimizer state, consumed trajectory IDs, batch/group membership, policy publication state, and the disposition of in-flight work. A repeated learner batch doubles its influence. A repeated tool action can have an external effect. Exactly-once progress therefore cannot be achieved merely by saving model weights. Use committed batch IDs and an explicit replay policy; use tool-side idempotency where supported.
@@ -1102,6 +1114,10 @@ A synchronous save pauses training until required state is durable. It is simple
 An asynchronous save first snapshots or stages a consistent state, then writes while training continues. The snapshot must remain immutable. Copying to host frees device state sooner but consumes host memory and link bandwidth. Copy-on-write or double buffering can reduce pause but may temporarily double large state.
 
 Backpressure is mandatory. If storage is slower than checkpoint production, do not queue unbounded snapshots. Skip a nonessential interval, block at a safe point, or lower frequency while preserving the recovery objective.
+
+The asynchronous boundary has two different completion events. **Staging complete** means the checkpoint owns a stable snapshot that later parameter updates cannot alter. **Upload complete** means that snapshot has reached its storage destination; publication still follows the manifest protocol. PyTorch's [asynchronous distributed-checkpoint recipe](https://docs.pytorch.org/tutorials/recipes/distributed_async_checkpoint_recipe.html) exposes staging and upload completion separately for its asynchronous stager.
+
+Wait for staging before the next operation that can mutate captured state, not merely before the next checkpoint. If a forward pass mutates buffers, its boundary matters as well as `optimizer.step()`. Limit concurrent saves so pinned host snapshots do not exhaust memory. A process that exits after staging but before durable upload has not produced a remote recovery point. Inject failure at both boundaries and verify which checkpoint a replacement job can discover.
 
 ### Incremental and local checkpoints
 

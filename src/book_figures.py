@@ -561,6 +561,25 @@ def migration_gates(f):
     f.footer("Define rollback for the migrated state, traffic cohort, and recovery time.")
 
 
+def serving_stack(f):
+    f.node(18, 235, 220, 39, "API and output boundary\nserialize inputs; stream results", size=8.5)
+    f.node(18, 163, 220, 43, "Scheduler\nbudgets + request state", size=8.5)
+    f.node(18, 93, 220, 43, "Model runner\nweights + execution metadata", size=8.5)
+    f.node(18, 39, 220, 30, "Device kernels", tone="GOLD", size=8.5)
+    f.arrow([(128, 235), (128, 206)])
+    f.arrow([(128, 163), (128, 136)])
+    f.arrow([(128, 93), (128, 69)], "GOLD")
+    f.node(268, 163, 144, 43, "KV manager\npages + references", size=8.3)
+    f.node(268, 93, 144, 43, "Optional connector\ntransfer completion", tone="CORAL", size=8.3)
+    f.node(268, 39, 144, 30, "Remote KV tiers", tone="CORAL", size=8.3)
+    f.arrow([(238, 190), (268, 190)])
+    f.arrow([(268, 179), (238, 179)])
+    for top, bottom in [(163, 136), (93, 69)]:
+        f.arrow([(334, top), (334, bottom)], "CORAL")
+        f.arrow([(346, bottom), (346, top)], "CORAL")
+    f.footer("Connectors move state; they do not admit requests.")
+
+
 def accelerator_portability(f):
     f.node(18, 239, 394, 43,
            "Shared model contract\nweights, masks, positions, quality and service targets", size=8.8)
@@ -585,6 +604,7 @@ def accelerator_portability(f):
 
 
 FIGURES = {
+    "serving_stack": (320, "AN ENGINE SCHEDULES WORK AND OWNS ITS STATE", serving_stack),
     "accelerator_portability": (328, "PORT THE CONTRACT; REVALIDATE THE EXECUTION", accelerator_portability),
     "request_lifecycle": (270, "FIRST-TOKEN LATENCY AND VISIBLE TOKEN GAPS", request_lifecycle),
     "system_design": (286, "A DISTRIBUTED JOB HAS TWO FEEDBACK PATHS", system_design),

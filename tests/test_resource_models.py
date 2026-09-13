@@ -25,3 +25,14 @@ class ResourceModelTests(unittest.TestCase):
     def test_dense_training_storage_convention(self):
         # Weights + grads FP16, master weights and two moments FP32.
         self.assertEqual(7e9 * (2 + 2 + 4 + 4 + 4) / 1e9, 112)
+
+    def test_quantized_weights_leave_kv_traffic(self):
+        kv = 8*4096*131072
+        self.assertAlmostEqual((14e9+kv)/3e12*1000, 6.098322432)
+        self.assertAlmostEqual((4e9+kv)/3e12*1000, 2.764989098666667)
+
+    def test_prefix_alignment_and_overlap_examples(self):
+        self.assertEqual(500//16*16, 496)
+        self.assertEqual(2000-496, 1504)
+        self.assertAlmostEqual((2+5)/max(2,5), 1.4)
+        self.assertGreater(1-.99**299, .95)

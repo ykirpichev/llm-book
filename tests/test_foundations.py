@@ -108,6 +108,22 @@ class FoundationChecks(unittest.TestCase):
         self.assertLess(mean-1.96*se, 0.05)
         self.assertGreater(mean-1.96*se, 0.)
 
+    def test_zero_failure_upper_limit(self):
+        for n in [1, 300, 3000]:
+            upper = -math.expm1(math.log(0.05)/n)
+            self.assertAlmostEqual((1-upper)**n, 0.05, places=12)
+        self.assertAlmostEqual(1-0.05**(1/300), 0.00993608194)
+        self.assertAlmostEqual(1-0.05**(1/3000), 0.00099807901)
+
+    def test_tail_mass_does_not_preserve_full_kl(self):
+        teacher, student = [.6, .3, .1], [.6, .1, .3]
+        full = sum(p*math.log(p/q) for p,q in zip(teacher, student))
+        coarse_teacher = [teacher[0], sum(teacher[1:])]
+        coarse_student = [student[0], sum(student[1:])]
+        coarse = sum(p*math.log(p/q) for p,q in zip(coarse_teacher, coarse_student))
+        self.assertAlmostEqual(full, .2*math.log(3))
+        self.assertEqual(coarse, 0.)
+
 
 if __name__ == "__main__":
     unittest.main()
