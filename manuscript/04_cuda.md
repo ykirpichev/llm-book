@@ -1359,7 +1359,7 @@ LEAD: Kernel work is complete only when the optimization is reproducible across 
 
 The preceding sections built a schedule for the running example's layer and decode step. This final section is how you defend that schedule: benchmarks that match the claim, profiler hypotheses tied to resources, and correctness layers that catch the shapes serving actually produces.
 
-:::diagram roofline|A roofline places achieved work against arithmetic intensity. Hierarchical rooflines can reveal whether HBM, L2, L1, or compute is the active ceiling.
+:::diagram roofline|This schematic illustrates a bandwidth slope and compute ceiling, not measured prefill or decode performance. A measured hierarchical roofline can distinguish HBM, cache, and compute limits under a specified workload.
 
 ### Build a trustworthy benchmark
 
@@ -1516,6 +1516,6 @@ Create a variant when a frequent shape or semantic mode has a materially differe
 
 ### Final CUDA Principle
 
-> A kernel is a proof that an algorithm, a data layout, and a hardware schedule agree.
+Keep three artifacts with the optimized kernel: a semantic reference and edge-case tests, a profile explaining the resource limit, and an engine replay showing the integration effect. These establish different things; passing tests is not a proof over every possible input. For the running example, check that prefill still avoids quadratic score storage and that fused decode preserves KV indexing, masking, and cancellation behavior.
 
-The proof has three parts: correctness for every supported shape, a resource model that predicts the bottleneck, and measurements that show the optimization survives integration. In the running example, prefill tiles must still avoid materializing quadratic score and probability matrices in HBM, and decode steps must still honor the KV contract after profiling and fusion. Missing any one of these conditions produces a benchmark artifact rather than a production kernel.
+The next part adds peers to this schedule. The question changes from where a tile lives on one GPU to which rank owns it, when another rank needs it, and what happens when that rank fails.

@@ -40,11 +40,11 @@ Before choosing an engine or optimization, define model semantics, supported req
 
 ## Request Lifecycle, Metrics, and Workload Models
 
-LEAD: An LLM request is a distributed transaction with a long, streaming response. Correct measurement separates queueing, model phases, transport, and user-visible cadence instead of collapsing everything into one throughput number.
+LEAD: An LLM request is a long-lived operation whose state spans several components. Once a token reaches the user, it cannot be rolled back like an uncommitted database write. Measure queueing, model work, and delivery separately to locate delays and define safe retries.
 
 The map starts here because every optimization in this part is judged against these measurements. For the running service the contract is concrete: p99 time to first token is at most 1.5 seconds, and p99 visible inter-token gap is at most 100 milliseconds. These percentile targets allow a tail beyond the thresholds; a hard maximum-gap guarantee would be a stronger contract.
 
-:::diagram request_lifecycle|A request crosses gateway, queue, prefill, decode, and streaming boundaries. Each boundary needs an owner and a timestamp before any latency claim is meaningful.
+:::diagram request_lifecycle|Client-observed time to first token ends at receipt, not at the first GPU result. Inter-token gaps are measured between successive receipts. The processing path is schematic; decode and delivery repeat after the first token, and cleanup follows completion or cancellation.
 
 ### The request path
 
@@ -205,7 +205,7 @@ Multimodal models may add an encoder phase before prefill. Image, audio, or vide
 | KV behavior | Creates prompt state | Reads history and appends one position |
 | Primary user metric | Time to first token | Token cadence and output rate |
 
-:::diagram roofline|Arithmetic intensity helps explain why a large prefill can approach compute throughput while small-batch decode remains limited by bytes moved per generated token.
+:::diagram roofline|A schematic roofline, not measured benchmark points. Large prefill can have enough arithmetic intensity to approach the compute ceiling; small-batch decode often moves too many bytes per generated token. Actual placement depends on model, batch, context, and hardware.
 
 ### Transformer work per phase
 
@@ -332,7 +332,7 @@ Weight traffic is roughly stable per step, while each query reads a KV history t
 
 #### 5. Chunked prefill
 
-Reserve a decode budget that maintains the declared maximum token gap, then spend remaining per-iteration compute or token budget on one or more prefill chunks. Adapt chunk size to decode pressure, estimated chunk time, prompt progress, priority, and pipeline shape. Age long prompts so they cannot starve, reserve KV before executing a chunk, and measure both cadence improvement for active decodes and added first-token latency for chunked requests.
+Reserve a decode budget against the declared token-gap SLO, then spend remaining per-iteration compute or token budget on one or more prefill chunks. Adapt chunk size to decode pressure, estimated chunk time, prompt progress, priority, and pipeline shape. Age long prompts so they cannot starve, reserve KV before executing a chunk, and measure both cadence improvement for active decodes and added first-token latency for chunked requests. Validate the p99 gap over request traces; a per-iteration budget does not guarantee a hard maximum at the client.
 
 #### 6. Multimodal accounting
 
@@ -342,7 +342,7 @@ Add preprocessing and encoder time, memory, and queueing as a separate phase. Ac
 
 LEAD: KV state is the working set of autoregressive inference. Its lifetime follows requests, not batches, so allocation, sharing, eviction, placement, and security are first-class serving decisions.
 
-The previous section priced KV by the byte; this section manages its lifetime. On the running replica, 131 kB per token means one long conversation can hold hundreds of megabytes hostage, and the shared 500-token system prefix costs about 65 MB per copy - large enough that whether it is shared or duplicated is a capacity decision, not a detail.
+At 131 kB per token on the running replica, a 500-token system prefix occupies about 65 MB. Storing it once for compatible requests can save substantial capacity. This chapter follows that state from allocation through sharing, eviction, and release.
 
 ### Logical state and physical storage
 
@@ -624,7 +624,7 @@ Maintain separate objective classes but one global capacity and memory governor.
 
 #### 2. Long prefills
 
-Split them into cost-bounded chunks. Reserve a decode time budget that keeps active requests below the maximum token gap, then schedule chunks in remaining capacity. Increase a waiting prompt's virtual priority with age and guarantee a minimum service share so continuous decode load cannot starve it. Adapt chunk size to measured phase cost and pipeline balance; report the added first-token latency paid by the long request.
+Split them into cost-bounded chunks. Reserve decode time against the token-gap SLO, then schedule chunks in remaining capacity. Increase a waiting prompt's virtual priority with age and allocate a minimum service share under the admitted-load policy so continuous decode load cannot starve it. Adapt chunk size to measured phase cost and pipeline balance; report both the observed gap distribution and the added first-token latency paid by the long request.
 
 #### 3. Near-full KV
 
@@ -646,7 +646,7 @@ Near saturation, queue delay and tail risk rise sharply, bursts cannot be absorb
 
 LEAD: Decoding is part of the model's externally visible semantics. Acceleration may reorganize computation, but it must preserve the declared probability distribution, constraints, random-number mapping, and termination behavior unless approximation is explicitly allowed.
 
-Scheduling decided when a request runs; this section governs what its tokens mean and how to produce them faster without changing them. The running service's 4.7 ms weight-streaming floor is the number to beat: any acceleration that commits more than one token per floor-priced step is attacking the sequential bottleneck itself.
+The running service's weight-only model gives a 4.7 ms floor per ordinary small-batch decode step. Speculative decoding tries to amortize one target-weight pass across several committed tokens. Whether it helps depends on proposal cost, acceptance, and verification work; first we need to define the distribution those tokens must follow.
 
 ### The token-selection pipeline
 

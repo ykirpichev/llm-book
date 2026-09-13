@@ -576,15 +576,17 @@ def diagram(name: str, width: float) -> Drawing:
     elif name == "speculative_decoding":
         box(d, 22, 112, 90, 42, "Draft model\npropose gamma", fill=PALE_TEAL)
         box(d, 168, 112, 94, 42, "Target model\nverify in parallel", fill=PALE_GOLD, stroke=GOLD)
-        box(d, 318, 112, 90, 42, "Accept prefix\n+ correction", fill=PALE_CORAL, stroke=CORAL)
+        box(d, 318, 112, 90, 42, "Commit prefix\n+ one token", fill=PALE_CORAL, stroke=CORAL)
         arrow(d, 114, 133, 166, 133)
         arrow(d, 264, 133, 316, 133)
         arrow(d, 363, 108, 363, 62, CORAL)
         arrow(d, 363, 62, 67, 62, CORAL)
         arrow(d, 67, 62, 67, 108, CORAL)
-        d.add(String(w / 2, 43, "repeat from the first rejected position", textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=CORAL))
+        d.add(String(w / 2, 43, "correction on rejection; target bonus if all proposals pass", textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=CORAL))
+        d.add(String(w / 2, 26, "continue after committed output, unless EOS or an output limit stops it", textAnchor="middle", fontName=FONT, fontSize=8, fillColor=MUTED))
         d.add(String(w / 2, 173, "EXACT SAMPLING WITH A CHEAPER PROPOSAL DISTRIBUTION", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
     elif name == "roofline":
+        d.add(String(w / 2, 174, "SCHEMATIC: ILLUSTRATIVE REGIMES, NOT MEASURED POINTS", textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=INK))
         x0, y0, x1, y1 = 52, 34, w - 32, 158
         d.add(Line(x0, y0, x0, y1, strokeColor=INK, strokeWidth=1.2))
         d.add(Line(x0, y0, x1, y0, strokeColor=INK, strokeWidth=1.2))
@@ -614,33 +616,6 @@ def diagram(name: str, width: float) -> Drawing:
             for col, request in enumerate(schedule):
                 d.add(Rect(105 + col * 27, y, 22, 12, rx=2, ry=2, fillColor=colors_[request], strokeColor=None))
         d.add(String(105, 7, "slots refill at request completion; time ->", fontName=FONT, fontSize=7.2, fillColor=MUTED))
-    elif name == "request_lifecycle":
-        d.add(String(w / 2, 172, "ONE REQUEST, MEASURED AT EVERY BOUNDARY", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
-        stages = [
-            ("Arrive\nauth + token", WHITE, INK),
-            ("Queue\n+ route", PALE_GOLD, GOLD),
-            ("Prefill\nprompt", PALE_TEAL, TEAL),
-            ("Decode\nloop", PALE_CORAL, CORAL),
-            ("Stream\nflush", WHITE, INK),
-            ("Cleanup\nfree KV", WHITE, MUTED),
-        ]
-        bw, bh, gap = 58, 36, 10
-        total = len(stages) * bw + (len(stages) - 1) * gap
-        x = (w - total) / 2
-        xs = []
-        for label, fill, stroke in stages:
-            box(d, x, 106, bw, bh, label, fill=fill, stroke=stroke, font=7)
-            xs.append(x)
-            x += bw + gap
-        for i in range(len(stages) - 1):
-            arrow(d, xs[i] + bw, 124, xs[i + 1] - 2, 124)
-        arrow(d, xs[3] + bw / 2 + 16, 104, xs[3] + bw / 2 - 16, 104, CORAL, 1.1)
-        d.add(String(xs[3] + bw / 2, 92, "one token / step", textAnchor="middle", fontName=FONT, fontSize=6.6, fillColor=CORAL))
-        arrow(d, xs[0] + 4, 66, xs[3] + 14, 66, TEAL, 1.2)
-        d.add(String((xs[0] + xs[3]) / 2 + 8, 52, "time to first token", textAnchor="middle", fontName=FONT_BOLD, fontSize=7.2, fillColor=TEAL))
-        arrow(d, xs[3] + 26, 66, xs[4] + bw - 4, 66, CORAL, 1.2)
-        d.add(String((xs[3] + xs[4] + bw) / 2 + 10, 52, "inter-token cadence", textAnchor="middle", fontName=FONT_BOLD, fontSize=7.2, fillColor=CORAL))
-        d.add(String(w / 2, 26, "each boundary needs an owner and a timestamp", textAnchor="middle", fontName=FONT, fontSize=7.3, fillColor=MUTED))
     elif name == "disaggregation":
         d.add(String(w / 2, 172, "PREFILL-DECODE DISAGGREGATION AND THE KV HANDOFF", textAnchor="middle", fontName=FONT_BOLD, fontSize=8.6, fillColor=INK))
         box(d, 26, 84, 104, 62, "Prefill pool\ncompute-heavy\nbig batches", fill=PALE_TEAL, stroke=TEAL, font=7.2)
@@ -689,7 +664,7 @@ def diagram(name: str, width: float) -> Drawing:
         arrow(d, 128, 129, 166, 104)
         arrow(d, 128, 63, 166, 88)
         arrow(d, 266, 96, 306, 96, CORAL)
-        d.add(String(w / 2, 22, "l and o stay exact relative to one shared maximum", textAnchor="middle", fontName=FONT, fontSize=7.4, fillColor=MUTED))
+        d.add(String(w / 2, 22, "rescale l and o to the shared maximum; normalize o / l at the end", textAnchor="middle", fontName=FONT, fontSize=7.4, fillColor=MUTED))
     elif name == "prefill_decode_kernels":
         d.add(String(w / 2, 172, "ONE LAYER, TWO KERNEL REGIMES", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
         box(d, 18, 88, 176, 64, "Prefill\nmany Q rows x long K/V\nGEMM + FlashAttention", fill=PALE_TEAL)
@@ -710,33 +685,6 @@ def diagram(name: str, width: float) -> Drawing:
             box(d, x, y, 100, 42, label, fill=WHITE, stroke=color)
         d.add(String(w / 2, 174, "PARALLELISM AXES SOLVE DIFFERENT BOTTLENECKS", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
         d.add(String(w / 2, 20, "compose only after estimating communication, memory, and pipeline bubbles", textAnchor="middle", fontName=FONT, fontSize=7.3, fillColor=MUTED))
-    elif name == "system_design":
-        box(d, 18, 116, 72, 38, "Clients", fill=WHITE)
-        box(d, 119, 116, 88, 38, "Gateway\n+ admission", fill=PALE_TEAL)
-        box(d, 238, 116, 88, 38, "Scheduler\n+ batches", fill=PALE_GOLD, stroke=GOLD)
-        box(d, 357, 116, 62, 38, "GPU\npools", fill=PALE_CORAL, stroke=CORAL)
-        for x1, x2 in [(92,117),(209,236),(328,355)]:
-            arrow(d, x1, 135, x2, 135)
-        box(d, 119, 42, 88, 38, "Telemetry\n+ SLOs", fill=WHITE, stroke=INK)
-        box(d, 238, 42, 88, 38, "Model / KV\ncache", fill=WHITE, stroke=INK)
-        arrow(d, 282, 114, 282, 82, MUTED)
-        arrow(d, 236, 61, 209, 61, MUTED)
-        arrow(d, 163, 82, 163, 114, MUTED)
-        d.add(String(w / 2, 172, "SYSTEM DESIGN CLOSES THE CONTROL LOOP", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
-        d.add(String(w / 2, 19, "capacity, quality, reliability, isolation, and cost are first-class requirements", textAnchor="middle", fontName=FONT, fontSize=7.3, fillColor=MUTED))
-    elif name == "agent_trust_boundary":
-        d.add(String(w / 2, 169, "MODEL PROPOSALS CROSS A DETERMINISTIC POLICY BOUNDARY", textAnchor="middle", fontName=FONT_BOLD, fontSize=8.7, fillColor=INK))
-        box(d, 20, 104, 82, 42, "User goal\n+ authority", fill=WHITE, stroke=INK, font=7.1)
-        box(d, 129, 104, 82, 42, "Model\nproposal", fill=PALE_TEAL, stroke=TEAL, font=7.1)
-        box(d, 238, 94, 94, 62, "Policy gate\nidentity | schema\npermission | state", fill=PALE_GOLD, stroke=GOLD, font=6.8)
-        box(d, 359, 104, 52, 42, "Tool", fill=PALE_CORAL, stroke=CORAL, font=7.1)
-        arrow(d, 104, 125, 127, 125, INK, 1.3)
-        arrow(d, 213, 125, 236, 125, TEAL, 1.3)
-        arrow(d, 334, 125, 357, 125, GOLD, 1.3)
-        box(d, 129, 32, 203, 34, "Audit log + postcondition verification", fill=WHITE, stroke=INK, font=7.0)
-        arrow(d, 385, 101, 315, 68, CORAL, 1.2)
-        arrow(d, 230, 68, 170, 101, MUTED, 1.2)
-        d.add(String(w / 2, 16, "untrusted observations never grant authority", textAnchor="middle", fontName=FONT_BOLD, fontSize=7.3, fillColor=CORAL))
     elif name == "leadership_loop":
         center = (w / 2, 94)
         nodes = [

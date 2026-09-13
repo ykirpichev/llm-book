@@ -842,15 +842,6 @@ A strong response to any foundation exercise should make the decision testable r
 
 An answer is incomplete if it depends on an unstated workload, quotes an average where the tail controls the decision, or proposes a metric without naming the action that metric can change.
 
-### Foundation Principles
+### From a model to a training recipe
 
-The rest of this book repeatedly returns to six principles:
-
-1. **Define the outcome and workload before selecting the mechanism.**
-2. **Treat numerical and distributed execution as part of the learned algorithm.**
-3. **Follow parameters, activations, bytes, and state across the complete lifecycle.**
-4. **Use simple quantitative models to expose assumptions and choose measurements.**
-5. **Evaluate constrained goodput and useful outcomes, not isolated proxy metrics.**
-6. **Design semantic identity, observability, and rollback into the system from the beginning.**
-
-These principles are more durable than any model family or accelerator generation. They make new techniques legible: identify what changes, which resource or behavior should move, what could regress, and what evidence would justify adoption.
+The foundations give us three things to carry into training: targets whose meaning is explicit, an update rule we can trace, and a resource budget we can estimate. Part II now asks where those targets come from and which sequence of training stages is likely to improve the chosen behavior. Keep the evaluation population separate from the examples used to make that choice.

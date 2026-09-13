@@ -243,7 +243,7 @@ An eight-position sequence revealed two positions per round requires four denois
 
 ### Block diffusion and cache validity
 
-:::diagram diffusion_blocks|A simplified three-round reveal schedule leaves the causal prefix fixed while the current block changes. Question marks denote masked positions. Cache validity depends on which representations can change under the method's attention mask.
+:::diagram diffusion_blocks|Three snapshots show an initially masked block and two reveal steps. The causal prefix stays fixed while the current block changes. Question marks denote masked positions. Cache validity depends on which representations can change under the method's attention mask.
 
 [Block Diffusion](https://arxiv.org/abs/2503.09573) interpolates between autoregressive blocks and within-block diffusion. Earlier blocks can become fixed context while positions in the current block are refined together. This introduces a tunable tradeoff among block size, denoising steps, parallelism, and quality.
 
@@ -390,13 +390,6 @@ Additional architecture, multimodal, and generation references appear beside the
 - [Securing AI Agents with Information-Flow Control](https://arxiv.org/abs/2505.23643) - 2025 work introducing the Fides planner and deterministic confidentiality/integrity policies.
 - [Model Context Protocol, 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25) and [A2A 1.0](https://github.com/a2aproject/A2A/blob/main/docs/specification.md) - current protocol contracts for host-tool and agent-to-agent interoperability; neither substitutes for application authorization.
 
-### Recent State-of-the-Art Principles
+### From an experiment to a commitment
 
-1. Compare systems at the same boundary and quality level.
-2. Separate total parameters, active compute, and communication.
-3. Treat inference-time compute as a schedulable product resource.
-4. Move state only with explicit identity, ownership, and admission.
-5. Expect bottlenecks to migrate across compute, bandwidth, capacity, and coordination.
-6. Model multimodal token load from geometry and time, not text limits alone.
-7. Treat tool output as untrusted data and authorization as deterministic code.
-8. Preserve the full experimental protocol so a result can be reproduced or retired.
+A result card should now support one of three actions: adopt within a tested boundary, run a specific follow-up, or stop. A new attention kernel might qualify only for long prefills; an embedding migration might remain blocked on a filtered tenant. Part VIII asks who owns those decisions, how dissent and uncertainty are recorded, and what evidence permits a broader rollout.

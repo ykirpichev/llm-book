@@ -1,10 +1,8 @@
 # Part VIII - Technical Leadership and Engineering Judgment
 
-Technical leadership is the ability to improve decisions beyond the code one person can write. The evidence is not senior-sounding vocabulary or organizational visibility. It is durable direction, aligned execution, technical risk retired early, and systems that continue working after attention moves elsewhere.
+A new embedding model is proposed for the documentation assistant. Aggregate retrieval improves, but one small tenant loses relevant evidence after permission filtering. The retrieval team wants to ship; the service owner is responsible for that tenant's failures. Neither a better kernel nor another average score settles the decision.
 
-Leadership in ML systems has an unusually wide control surface. A decision about data changes model behavior; a decision about topology changes failure domains; a decision about an evaluation threshold changes release velocity; and a decision about ownership changes how quickly the next incident is resolved. The job is to connect these surfaces without becoming the bottleneck for all of them.
-
-This part treats leadership as an engineering discipline. It covers how to create decision quality, establish operating mechanisms, lead through incidents and migrations, develop strategy from constraints, and communicate technical judgment in real systems and organizations.
+This part examines who can stop the rollout, which experiment should come next, and how the decision survives changes in team membership. Its fictional cases return to the assistant's index migration, latency budget, and permission incident. Communication, operating reviews, and incident roles matter because they determine whether the technical safeguards developed earlier are actually used.
 
 ## Executive Technical Communication
 
@@ -206,7 +204,7 @@ Verify closure. A runbook is not complete until someone unfamiliar with the inci
 
 :::diagram migration_gates|Each stage increases commitment and needs evidence from the affected workloads. The old path is retired only after exit criteria are met; rollback must account for the state already changed during adoption.
 
-Large technical changes fail more often at adoption than implementation. Treat a migration as a product with users, economics, compatibility, support, and an end state.
+A migration can be implemented correctly and still fail at adoption. Treat it as a product with users, economics, compatibility, support, and an end state.
 
 Segment adopters by complexity and value. Start with workloads that exercise the important path without requiring every exception. Provide an automated inventory, compatibility test, cost comparison, migration tooling, and staffed escalation path. Publish known gaps rather than allowing each team to rediscover them.
 
@@ -291,7 +289,7 @@ LEAD: A leadership story demonstrates scope, judgment, and durable influence. It
 
 ### The SCORE structure
 
-Use **SCORE** rather than a mechanical chronology:
+One optional outline is **SCORE**. Use it to recover the evidence for a real decision, not to turn every experience into the same five-paragraph success story:
 
 - **Situation:** the user and system context, scale, and stakes.
 - **Constraint:** the central technical and organizational tension.
@@ -329,9 +327,9 @@ At broad organizational scope, ambiguity often spans organizations: no shared me
 
 Mentorship is not only advice. It creates increasing ownership. Describe how you diagnosed a growth edge, set a stretch assignment with safety, provided feedback, opened stakeholder access, and stepped back. Hiring stories should include role definition, calibrated signal, closing, and the team's capability after hire.
 
-### Story bank
+### An evidence notebook
 
-Prepare six to eight stories that can flex across prompts:
+Keep a small set of decision records for reflection, mentorship, and interviews. Record the original uncertainty and contrary evidence while they are still available; a polished retrospective can otherwise make an ambiguous choice look inevitable.
 
 | Story | Primary signal | Useful alternate prompts |
 | --- | --- | --- |
@@ -484,4 +482,4 @@ For each decision path, write the governing assumptions, derive the controlling 
 - Did I explain rollout and rollback?
 - Did I make my own decision and remaining uncertainty clear?
 
-The technical and leadership arguments now meet at the same standard: make the objective explicit, model the controlling mechanism, expose credible alternatives, assign ownership, and build evidence that can change the decision. A professional judgment is not complete when it sounds decisive; it is complete when another person can operate, test, and revise it responsibly.
+Return to the documentation assistant: can another team explain its latency budget, update its index without mixing versions, and stop an unauthorized answer? The capstone in Part IX asks you to assemble those decisions into one design and test it by changing the workload or introducing a failure.

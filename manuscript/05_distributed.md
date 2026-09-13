@@ -449,6 +449,8 @@ For a forward-only pipeline with `m` equal-time microbatches and balanced stages
 
 `bubble = (s - 1) / (m + s - 1)`
 
+:::diagram pipeline_bubbles|Four microbatches traverse four stages in seven equal-duration slots. Each stage works for four slots and is idle for three. This forward-only example explains the bubble formula; a training schedule must also account for backward work, communication, and saved activations.
+
 Equivalently, useful stage slots are `m` out of `m+s-1`. For training schedules, exact utilization depends on forward/backward times, memory policy, and schedule. The approximation still shows why more microbatches amortize fill and drain.
 
 More microbatches are not free. They change local matrix shapes, increase scheduler operations and in-flight activation state, and may force a smaller per-microbatch batch size. The global-batch and optimizer semantics must remain deliberate.
@@ -801,7 +803,7 @@ Block tables and prefix references must use the same distributed ownership. A re
 
 ### Phase-specific context parallelism
 
-:::diagram phase_sharding|Prefill context parallelism partitions query rows. Decode context parallelism partitions historical KV tokens and merges partial attention statistics. These are within-model mechanisms; a transfer between separate prefill and decode pools is a different boundary.
+:::diagram phase_sharding|Prefill partitions query rows; the contiguous split shown explains ownership, not balanced causal work. Decode partitions historical KV tokens, merges the per-rank maximum m, denominator l, and weighted numerator o, then normalizes. A transfer between separate prefill and decode pools is a different boundary.
 
 “Context parallelism” is not one inference plan. Prefill applies many queries to an expanding context and is usually optimized for time to first token. Decode applies one new query per active sequence to a large paged history and is usually optimized for inter-token latency, KV capacity, or batch goodput. A system can use different degrees and even different algorithms for these phases.
 

@@ -6,7 +6,7 @@ This part follows two connected arcs. The first builds the training substrate: r
 
 ## Designing a Training Recipe
 
-LEAD: A recipe is an executable theory of how a model will acquire a capability within a compute and time budget. Begin with the target behavior and work backward to data and objective.
+LEAD: A training recipe specifies the data, objectives, stages, budget, and tests for improving a capability. It must also say when to stop: a promising pilot is not enough evidence to spend the remaining compute on scale-up.
 
 ### The recipe canvas
 
@@ -136,7 +136,7 @@ Name what evidence permits progression from pilot to scale-up, from supervised t
 4. What belongs in a resumable checkpoint for a sharded optimizer?
 5. How do you prevent a reasoning model from learning to exploit its verifier?
 
-Use the worked cases in **Applied Data-System Casework** to evaluate these answers: state the serving constraint, name the evidence that advances each stage, preserve lineage and rollback, and identify the failure that would stop scale-up.
+Use the staged reasoning example above for the recipe questions. The checkpoint protocol in **Distributed Checkpoints, Recovery, and Elasticity** develops the recovery answer; **Applied Data-System Casework** supplies the data-lineage and verifier checks.
 
 ## Data Contracts, Provenance, and Normalization
 

@@ -103,6 +103,41 @@ class BuildBookTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_book.diagram("missing_figure", 407)
 
+    def figure_labels(self, name):
+        # Wording guards supplement, but do not replace, semantic visual review.
+        return [item.text for item in build_book.diagram(name, 407).contents
+                if isinstance(item, build_book.String)]
+
+    def test_request_diagram_uses_client_timestamps(self):
+        labels = self.figure_labels("request_lifecycle")
+        self.assertIn("client receipt", labels)
+        self.assertIn("t1: token 1", labels)
+        self.assertIn("TTFT = t1 - t0", labels)
+
+    def test_decoder_diagram_separates_sums_from_outputs(self):
+        labels = self.figure_labels("decoder_block")
+        self.assertEqual(labels.count("+"), 2)
+        self.assertIn("X next", labels)
+        self.assertFalse(any(label.startswith("Add:") for label in labels))
+
+    def test_speculation_diagram_names_both_branches(self):
+        labels = " ".join(self.figure_labels("speculative_decoding"))
+        self.assertIn("correction on rejection", labels)
+        self.assertIn("target bonus if all proposals pass", labels)
+        self.assertIn("EOS", labels)
+
+    def test_pipeline_diagram_has_four_balanced_microbatches(self):
+        labels = self.figure_labels("pipeline_bubbles")
+        for batch in "ABCD":
+            self.assertEqual(labels.count(batch), 4)
+        self.assertTrue(any("3/7" in label for label in labels))
+        self.assertTrue(any("Backward is not shown" in label for label in labels))
+
+    def test_agent_diagram_routes_trusted_authority(self):
+        labels = self.figure_labels("agent_trust_boundary")
+        self.assertIn("Trusted caller authority bypasses the model", labels)
+        self.assertIn("Policy gate", labels)
+
     def test_figure_and_caption_share_keep_group(self) -> None:
         from unittest.mock import Mock
         source = Mock()

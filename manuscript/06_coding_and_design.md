@@ -2,7 +2,7 @@
 
 Part VI follows two paths that meet in production services. **Streaming-state primitives** develop exact windows, sampling, sketches, and mergeable statistics, then assemble them into telemetry and control loops. **ML implementation and system design** turns numerical assumptions into code, applies a repeatable review method, and builds retrieval and bounded-agent systems. Readers focused on application architecture may begin at **RAG, Vector Search, and Evaluation Pipelines** and return to the streaming chapters for the state, approximation, and failure models those services depend on.
 
-Production algorithms are contracts about state, approximation, time, and failure. Their value in LLM systems appears in telemetry, data processing, retrieval, scheduling, cache policy, evaluation, and capacity control. This part develops the underlying structures and then connects them to complete services.
+Suppose the serving fleet's token-gap SLO begins to regress. Which tenants are affected? Are long prompts responsible, or one hot error signature? Answering those questions requires summaries of request events across workers, including late and replayed events. Chapters 44-47 build that telemetry path. Chapter 48 is an optional implementation refresher; Chapters 49-51 then use the same care with state and evidence to design the documentation assistant and its bounded actions.
 
 ## Exact Streaming Queries and Time Windows
 
@@ -1280,6 +1280,8 @@ Embedding normalization makes cosine similarity equivalent to inner product rank
 
 LEAD: A strong system design or design review is a sequence of decisions tied to requirements. A diagram is evidence of that reasoning, not a substitute for it.
 
+Use this chapter to prepare the documentation-assistant design that follows. Its assumed corpus contains 200,000 chunks, traffic peaks at 60 queries per second, and protected evidence must obey current permissions. The six steps below should produce a baseline and a short list of experiments, not six separate checklists to complete indefinitely.
+
 ### Step 1: define the contract
 
 Clarify users, operations, scale, latency, consistency, availability, durability, privacy, compliance, cost, and evolution. For ML systems, add model quality, freshness, feedback, evaluation, and failure containment.
@@ -1290,13 +1292,13 @@ Convert vague statements into working numbers. When measurements are unavailable
 
 Estimate storage, throughput, state, bandwidth, and hotspots. Use powers of ten. Identify peak-to-average and read/write ratio. For model systems, estimate training tokens, model bytes, KV state, feature volume, embedding count, or evaluation cost.
 
-The purpose is to choose architecture, not impress with arithmetic. Recompute when an assumption changes.
+For the assistant, 200,000 vectors of 768 float32 components occupy about 614 MB before indexes and metadata. That does not establish search latency, but it removes raw vector capacity as an immediate reason to shard. Measure filtered search and reranking before adding a distributed index.
 
 ### Step 3: draw the baseline
 
 Show clients, API, durable state, compute workers, queues or streams, indexes or caches, and observability. Draw trust and failure boundaries. Assign ownership of each state transition.
 
-Start with the simplest design that meets the contract. Premature multi-region, five cache tiers, or exotic consensus consumes time without proving judgment.
+For the first assistant design, keep canonical documents and permissions separate from the search index. A retrieved chunk is a candidate, not permission to disclose its text. Draw the authority check before the reranker or generator receives protected content.
 
 ### Step 4: walk the critical path
 
@@ -1327,7 +1329,7 @@ Restraint is a design skill. Defer components whose complexity is not justified 
 
 | Decision | Option A | Option B | Flip condition |
 | --- | --- | --- | --- |
-| Sync vs async | Immediate consistency | Isolation and smoothing | User needs result in request path |
+| Sync vs async | Caller waits for completion | Caller receives an acceptance handle | Choose from completion latency and retry semantics; neither alone guarantees consistency |
 | Push vs pull | Low update latency | Consumer-controlled load | Fanout or offline consumers dominate |
 | Replicate vs shard | Availability, simple reads | Capacity, write scaling | One node or replica no longer fits |
 | Exact vs approximate | Strong semantics | Lower cost or latency | Bounded error is product-acceptable |

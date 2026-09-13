@@ -445,6 +445,4 @@ Contain harm, state new evidence, reopen the choice, preserve trust by owning th
 
 ### Final principle
 
-> Begin with the objective, quantify the bottleneck, choose the smallest coherent design, and close the loop with evidence.
-
-That principle is equally useful for a KL objective, a CUDA kernel, a distributed scheduler, and a cross-org strategy. The scale changes. The discipline does not.
+The documentation assistant owes its user an answer supported by current authorized evidence, delivered within its service target, with failures the team can detect and recover from. The model is essential, but the system around it determines whether that answer is useful.

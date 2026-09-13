@@ -98,30 +98,32 @@ class Figure:
 
 def token_alignment(f):
     xs = [120, 212, 304]
-    f.text(18, 181, "Input", bold=True)
+    f.text(18, 181, "Visible prefix", bold=True, width=100)
     f.text(18, 121, "Prediction", bold=True)
     f.text(18, 61, "Target", bold=True)
-    for i, (inp, target) in enumerate(zip(["BOS", "A", "B"], ["A", "B", "EOS"])):
+    for i, (inp, target) in enumerate(zip(["BOS", "BOS, A", "BOS, A, B"], ["A", "B", "EOS"])):
         x = xs[i]
         f.node(x, 164, 76, 30, inp)
         f.node(x, 104, 76, 30, "p(next)", tone="GOLD")
         f.node(x, 44, 76, 30, target, tone="CORAL")
         f.arrow([(x+38, 164), (x+38, 134)])
         f.arrow([(x+38, 104), (x+38, 74)], "CORAL")
-    f.footer("Targets shift by one position; the causal mask hides future inputs.")
+    f.footer("Each distribution uses the whole visible prefix, not just its last token.")
 
 
 def decoder_block(f):
     # Two residual sublayers. The bypass terminates at the addition, not the norm.
     for y, label, inp, out in [(172, "Attention", "X", "U"), (73, "MLP", "U", "X next")]:
-        f.node(18, y, 48, 32, inp, fill="WHITE")
-        f.node(100, y, 70, 32, "Norm")
-        f.node(200, y, 103, 32, label, tone="GOLD")
-        f.node(339, y, 72, 32, "Add: " + out, tone="CORAL")
-        for a,b in [(66,100),(170,200),(303,339)]:
+        f.node(18, y, 38, 32, inp, fill="WHITE")
+        f.node(82, y, 58, 32, "Norm")
+        f.node(166, y, 85, 32, label, tone="GOLD")
+        f.node(279, y, 34, 32, "+", tone="CORAL")
+        f.node(345, y, 67, 32, out, fill="WHITE")
+        for a,b in [(56,82),(140,166),(251,279),(313,345)]:
             f.arrow([(a,y+16),(b,y+16)])
-        f.arrow([(42,y+32),(42,y+55),(375,y+55),(375,y+32)], "CORAL")
-        f.text(210, y+61, "residual bypass", anchor="middle", color="CORAL")
+        f.arrow([(37,y+32),(37,y+55),(296,y+55),(296,y+32)], "CORAL")
+        f.text(190, y+61, "residual bypass", anchor="middle", color="CORAL")
+    f.arrow([(412,188),(422,188),(422,151),(28,151),(28,105)])
     f.footer("Pre-norm block: attention mixes positions; the MLP mixes channels.",
              "The output U of the first sublayer is the input of the second.")
 
@@ -136,7 +138,7 @@ def attention_state_map(f):
             f.rect(150+j*24,y,20,27,"TEAL" if used else "WHITE", "TEAL")
         f.text(150,y-13,note,color="MUTED",size=8.2)
     f.node(18,42,176,37,"MLA: smaller state per token",tone="GOLD",size=8.4)
-    f.node(214,42,198,37,"Recurrent: fixed-size matrix state",tone="CORAL",size=8.4)
+    f.node(214,42,198,37,"Recurrent: fixed-size state",tone="CORAL",size=8.4)
     f.footer("Filled cells are read positions, not a promise of reduced storage.",
              "Head sharing, token selection, compression, and recurrence differ.")
 
@@ -195,6 +197,7 @@ def lora_paths(f):
     f.arrow([(70,127),(88,127),(88,83),(115,83)])
     f.arrow([(204,83),(238,83)])
     f.arrow([(327,83),(386,83),(386,108)])
+    f.text(347,94,"x s",size=8.2,anchor="middle",width=26)
     f.text(219,119,"rank r",anchor="middle",size=8.2)
     f.footer("Row-vector convention: y = xW + s(xA)B; s is the adapter scale.",
              "Only A and B receive optimizer updates in ordinary LoRA.")
@@ -300,6 +303,27 @@ def zero_shards(f):
              "Stage 3 still gathers parameters for compute; activations are extra.")
 
 
+def pipeline_bubbles(f):
+    f.text(18,220,"Stage",bold=True)
+    f.text(251,220,"Equal-duration time slots",anchor="middle",bold=True)
+    tones=["TEAL","GOLD","CORAL","TEAL"]
+    for stage in range(4):
+        y=171-stage*35
+        f.text(18,y+9,str(stage),bold=True)
+        for slot in range(7):
+            x=92+slot*45
+            batch=slot-stage
+            active=0<=batch<4
+            tone=tones[batch] if active else "TEAL"
+            f.rect(x,y,39,27,"PALE_"+tone if active else "WHITE",tone)
+            if active:
+                f.text(x+19.5,y+9,"ABCD"[batch],anchor="middle",bold=True)
+    for slot in range(7):
+        f.text(111.5+slot*45,47,str(slot+1),anchor="middle",size=8.2)
+    f.footer("A-D are microbatches; blank cells are idle. Forward-only, balanced stages.",
+             "Idle fraction = (4 - 1) / (4 + 4 - 1) = 3/7. Backward is not shown.")
+
+
 def phase_sharding(f):
     # Separate diagrams: query rows during PCP, history columns during DCP.
     f.text(18,269,"PREFILL: SPLIT PROMPT QUERIES",bold=True,size=9)
@@ -309,9 +333,9 @@ def phase_sharding(f):
         f.arrow([(226,y+16),(162,y+16)],"GOLD")
     f.text(18,147,"K/V are gathered or circulated; arrows show required reads.",size=8.2)
     f.text(18,122,"DECODE: SPLIT KV HISTORY",bold=True,size=9)
-    f.node(18,60,110,42,"Same new query\nKV tokens 0-3")
-    f.node(162,60,110,42,"Same new query\nKV tokens 4-7",tone="CORAL")
-    f.node(306,60,106,42,"Merge partial\nattention states",tone="GOLD",size=8.4)
+    f.node(18,60,110,42,"Rank 0: same Q\nKV tokens 0-3",size=8.4)
+    f.node(162,60,110,42,"Rank 1: same Q\nKV tokens 4-7",tone="CORAL",size=8.4)
+    f.node(306,60,106,42,"Merge (m, l, o)\nthen normalize",tone="GOLD",size=8.4)
     f.arrow([(128,81),(145,81),(145,44),(287,44),(287,72),(306,72)])
     f.arrow([(272,91),(306,91)],"CORAL")
     f.footer("DCP sketch: one KV head (or latent cache) distributed over two ranks.")
@@ -372,12 +396,14 @@ def count_min(f):
     f.text(18,222,"Query key x",bold=True)
     values=[7,5,8]
     for r,(hit,val) in enumerate(zip([1,3,2],values)):
-        y=165-r*42
+        y=165-r*53
         f.text(18,y+8,f"hash {r+1}",bold=True)
         for col in range(5):
             f.rect(109+col*33,y,29,27,"PALE_GOLD" if col==hit else "WHITE","GOLD" if col==hit else "TEAL")
             if col==hit:f.text(123.5+col*33,y+9,str(val),anchor="middle",bold=True)
-        f.arrow([(74,y+13),(109,y+13)])
+        center=123.5+hit*33
+        f.arrow([(74,y+13),(94,y+13),(94,y+39),(center,y+39),(center,y+27)])
+        f.arrow([(center,y),(center,y-10),(287,y-10),(287,142-r*12),(302,142-r*12)],"GOLD")
     f.node(302,106,110,51,"Estimate\nmin(7, 5, 8) = 5",tone="GOLD",size=8.4)
     f.footer("One hashed counter per row is read; an update increments one per row.",
              "With nonnegative frequencies, collisions can only raise this estimate.")
@@ -412,15 +438,17 @@ def multimodal_path(f):
 
 def diffusion_blocks(f):
     f.text(18,231,"Fixed causal prefix",bold=True)
+    f.text(181,231,"Step",size=8.2,width=27)
     f.text(212,231,"Current mutable block",bold=True)
     rounds=[["?","?","?","?"],["A","?","?","D"],["A","B","C","D"]]
     for row, tokens in enumerate(rounds):
         y=174-row*57
+        f.text(187,y+10,str(row),anchor="middle",bold=True,width=24)
         for j in range(3):
             f.node(18+j*55,y,46,30,f"P{j}",size=8.4)
         for j,tok in enumerate(tokens):
             f.node(212+j*51,y,45,30,tok,tone="GOLD" if tok=="?" else "CORAL",size=8.4)
-        if row<2:f.arrow([(401,y),(401,y-27)],"CORAL")
+        if row<2:f.arrow([(187,y),(187,y-27)],"CORAL")
     f.footer("Illustrative reveal schedule. Mutable positions can attend within their block.",
              "A changed token can invalidate other cached states in that mutable block.")
 
@@ -437,9 +465,11 @@ def data_release(f):
     f.arrow([(357,193),(357,156),(244,156),(244,125)])
     f.arrow([(162,100),(200,100)],"GOLD")
     f.arrow([(288,100),(322,100)],"CORAL")
-    f.line(18,169,412,169,"GOLD",dashed=True)
-    f.text(18,177,"Record lineage at every transform",size=8.2,width=193)
-    f.arrow([(90,169),(90,125)],"GOLD")
+    f.line(73,169,357,169,"GOLD",dashed=True)
+    for x in [73,215,328]:
+        f.line(x,193,x,169,"GOLD",dashed=True)
+    f.text(18,146,"Lineage records",size=8.2,width=112)
+    f.arrow([(145,169),(145,125)],"GOLD")
     f.footer("The manifest binds selected IDs and versions; payload objects stay immutable.")
 
 
@@ -454,11 +484,67 @@ def telemetry_pipeline(f):
     f.node(18,74,110,45,"Recovery snapshot\nstate + offsets",size=8.4)
     f.arrow([(357,189),(357,119)],"GOLD")
     f.arrow([(302,96),(270,96)],"CORAL")
-    f.text(18,156,"Checkpoint scope",bold=True,size=8.2)
-    f.line(18,145,412,145,"TEAL",dashed=True)
+    f.text(18,156,"Coordinated snapshot",bold=True,size=8.2,width=180)
+    f.line(73,145,342,145,"TEAL",dashed=True)
+    for x in [215,342]:
+        f.line(x,189,x,145,"TEAL",dashed=True)
+        f.line(x,119,x,145,"TEAL",dashed=True)
     f.arrow([(73,145),(73,119)])
     f.footer("Summaries merge only under compatible keys, windows, hashes, and versions.",
              "Late data can revise results; recovery must align state with consumed offsets.")
+
+
+def request_lifecycle(f):
+    for i,label in enumerate(["Admission\n+ queue", "Prefill\nfirst logits", "Sample\nfirst token", "Transport\nclient receipt"]):
+        x=18+i*101
+        f.node(x,167,91,43,label,size=8.4,tone="GOLD" if i==1 else "TEAL")
+        if i<3:f.arrow([(x+91,188),(x+101,188)])
+    f.text(18,143,"CLIENT-OBSERVED TIMELINE (NOT TO SCALE)",bold=True,size=8.5)
+    xs=[46,224,306,388]
+    f.line(xs[0],107,xs[-1],107)
+    for x,label in zip(xs,["t0: send","t1: token 1","t2: token 2","t3: token 3"]):
+        f.line(x,102,x,112)
+        f.text(x,120,label,anchor="middle",size=8.2,width=84)
+    for left,right,label in [(46,224,"TTFT = t1 - t0"),(224,306,"gap 1"),(306,388,"gap 2")]:
+        f.arrow([(left,82),(right,82)])
+        f.text((left+right)/2,66,label,anchor="middle",size=8.2,width=170)
+    f.footer("After token 1: schedule, decode, sample, and deliver the next token.",
+             "Visible gaps include model work, queueing, buffering, and network delay.")
+
+
+def system_design(f):
+    for x,label,tone in [(18,"Job spec\nartifacts + groups","TEAL"),
+                         (160,"Admission +\nplacement","GOLD"),
+                         (302,"Worker ranks\nexecute plan","CORAL")]:
+        f.node(x,180,110,46,label,tone=tone,size=8.4)
+    f.arrow([(128,203),(160,203)])
+    f.arrow([(270,203),(302,203)])
+    f.node(160,64,110,46,"Telemetry\nrank + step IDs",size=8.4)
+    f.node(302,64,110,46,"Checkpoint\ncommitted state",tone="GOLD",size=8.4)
+    f.arrow([(320,180),(320,144),(215,144),(215,110)])
+    f.arrow([(190,110),(190,180)])
+    f.text(18,143,"Revise placement",size=8.2,width=152)
+    f.text(18,130,"or stop / recover",size=8.2,width=152)
+    f.arrow([(365,180),(365,110)],"GOLD")
+    f.arrow([(392,110),(392,180)],"CORAL")
+    f.text(344,151,"save",anchor="middle",size=8.2,width=32)
+    f.text(405,127,"load",anchor="middle",size=8.2,width=28)
+    f.footer("Telemetry explains live progress; checkpoints preserve recoverable progress.",
+             "Placement binds process groups to devices, links, and failure domains.")
+
+
+def agent_trust_boundary(f):
+    labels=[("Caller scope", "TEAL"), ("Model\nproposal", "TEAL"),
+            ("Policy gate\nvalidate action", "GOLD"), ("Tool\nexecute", "CORAL")]
+    for i,(label,tone) in enumerate(labels):
+        f.node(18+i*101,137,91,43,label,tone=tone,size=8.4)
+        if i<3:f.arrow([(109+i*101,158),(119+i*101,158)])
+    f.arrow([(63,180),(63,210),(265,210),(265,180)],"GOLD")
+    f.text(164,222,"Trusted caller authority bypasses the model",anchor="middle",size=8.2,width=290)
+    f.node(119,51,192,43,"Receipt + postcondition check\naudit result; return observation",size=8.4)
+    f.arrow([(367,137),(367,72),(311,72)],"CORAL")
+    f.arrow([(164,94),(164,137)])
+    f.footer("The model proposes an action; it cannot grant itself a capability.")
 
 
 def migration_gates(f):
@@ -467,12 +553,18 @@ def migration_gates(f):
         if i<3:f.arrow([(109+i*101,177),(119+i*101,177)])
     f.node(18,60,184,44,"At each commitment\nquality, SLOs, state compatibility",tone="GOLD",size=8.4)
     f.node(234,60,178,44,"Retire old path\nonly after verified exit criteria",tone="CORAL",size=8.4)
-    f.arrow([(368,158),(368,104)],"CORAL")
-    f.arrow([(64,158),(64,125),(110,125),(110,104)],"GOLD")
+    f.arrow([(412,177),(421,177),(421,82),(412,82)],"CORAL")
+    for x in [64,165,266,367]:
+        f.line(x,158,x,132,"GOLD",dashed=True)
+    f.line(64,132,367,132,"GOLD",dashed=True)
+    f.arrow([(110,132),(110,104)],"GOLD")
     f.footer("Define rollback for the migrated state, traffic cohort, and recovery time.")
 
 
 FIGURES = {
+    "request_lifecycle": (270, "FIRST-TOKEN LATENCY AND VISIBLE TOKEN GAPS", request_lifecycle),
+    "system_design": (286, "A DISTRIBUTED JOB HAS TWO FEEDBACK PATHS", system_design),
+    "agent_trust_boundary": (278, "AUTHORITY REACHES THE GATE OUTSIDE THE MODEL", agent_trust_boundary),
     "token_alignment": (244, "NEXT-TOKEN SUPERVISION: ALIGN INPUTS AND TARGETS", token_alignment),
     "decoder_block": (297, "TWO RESIDUAL SUBLAYERS IN A DECODER BLOCK", decoder_block),
     "attention_state_map": (295, "WHAT HISTORY DOES A NEW QUERY READ?", attention_state_map),
@@ -486,6 +578,7 @@ FIGURES = {
     "quantization_path": (240, "LOW-BIT STORAGE MUST MATCH THE EXECUTION PATH", quantization_path),
     "double_buffer": (247, "TWO BUFFERS: OVERLAP WITH SAFE REUSE", double_buffer),
     "zero_shards": (281, "ZeRO: WHICH MODEL STATE DOES EACH RANK KEEP?", zero_shards),
+    "pipeline_bubbles": (279, "PIPELINE FILL AND DRAIN CREATE IDLE SLOTS", pipeline_bubbles),
     "phase_sharding": (326, "CONTEXT PARALLELISM CHANGES WITH THE PHASE", phase_sharding),
     "moe_dispatch": (300, "MoE: TOKENS TRAVEL TO SELECTED EXPERTS", moe_dispatch),
     "checkpoint_commit": (281, "CHECKPOINT SHARDS BECOME ONE COMMITTED STEP", checkpoint_commit),
