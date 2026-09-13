@@ -516,9 +516,10 @@ For one query, softmax attention compares that query with every permitted key an
 
 | Family | Persistent history | New-query work | What must be evaluated |
 | --- | --- | --- | --- |
-| GQA | Explicit K/V for each token and KV head | Read all allowed history | Head-sharing quality and KV traffic |
+| MHA, GQA, or MQA | Explicit K/V for each token and its KV-head layout | Read all allowed history | Head-sharing quality and KV traffic |
+| Local or sliding-window attention | Explicit K/V inside a fixed or layer-specific window | Read the permitted recent region | Lost distant evidence and window-boundary behavior |
 | Latent attention | Learned compressed token state plus position state | Read compressed history; transform query/output | Compression capacity and efficient absorbed projections |
-| Sparse attention | Token states plus a selection/index mechanism | Select and read a subset | Evidence missed by selection and index cost |
+| Learned sparse or compressed attention | Token or compressed states plus a selection/index mechanism | Select and read a subset or compressed summary | Evidence missed by compression/selection and index cost |
 | Recurrent/linear mixer | Fixed-size state per layer/head | Update/read state | Interference, forgetting, and long-range retrieval |
 | Hybrid | A mixture of growing caches and fixed states | Depends on layer schedule | Combined memory, rollback, and quality |
 
@@ -540,7 +541,7 @@ Sparse attention replaces the full set of eligible keys with a smaller set. A lo
 
 Consider scores `[0, 0, log(8)]` and scalar values `[0, 0, 10]`. Dense attention returns `8`. A selector that misses the third key returns zero. Accurate arithmetic inside the sparse kernel cannot repair the missed evidence. This is why indexer recall and end-task quality must be evaluated together.
 
-DeepSeek's sparse-attention line makes learned selection a first-class computation. The [DeepSeek-V4 report](https://arxiv.org/abs/2606.19348) further combines token compression with sparse retrieval through compressed and heavily compressed attention paths. Compression reduces the candidates' representation cost; selection reduces which candidates receive expensive attention. They are distinct levers, and neither implies unbounded lossless memory.
+[Native Sparse Attention](https://arxiv.org/abs/2502.11089) makes learned hierarchical selection a first-class computation, combining compressed global summaries, selected token blocks, and a local window in a hardware-aligned design trained end to end. The [DeepSeek-V4 report](https://arxiv.org/abs/2606.19348) further combines token compression with sparse retrieval through compressed and heavily compressed attention paths. Compression reduces the candidates' representation cost; selection reduces which candidates receive expensive attention. They are distinct levers, and neither implies unbounded lossless memory.
 
 Let context length be `S`, selected count `k`, index cost `I(S)`, and full per-key attention cost `a`. Sparse work is closer to `I(S)+ak` than simply `ak`. A selector that scans a compact representation of all positions can still be linear in `S`, though with a smaller constant than full attention. At short contexts, index launches and gathers may cost more than dense attention. If `k>=S`, a correct fast path can skip selection and attend to all valid positions.
 
@@ -565,6 +566,8 @@ The [Gated DeltaNet paper](https://arxiv.org/abs/2412.06464) combines a decay ga
 Take a one-row state `[2, 9]`, key `[1, 0]`, and incoming value 5. With both gates equal to one, the prediction is 2, the error is 3, and the new state is `[5, 9]`. The unrelated second direction is preserved. With `alpha=0.5` and `beta=0.5`, decay gives `[1, 4.5]`, the error is 4, and correction gives `[3, 4.5]`. Gates therefore control two different operations. The tests in `tests/test_sequence_models.py` check these exact examples and state replay.
 
 This recurrence is the teaching mechanism, not a complete model block. Real implementations add learned projections, head grouping, short convolutions, gates, normalization, and output projections. State dtype can be wider than the input dtype because repeated updates accumulate error. Unit-norm keys make the overwrite interpretation particularly clear; do not assume that behavior for arbitrary key norms.
+
+[Kimi Linear](https://arxiv.org/abs/2510.26692) extends this family with Kimi Delta Attention and combines linear-attention layers with MLA layers. Its reported KV and throughput gains are results for the evaluated architecture, kernels, contexts, and quality comparisons—not a drop-in guarantee for another model. The systems lesson is that “linear attention” now names a co-designed model and execution path: gate granularity, state width, chunkwise training kernels, recurrent decode kernels, and the fraction and placement of full-attention layers must be evaluated together.
 
 Training need not execute a Python loop over all tokens. Rewriting a step as an affine state map permits composition of chunks. For maps `S -> S A_1+B_1` and then `S -> S A_2+B_2`, the combined map is `S -> S(A_1 A_2)+B_1 A_2+B_2`. Associativity creates parallelism, although a practical kernel exploits structure instead of materializing large dense transition matrices. Decode uses the recurrent form because one new token arrives at a time. The two schedules should agree numerically within a declared tolerance.
 

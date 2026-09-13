@@ -866,6 +866,20 @@ A sound selection sequence is:
 
 Do not copy a training CP degree into serving by precedent. PCP and DCP solve different bottlenecks, have different process-group geometry, and can move opposite SLOs.
 
+#### Phase-specific sharding ledger
+
+The word *sharding* is incomplete unless it names the tensor axis, phase, and communication. The following ledger separates mechanisms that are often conflated:
+
+| Mechanism | Prefill ownership | Decode ownership | Recurring communication |
+| --- | --- | --- | --- |
+| TP | Weight/output channels and attention heads; every rank processes the active prompt rows | The same model shards plus local KV heads or latent state | Per-layer reductions or gathers in both phases |
+| PCP | Prompt query positions; K/V may be gathered in full or circulated as partial sequence shards | Normally not the decode-history mechanism | K/V all-gather or ring/stream exchange during long prefill |
+| DCP | Relevant only when a prefill chunk attends to an already DCP-sharded history | Historical token blocks within each owned KV head or latent cache | Merge compact partial-attention states for each layer and new token |
+| P/D disaggregation | Whole requests execute in a separately sized prefill pool with its own TP/PP/PCP plan | Decode uses a separately sized pool with its own TP/PP/DCP plan | One logical KV handoff per admitted boundary, plus any resharding |
+| Serving DP | Different replicas own different requests and cache namespaces | Different replicas advance independent batches | Routing and cache-state publication, not a per-layer model collective |
+
+The [current vLLM context-parallel design](https://docs.vllm.ai/en/latest/serving/context_parallel_deployment/) describes two prefill cases—partial queries with full K/V and partial queries with partial K/V—and uses token-history sharding for decode. [Dynamo's disaggregated-serving contract](https://docs.nvidia.com/dynamo/dev/knowledge-base/concepts/system-architecture/disaggregated-serving) permits the two pools to choose different parallel plans and then transfers KV through a backend-specific connector. These mechanisms compose, but their degrees are not interchangeable: `TP=8, DCP=8` inside one decode group is not the same topology as eight prefill workers feeding eight decode workers.
+
 ### KV transfer and remote memory
 
 Migration or prefill-decode disaggregation transfers state between model-parallel groups. A complete transfer plan specifies:

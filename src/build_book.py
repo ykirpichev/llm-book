@@ -55,18 +55,18 @@ MARGIN_X = 17 * mm
 MARGIN_TOP = 20 * mm
 MARGIN_BOTTOM = 18 * mm
 
-INK = HexColor("#2F312E")
-MUTED = HexColor("#6A6C67")
-CHARCOAL = HexColor("#41423E")
-TEAL = HexColor("#5F776C")
-CYAN = HexColor("#C9D4CD")
-CORAL = HexColor("#A77564")
-GOLD = HexColor("#9B865C")
-PAPER = HexColor("#FAF9F6")
-PANEL = HexColor("#F0EFEA")
-PALE_TEAL = HexColor("#EDF1EE")
-PALE_CORAL = HexColor("#F4ECE8")
-PALE_GOLD = HexColor("#F3EFE5")
+INK = HexColor("#292B29")
+MUTED = HexColor("#6B6D68")
+CHARCOAL = HexColor("#29473F")
+TEAL = HexColor("#789487")
+CYAN = HexColor("#D9E4DE")
+CORAL = HexColor("#B9856A")
+GOLD = HexColor("#B69A62")
+PAPER = HexColor("#FBFAF6")
+PANEL = HexColor("#F1F0EA")
+PALE_TEAL = HexColor("#EDF2EF")
+PALE_CORAL = HexColor("#F6EEE9")
+PALE_GOLD = HexColor("#F5F1E7")
 WHITE = colors.white
 
 
@@ -135,7 +135,7 @@ def inline_markup(text: str) -> str:
     text = re.sub(r"`([^`]+)`", _stash_code, text)
     text = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<i>\1</i>", text)
-    text = re.sub(r"\[([^]]+)]\(([^)]+)\)", r'<link href="\2" color="#5F776C">\1</link>', text)
+    text = re.sub(r"\[([^]]+)]\(([^)]+)\)", r'<link href="\2" color="#49685D">\1</link>', text)
     for index, code in enumerate(code_spans):
         text = text.replace(_code_token(index), f'<font name="Courier">{code}</font>')
     return text
@@ -366,7 +366,7 @@ class ChapterBand(Flowable):
         c.setFillColor(TEAL)
         c.roundRect(0, self.height - 9, self.width, 9, 4, fill=1, stroke=0)
         if self.number:
-            c.setFillColor(HexColor("#5A5B56"))
+            c.setFillColor(HexColor("#527064"))
             c.setFont(FONT_BOLD, 66)
             c.drawRightString(self.width - 18, self.height - 70, self.number)
         c.setFillColor(CYAN)
@@ -460,7 +460,7 @@ class CodePanel(Flowable):
         c.saveState()
         c.setFillColor(HexColor("#F2F1ED"))
         c.roundRect(0, 0, self.width, self.height, 7, fill=1, stroke=0)
-        c.setFillColor(HexColor("#4A4B47"))
+        c.setFillColor(HexColor("#355149"))
         c.roundRect(0, self.height - self.header_h, self.width, self.header_h, 7, fill=1, stroke=0)
         c.setFillColor(CYAN)
         c.setFont(FONT_BOLD, 6.8)
@@ -599,7 +599,7 @@ def diagram(name: str, width: float) -> Drawing:
     elif name == "continuous_batching":
         d.add(String(20, 168, "STATIC BATCH", fontName=FONT_BOLD, fontSize=8.5, fillColor=MUTED))
         d.add(String(20, 80, "CONTINUOUS BATCH", fontName=FONT_BOLD, fontSize=8.5, fillColor=TEAL))
-        colors_ = [TEAL, GOLD, CORAL, HexColor("#7F7A73")]
+        colors_ = [TEAL, GOLD, CORAL, HexColor("#81766D")]
         for row in range(3):
             y = 135 - row * 19
             for col in range(7 - row * 2):
@@ -652,7 +652,7 @@ def diagram(name: str, width: float) -> Drawing:
             ("Registers", 85, CORAL),
             ("Shared / L1", 122, GOLD),
             ("L2 cache", 170, TEAL),
-            ("HBM", 222, HexColor("#7F7A73")),
+            ("HBM", 222, HexColor("#81766D")),
             ("Host / network", 284, MUTED),
         ]
         cy = 96
@@ -702,7 +702,7 @@ def diagram(name: str, width: float) -> Drawing:
             ("Data", 30, 123, TEAL),
             ("Tensor", 150, 123, CORAL),
             ("Pipeline", 270, 123, GOLD),
-            ("Sequence", 90, 54, HexColor("#7F7A73")),
+            ("Sequence", 90, 54, HexColor("#81766D")),
             ("Expert", 220, 54, MUTED),
         ]
         for label, x, y, color in labels:
@@ -748,7 +748,7 @@ def diagram(name: str, width: float) -> Drawing:
             (center[0] - 120, 115, "Decide"),
         ]
         for i, (x, y, label) in enumerate(nodes):
-            d.add(Circle(x, y, 25, fillColor=WHITE, strokeColor=[TEAL, GOLD, CORAL, HexColor("#7F7A73"), INK][i], strokeWidth=1.6))
+            d.add(Circle(x, y, 25, fillColor=WHITE, strokeColor=[TEAL, GOLD, CORAL, HexColor("#81766D"), INK][i], strokeWidth=1.6))
             d.add(String(x, y - 3, label, textAnchor="middle", fontName=FONT_BOLD, fontSize=7.6, fillColor=INK))
             nx, ny, _ = nodes[(i + 1) % len(nodes)]
             angle = math.atan2(ny - y, nx - x)
@@ -823,7 +823,7 @@ class HandbookDocTemplate(BaseDocTemplate):
         canvas._doc.Catalog.Lang = PDFString("en-US")
         canvas.setFillColor(CHARCOAL)
         canvas.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
-        canvas.setFillColor(HexColor("#555650"))
+        canvas.setFillColor(HexColor("#365A50"))
         for i in range(7):
             canvas.circle(PAGE_W - 24 - i * 30, PAGE_H - 38 - i * 34, 88 - i * 7, fill=0, stroke=1)
         canvas.setFillColor(TEAL)
@@ -842,7 +842,7 @@ class HandbookDocTemplate(BaseDocTemplate):
         canvas.setFillColor(WHITE)
         canvas.setFont(FONT_BOLD, 35)
         canvas.drawString(42, PAGE_H - 244, "MODELS")
-        canvas.setFillColor(HexColor("#D0CEC6"))
+        canvas.setFillColor(HexColor("#D9DED9"))
         canvas.setFont(FONT, 11)
         subtitle = ["TRAINING  /  INFERENCE  /  CUDA", "DISTRIBUTED SYSTEMS  /  TECHNICAL LEADERSHIP"]
         canvas.drawString(44, PAGE_H - 290, subtitle[0])

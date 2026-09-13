@@ -2,12 +2,14 @@
 
 ## Executive finding
 
-The manuscript's technical center remains current. Its strongest choice is to organize around durable resource and correctness models rather than transient leaderboards. A chapter-by-chapter audit found no missing development that justified rewriting the foundations, training-data, CUDA-basics, distributed-training, streaming-algorithm, leadership, or appendix chapters. Four targeted updates were warranted:
+The manuscript's technical center remains current. Its strongest choice is to organize around durable resource and correctness models rather than transient leaderboards. A chapter-by-chapter audit found no missing development that justified rewriting the training-data, CUDA-basics, distributed-training, streaming-algorithm, leadership, or appendix chapters. Six targeted updates were warranted:
 
 1. output-length uncertainty is now treated explicitly as a joint KV reservation, routing, prefix-reuse, and parallelism problem;
 2. the distributed prefix-cache discussion now maps the design to maintained implementations: Dynamo, LMCache, llm-d, Mooncake, and NIXL;
 3. the distributed-inference chapter now separates router belief, cache indexing, transfer completion, admission, and ownership publication;
-4. the bounded-agent chapter now distinguishes MCP's host/server interoperability boundary from A2A's agent-to-agent boundary, while keeping authorization in deterministic host code.
+4. the attention taxonomy now names local/windowed, hierarchical learned-sparse, latent, recurrent/linear, and hybrid state explicitly, with Native Sparse Attention and Kimi Linear as primary examples;
+5. the distributed-inference chapter now includes a phase-specific ledger for TP, PCP, DCP, prefill/decode disaggregation, and serving data parallelism;
+6. the bounded-agent chapter now distinguishes MCP's host/server interoperability boundary from A2A's agent-to-agent boundary, while keeping authorization in deterministic host code.
 
 The review cutoff is September 13, 2026. “Current” means supported by a primary paper, official specification, official model report, or maintained project documentation available by that date. A new item was integrated only when it changed an engineering decision, failure boundary, measurement, or reference implementation. Benchmark rank alone was not sufficient.
 
@@ -29,7 +31,7 @@ Recent architecture evidence continues to support the manuscript's treatment of 
 | From Text to Tokens, Targets, and Loss | Current | Tokenization and causal-loss mechanics are stable; newer architectures do not alter these definitions universally. |
 | Optimization as a Coupled Dynamical System | Current | Numerical state, clipping, scheduling, and reproducibility remain the necessary basis for newer optimizers and low-precision recipes. |
 | Transformer Architecture as Resource Allocation | Current | The chapter already derives attention, GQA, RoPE, normalization, and MoE as resource choices. |
-| Compressed, Sparse, and Recurrent Model State | Current | Hybrid recurrent/attention and compressed-memory examples already cover the active design space represented by Qwen3.5, Nemotron 3, and DeepSeek-V4.[6][7][8] |
+| Compressed, Sparse, and Recurrent Model State | **Integrated** | Expanded the mechanism taxonomy and added Native Sparse Attention and Kimi Linear to cover hierarchical learned sparsity and newer gated linear-attention hybrids.[6][7][8][16][17] |
 | Scale, Memory, and Performance Models | Current | FLOP, byte, occupancy, and latency models remain architecture-independent acceptance tools. |
 | Measurement and Experimental Judgment | Current | Matched boundaries and uncertainty are more useful than adding a transient benchmark table. |
 
@@ -84,7 +86,7 @@ Recent architecture evidence continues to support the manuscript's treatment of 
 | Tensor, Sequence, and Context Parallelism | Current | Layout-as-type and communication accounting remain the correct abstraction. |
 | Pipeline Parallelism and Hybrid Plans | Current | Bubble, partition, and global plan evaluation remain current. |
 | Mixture-of-Experts and Sparse Communication | Current | Expert imbalance, all-to-all, replication, and fused communication remain active bottlenecks. |
-| Distributed Inference and Stateful Placement | **Integrated** | Added the deployable split among routing, event-fed indexing, direct NIXL transfer, admission, and ownership publication.[1][3][4] |
+| Distributed Inference and Stateful Placement | **Integrated** | Added the deployable split among routing, event-fed indexing, direct NIXL transfer, admission, and ownership publication, plus a phase-specific TP/PCP/DCP/P-D/DP sharding ledger.[1][3][4][18] |
 | Distributed Reinforcement Learning and Policy Freshness | Current | Role separation, stale-policy accounting, backpressure, and publication remain central to asynchronous RL. |
 | Distributed Checkpoints, Recovery, and Elasticity | Current | Logical tensor identity, manifests, resharding, and membership epochs remain current. |
 | Cluster Scheduling, Observability, and Distributed Diagnosis | Current | Gang placement, multi-resource admission, and rank-correlated diagnosis remain the production standard. |
@@ -163,3 +165,6 @@ After the targeted integrations, no known state-of-the-art omission changes a co
 13. [Agent2Agent Protocol specification, version 1.0.0](https://github.com/a2aproject/A2A/blob/main/docs/specification.md).
 14. [Robust KV Cache Management for LLM Serving under Output Token Length Uncertainty](https://arxiv.org/abs/2607.16892).
 15. [PyTorch FSDP2 `fully_shard` documentation](https://docs.pytorch.org/docs/main/distributed.fsdp.fully_shard.html).
+16. [Native Sparse Attention](https://arxiv.org/abs/2502.11089).
+17. [Kimi Linear](https://arxiv.org/abs/2510.26692).
+18. [vLLM Context Parallel Deployment](https://docs.vllm.ai/en/latest/serving/context_parallel_deployment/).
