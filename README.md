@@ -12,6 +12,8 @@ The [September 8 Part I review](docs/part1-review-2026-09-08.md) records an earl
 
 ## Read the draft
 
+The new chapter [Accelerator Ecosystems Beyond CUDA and NVIDIA](manuscript/04_cuda.md#accelerator-ecosystems-beyond-cuda-and-nvidia) covers Triton, ROCm/HIP, TPU/XLA/Pallas, AWS Neuron/NKI, and a bounded porting evaluation. Its [source and validation record](docs/accelerator-ecosystems-review-2026-09-13.md) is dated September 13, 2026; it does not claim cross-device benchmark results.
+
 | Part | Manuscript |
 | --- | --- |
 | I | [Foundations](manuscript/01_foundations.md) |

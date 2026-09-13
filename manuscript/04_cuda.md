@@ -2,7 +2,7 @@
 
 CUDA optimization is the discipline of translating an algorithm into a schedule over threads, instructions, memory levels, and asynchronous work. The correct starting point is never a favorite tile size or instruction. It is a resource model: what must move, what must be computed, which dependencies are unavoidable, and which hardware resource becomes limiting first.
 
-This part is self-contained. It does not require Part III open beside it. Wherever serving concepts appear - KV cache, paging, grouped-query attention, mixture-of-experts routing - they are restated here at the level a kernel engineer needs. Part III remains the place for fleet scheduling and product SLOs; Part IV owns the GPU schedule.
+This part is self-contained. It does not require Part III open beside it. Wherever serving concepts appear - KV cache, paging, grouped-query attention, mixture-of-experts routing - they are restated here at the level a kernel engineer needs. Part III remains the place for fleet scheduling and product SLOs; Part IV develops the device schedule, first in CUDA and then across other accelerator ecosystems.
 
 ### Running example used throughout
 
@@ -50,6 +50,7 @@ Establish a correct reference. Measure the real workload. Build a bytes-and-FLOP
 | Blackwell pipelines | Track asynchronous buffer ownership, tensor memory, and attention dependencies |
 | LLM inference kernels | Specialize the schedule for decode, paging, and quantization |
 | Profiling and correctness | Close the loop on the running example with evidence |
+| Beyond CUDA and NVIDIA | Separate portable model semantics from target-specific execution |
 
 ## GPU Execution, Memory, and Resource Accounting
 
@@ -1518,4 +1519,129 @@ Create a variant when a frequent shape or semantic mode has a materially differe
 
 Keep three artifacts with the optimized kernel: a semantic reference and edge-case tests, a profile explaining the resource limit, and an engine replay showing the integration effect. These establish different things; passing tests is not a proof over every possible input. For the running example, check that prefill still avoids quadratic score storage and that fused decode preserves KV indexing, masking, and cancellation behavior.
 
-The next part adds peers to this schedule. The question changes from where a tile lives on one GPU to which rank owns it, when another rank needs it, and what happens when that rank fails.
+These artifacts also provide the starting point for a port. The next chapter asks which parts of this schedule survive a change of compiler or accelerator, and which must be rebuilt.
+
+## Accelerator Ecosystems Beyond CUDA and NVIDIA
+
+LEAD: Moving a model is easier than moving its performance. The weights and attention equations may survive unchanged while kernels, memory layouts, compilation, collectives, and serving behavior all need new evidence.
+
+The documentation assistant now needs a second deployment option. Perhaps NVIDIA capacity is scarce, the team already operates an AMD cluster, or a cloud accelerator offers a promising deployment path. The task is not to translate every CUDA kernel immediately. It is to find the smallest supported stack that can serve the same model correctly, then determine whether its latency, operating cost, and maintenance burden justify adoption.
+
+This chapter assumes the prefill/decode and memory models developed earlier in this part. It separates three often-confused choices: the accelerator, the software stack that operates it, and the language used to write a kernel. The ecosystem notes were checked against primary documentation on September 13, 2026. They are entry points for an evaluation, not a permanent hardware or model support matrix.
+
+### First separate the layers
+
+CUDA names more than a kernel language: an application may depend on its runtime, libraries, compiler, graph execution, and development tools. Replacing CUDA C++ with Triton can change how kernels are written while leaving the application on NVIDIA hardware. Moving to AMD changes the underlying stack as well. Moving to TPU or Trainium changes the device execution model enough that a literal translation of warp-level code is usually the wrong starting point.
+
+:::diagram accelerator_portability|Keep the model contract above the porting boundary. Below it, choose a supported implementation path and revalidate kernels, state layout, and distributed execution. These are representative paths, not an exhaustive compatibility matrix; Pallas also has GPU backends.
+
+| Name | What it is | What it does not promise |
+| --- | --- | --- |
+| Triton | Language and compiler for tiled custom kernels | A replacement for the entire CUDA stack |
+| ROCm / HIP | AMD software stack / C++ programming interface | Every CUDA extension compiles or performs unchanged |
+| XLA / Pallas | Graph compiler / JAX custom-kernel language | Every operation has the same backend implementation |
+| AWS Neuron / NKI | AWS accelerator SDK / custom-kernel interface | Support for every model on every Neuron device |
+| SYCL | Standard C++ heterogeneous programming model | Identical libraries or performance across implementations |
+
+There are three separate acceptance tests. **Source portability** asks how much code can be reused. **Semantic portability** asks whether it still implements the required computation and state transitions. **Performance portability** asks whether the target meets the workload's service objective. A successful import or compilation establishes none of the latter two by itself.
+
+### Triton: change the kernel language, not necessarily the GPU
+
+Triton lets a programmer express operations over tiles of tensor elements instead of spelling out every thread's scalar work. Its upstream project lists NVIDIA and AMD GPU support. It is distinct from the similarly named NVIDIA Triton Inference Server. A Triton kernel targeting NVIDIA still needs the relevant NVIDIA execution stack; selecting an AMD backend does not port surrounding CUDA libraries or extensions. See the [Triton project and compatibility notes](https://github.com/triton-lang/triton).
+
+Consider RMSNorm over a row of width 4096. A tiled implementation loads the row, accumulates its squared values, computes the normalization factor, applies the learned scale, and stores the result. The useful algorithm survives a backend change. The best tile layout, number of participating warps, and reduction schedule may not. Test awkward widths and noncontiguous inputs as well as the common case; padding lanes must not contribute to the reduction.
+
+For a first port, use the framework's supported operator. Write or retune a Triton kernel only when profiling identifies a meaningful gap. A portable source file with two backend-specific tuning configurations can be a better maintenance choice than either two unrelated implementations or one universally mediocre configuration.
+
+### AMD GPUs: ROCm, HIP, and the code that translation misses
+
+AMD Instinct GPUs are an alternative hardware family for datacenter training and inference. ROCm supplies the surrounding software; HIP offers a CUDA-like C++ interface, and HIPIFY tools help translate supported CUDA constructs. The hard cases include architecture-specific instructions, inline PTX, library dependencies, and assumptions about execution-group width. Treat AMD's [CUDA-to-HIP porting guide](https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/hip_porting_guide.html) as a migration inventory, not a claim of drop-in binary compatibility.
+
+The reduction kernels earlier in this part explain why names alone are insufficient. A hard-coded 32-lane mask, a warp shuffle, or a shared-memory layout may encode an NVIDIA-specific assumption. Audit the target's wavefront behavior and compiler semantics; do not simply replace every 32 with 64. Rewrite ownership and synchronization first, then retune register use, local storage, and matrix instructions. CUDA graphs and asynchronous pipelines likewise require validation through the chosen backend rather than a name-for-name substitution.
+
+For multi-device work, RCCL supplies AMD-oriented collective operations, including reductions, gathers, and all-to-all communication. API familiarity does not imply the same collective schedule or latency on a different topology. Measure representative payloads on the actual node and network. The [RCCL overview](https://rocm.docs.amd.com/projects/rccl/en/latest/what-is-rccl.html) describes its communication scope.
+
+Start with a supported framework and serving-engine build, then enumerate custom extensions, attention backends, quantization formats, and MoE kernels. Pin the GPU, operating system, driver, ROCm release, framework, and engine together. The [ROCm compatibility matrix](https://rocm.docs.amd.com/en/develop/compatibility/compatibility-matrix.html) is the starting point; an AMD product name alone is not a support guarantee. Unsupported code may fail loudly, but an unnoticed fallback or layout conversion can be equally costly.
+
+### Google TPU: compile the graph and design the tile schedule
+
+A TPU is not a GPU with different branding. Its TensorCores combine matrix-multiply, vector, and scalar resources; the precise organization varies by generation. The matrix units favor well-filled matrix work, but attention also needs reductions, masking, and memory movement. Those operations remain part of the latency budget. Google's [TPU architecture guide](https://docs.cloud.google.com/tpu/docs/system-architecture-tpu-vm) describes the hardware model.
+
+XLA compiles framework computations for the target, handling transformations such as fusion and buffer planning. Pallas provides explicit custom-kernel control within JAX when automatic compilation does not produce the desired schedule. Pallas supports TPU and GPU work but exposes hardware-specific APIs; common notation does not mean an optimized GPU kernel can be carried over unchanged. See [XLA architecture](https://openxla.org/xla/architecture) and the [Pallas guide](https://docs.jax.dev/en/latest/pallas/).
+
+TPUs can serve autoregressive models as well as train them. Google's current inference documentation uses the `tpu-inference` plugin for vLLM, with JAX and PyTorch model paths. Start from that integration's supported model and feature set, not an assumption that every CUDA engine flag is meaningful on TPU. See [Run inference on Cloud TPU](https://docs.cloud.google.com/tpu/docs/tpu-inference).
+
+For the assistant, prefill presents many query rows and opportunities for matrix reuse. Decode exposes weight and KV reads, small operations, scheduling, and collective latency. The accelerator's matrix peak alone cannot predict either request-level TTFT or token cadence. Ragged lengths, paged KV, and dynamic arrivals require a serving implementation that manages those states efficiently; they do not make TPU serving impossible. Compilation buckets, attention layouts, and host/device boundaries become concrete review items.
+
+### AWS accelerators: Neuron is the stack, not the chip
+
+Trainium and Inferentia are AWS accelerator families. Inferentia targets inference; Trainium supports training and inference. Neuron is their software stack, including compiler, runtime, framework integrations, libraries, and profiling tools. Current documentation also describes native PyTorch on Trainium through TorchNeuron, alongside PyTorch NeuronX and JAX paths. These are distinct integration choices, not interchangeable package names. See the [Neuron SDK overview](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/).
+
+NKI, the Neuron Kernel Interface, exposes tiled custom computation and explicit data movement. Think in terms of moving tiles between HBM and on-chip storage, computing with the available engines, and storing results. SBUF holds on-chip working tensors; PSUM is used for accumulation. Partition dimensions, tile constraints, and lifetime rules replace the CUDA-specific warp schedule. The [NKI introduction](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.31.0/nki/get-started/about/index.html) provides the programming entry point; the [versioned programming model](https://awsdocs-neuron.readthedocs-hosted.com/en/v2.26.0/general/nki/programming_model.html) illustrates the memory hierarchy. Use the documentation matching the deployed SDK for exact constraints.
+
+There is an important release boundary. Neuron's release notes place NxD Inference in maintenance mode starting with SDK 2.32.0. The newer vLLM Neuron plugin is documented as beta and no longer depends on NxD Inference; the current announcement targets Trn2 and Trn3. Do not infer that this path covers older Inferentia hardware just because the umbrella SDK does. Older NxD examples remain useful but should not be presented as the default architecture for a new deployment. See the [NxD release notes](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/release-notes/components/nxd-inference.html) and [Neuron update announcement](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/about-neuron/whats-new.html).
+
+The [vLLM Neuron migration guide](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/vllm-neuron/docs/getting-started/migration-nxdi-to-vllm-neuron.html) separates moving a supported model from reimplementing custom modeling code. Apply that distinction to the assistant: validate its exact attention, quantization, sampling, and cache features before budgeting a full port. A familiar serving API can conceal a different compilation and state-management path.
+
+### Other options and the abstraction boundary
+
+SYCL is a standardized single-source C++ model for heterogeneous computing. It is relevant when a project needs that programming interface or an implementation targeting another device family, including Intel GPUs. Backend coverage and optimized libraries depend on the implementation; the standard does not create a universal LLM serving stack. See the [Khronos SYCL overview](https://www.khronos.org/sycl/).
+
+CPU inference, local accelerators, and specialized inference appliances belong in a broader deployment evaluation when memory footprint, locality, power, or small-model latency makes them plausible. They are not all replacements for a datacenter training GPU. Compare a supported end-to-end workload, including operational ownership, rather than expanding a vendor list without a decision to make.
+
+### Port the running model before comparing devices
+
+Keep the assistant's checkpoint, tokenizer, GQA geometry, and quality evaluation fixed. With 32 layers, eight KV heads, head dimension 128, and two-byte cached elements, one token's K and V require `2 * 32 * 8 * 128 * 2 = 131,072` bytes across the model. Eight sequences at context 4096 therefore occupy 4 GiB of logical KV state. This is independent of vendor; physical allocation can be larger because of padding, replication, alignment, and reserved pools.
+
+The earlier model's roughly 14 GB of weights and 4.3 GB of logical KV reads give a useful first decode ledger under the stated full-read assumptions. Replace the illustrative GPU bandwidth with the target's measured sustainable bandwidth; do not reuse the earlier 3 TB/s number as a TPU, AMD, or Trainium specification. Likewise, aggregate memory across devices is not freely pooled memory. Weight shards and KV shards must fit where the executable places them.
+
+Compilation adds another budget. Suppose a serving implementation buckets prompt lengths 2048 and 4096, and pads a 2300-token prompt to 4096. A fully padded linear operation processes about `4096 / 2300 = 1.78` times as many positions. A dense quadratic operation would process about `1.78^2 = 3.17` times as many position pairs. These are padding ratios, not measured latency multipliers: masked tile skipping, ragged kernels, chunked prefill, and other operators change the result. Smaller buckets reduce waste but add executable variants, compilation work, and warm-up cost.
+
+Capture cold compilation separately from warm execution. Then test a rolling deployment where new workers must become ready while old workers still serve traffic. A fast warm benchmark is insufficient if compiling or loading the required variants prevents timely recovery.
+
+### Training, prefill, and decode need different acceptance evidence
+
+| Phase | What must work | What to measure on the target |
+| --- | --- | --- |
+| Training | Backward kernels, optimizer state, precision, checkpoint restore | Time to agreed quality; step tails; communication and recovery |
+| Prefill | Prompt masks, ragged lengths, KV writes, chunk scheduling | TTFT by length; useful tokens/s; padding and compile misses |
+| Decode | Paged state, sampling, cancellation, cache reuse | Token-gap tails; admitted concurrency; KV traffic and collectives |
+
+A working forward pass is not a training port: gradients, optimizer updates, distributed normalization, and resumed data order need validation. Similarly, fast prefill does not establish a useful decode service. Preserve the assistant's request distribution and p99 targets when comparing serving candidates. Check logits against a trusted reference with justified tolerances, then run task-level quality evaluation. Different reduction orders can change generated tokens without implying a bug; convincing-looking output can also hide one.
+
+Parallelism must be reselected, not copied. Prefill context parallelism distributes prompt work; decode context parallelism distributes reads of cached history and combines partial attention results. Tensor parallelism adds communication within layers in both phases. A target may support one decomposition but not the engine's desired combination. Record the actual process groups, KV ownership, reductions, and supported topology. The following part derives these mechanisms; this chapter adds the requirement to verify their implementation on the chosen backend.
+
+For disaggregated serving, keep initial prefill and decode pools on a compatible implementation path. Cross-vendor KV transfer is not automatically available: peers must agree on logical token identity, dtype, head mapping, layout, quantization metadata, and ownership. Repacking and transport must fit inside the transfer budget. A shared model checkpoint does not establish a shared cache ABI.
+
+### Decide with a bounded experiment
+
+Begin with one supported model and a replay containing short and long prompts, warm and cold prefixes, cancellation, and overload. Establish correctness, then profile the largest end-to-end gap. Only then decide whether it warrants a custom HIP, Triton, Pallas, or NKI kernel. Keep a known-good backend and versioned artifacts for rollback; do not attempt to recover an in-flight request by copying opaque device memory between ecosystems.
+
+Compare cost per successful request that meets the SLO, including idle capacity, host resources, networking, compilation, and recovery. Add the engineering cost of maintaining another backend over an explicit planning horizon. For training, use time and cost to an agreed quality threshold, not merely examples per second. These denominators make a capacity-driven or cost-driven choice explainable without claiming that one vendor is universally faster.
+
+### Design Exercises
+
+1. A Triton RMSNorm kernel compiles on two GPU backends. What remains before calling it portable?
+2. A TPU or Neuron serving port has fast warm decode but poor TTFT after scaling out. What evidence separates compilation from prefill inefficiency?
+3. An alternative device has more memory per chip. Can the assistant reduce tensor parallelism safely?
+4. A team proposes NVIDIA prefill with AMD decode to use spare capacity. What must it demonstrate first?
+
+### Worked Solutions
+
+#### 1. Three kinds of portability
+
+Verify numerical behavior, strides, alignment, padded lanes, and boundary shapes against the same reference. Retune using the real shape distribution, then measure the operator in the engine so conversions and dispatch costs are included. Compilation establishes that a source path exists, not correctness or competitive latency.
+
+#### 2. Cold-start attribution
+
+Trace compilation, artifact loading, allocation, warm-up, queue time, and prefill separately. Replay the same shapes on already-warm workers. Count new executable variants and inspect padded work. If only cold workers regress, prewarming and artifact distribution are candidates; if long prompts remain slow when warm, investigate attention, padding, and scheduling. Require the autoscaling test as well as the microbenchmark.
+
+#### 3. Memory is necessary, not sufficient
+
+Recompute per-device weights, KV, workspace, activations, and head replication for the proposed layout. Confirm the backend supports it. Fewer ranks may remove collective latency but also reduce compute and memory bandwidth available to one request. Compare TTFT, decode tails, and admitted concurrency under the same traffic before changing placement.
+
+#### 4. A cache contract, not just a network link
+
+Demonstrate compatible cache semantics and an explicit conversion path, including positions, heads, dtype, and quantization metadata. Measure conversion plus transfer at realistic cache sizes and concurrent load. Test cancellation, partial transfer, ownership handoff, and failure without exposing another tenant's state. If that path is unsupported or too expensive, use homogeneous prefill/decode pools or route whole requests to each ecosystem.
+
+The port ends with a supported deployment configuration and workload evidence, not a translated source tree. The next part adds peers to the device schedule: which rank owns a tensor, when another rank needs it, and what happens when that rank fails. Those questions survive every accelerator choice.

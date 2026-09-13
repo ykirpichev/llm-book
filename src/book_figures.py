@@ -561,7 +561,31 @@ def migration_gates(f):
     f.footer("Define rollback for the migrated state, traffic cohort, and recovery time.")
 
 
+def accelerator_portability(f):
+    f.node(18, 239, 394, 43,
+           "Shared model contract\nweights, masks, positions, quality and service targets", size=8.8)
+    f.line(63.5, 226, 366.5, 226)
+    f.line(215, 239, 215, 226)
+    paths = [
+        ("CUDA\nC++ / Triton\nlibraries + runtime", "NVIDIA\nGPU"),
+        ("ROCm\nHIP / Triton\nlibraries + runtime", "AMD\nGPU"),
+        ("XLA / Pallas\ncompiled graphs\ncustom kernels", "Google\nTPU"),
+        ("Neuron / NKI\ncompiled graphs\ncustom kernels", "AWS Trainium\n/ Inferentia"),
+    ]
+    for i, (software, hardware) in enumerate(paths):
+        x = 18 + i * 101
+        f.node(x, 151, 91, 62, software, size=8.0)
+        f.arrow([(x + 45.5, 226), (x + 45.5, 213)])
+        f.node(x, 80, 91, 43, hardware, tone="GOLD", size=8.2)
+        f.arrow([(x + 45.5, 151), (x + 45.5, 123)], "GOLD")
+    f.text(215, 57, "Each path needs its own state, kernel and collective validation.",
+           anchor="middle", size=8.4)
+    f.footer("Representative software-to-hardware paths, not feature parity.",
+             "Select the device and release together; these are not binary-compatible.")
+
+
 FIGURES = {
+    "accelerator_portability": (328, "PORT THE CONTRACT; REVALIDATE THE EXECUTION", accelerator_portability),
     "request_lifecycle": (270, "FIRST-TOKEN LATENCY AND VISIBLE TOKEN GAPS", request_lifecycle),
     "system_design": (286, "A DISTRIBUTED JOB HAS TWO FEEDBACK PATHS", system_design),
     "agent_trust_boundary": (278, "AUTHORITY REACHES THE GATE OUTSIDE THE MODEL", agent_trust_boundary),

@@ -422,6 +422,8 @@ Contain harm, state new evidence, reopen the choice, preserve trust by owning th
 
 **Idempotency key:** a stable operation identity allowing a service to reconcile repeated delivery of the same request without duplicating its effect, subject to that service's transaction guarantees.
 
+**Accelerator ecosystems:** For Triton, ROCm/HIP, XLA/Pallas, Neuron/NKI, and SYCL definitions and hardware mappings, see **Accelerator Ecosystems Beyond CUDA and NVIDIA**.
+
 ### Decision index
 
 | If the symptom is... | First model | Likely chapters |
@@ -433,6 +435,7 @@ Contain harm, state new evidence, reopen the choice, preserve trust by owning th
 | Training instability | Update, precision, data, synchronization | Optimization, recipe |
 | Benchmark gain, product loss | Evaluation contract and workload shift | Measurement, serving |
 | Low GEMM throughput | Tile, tensor-core, occupancy, shape | Tiled matrix multiplication |
+| Accelerator port compiles but misses SLOs | Backend support, layouts, padding, collectives | Accelerator Ecosystems Beyond CUDA and NVIDIA |
 | MoE slowdown | All-to-all and expert imbalance | Transformers, distributed systems |
 | Platform not adopted | Migration cost and ownership | Strategy and leadership |
 | Recurring disagreement | Goal, facts, risk, or incentives | Executive communication |

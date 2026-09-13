@@ -12,7 +12,9 @@ semantics from approximations; give a failure case and a decision boundary;
 provide exercises with answer criteria; cite primary evidence for modern
 variants. CPU tests validate selected calculations, not GPU performance.
 
-The research cutoff is September 7, 2026. Recent preprints are labeled as such;
+The original research cutoff is September 7, 2026; the accelerator ecosystem
+chapter was added with a separate September 13, 2026 source check recorded in
+`accelerator-ecosystems-review-2026-09-13.md`. Recent preprints are labeled as such;
 reported maxima and adoption claims are not treated as universal conclusions.
 Links are evidence and further reading, not substitutes for the explanation.
 
@@ -79,6 +81,7 @@ adjacent chapters and are not duplicated at every chapter boundary.
 | Blackwell Pipelines and Modern Attention Kernels | Added | TMEM/TMA ownership, buffer generations, timing model, FA4 and FP4 limits |
 | CUDA Kernels for LLM Inference | Retained | KV append, paged/split attention, GQA, quantized GEMM and MoE |
 | Kernel Engineering, Profiling, and Correctness | Retained | Three baseline boundaries, cold/warm measurement, race/numerical tests |
+| Accelerator Ecosystems Beyond CUDA and NVIDIA | Added September 13 | Stack/hardware distinction, Triton/HIP/Pallas/NKI, current Neuron transition, KV/padding examples, phase-specific portability and migration gates; no device benchmarks reproduced |
 | Communication Models, Collectives, and Topology | Retained | Alpha-beta, ring traffic, overlap, physical groups and deadlock |
 | Data Parallelism, ZeRO, and Fully Sharded Training | Retained | State ledger, gathers, checkpoint/offload and numerical agreement |
 | Tensor, Sequence, and Context Parallelism | Retained | Row/column layouts, vocabulary loss, CP merge and geometry |

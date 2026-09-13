@@ -2,7 +2,7 @@
 
 Part VI follows two paths that meet in production services. **Streaming-state primitives** develop exact windows, sampling, sketches, and mergeable statistics, then assemble them into telemetry and control loops. **ML implementation and system design** turns numerical assumptions into code, applies a repeatable review method, and builds retrieval and bounded-agent systems. Readers focused on application architecture may begin at **RAG, Vector Search, and Evaluation Pipelines** and return to the streaming chapters for the state, approximation, and failure models those services depend on.
 
-Suppose the serving fleet's token-gap SLO begins to regress. Which tenants are affected? Are long prompts responsible, or one hot error signature? Answering those questions requires summaries of request events across workers, including late and replayed events. Chapters 44-47 build that telemetry path. Chapter 48 is an optional implementation refresher; Chapters 49-51 then use the same care with state and evidence to design the documentation assistant and its bounded actions.
+Suppose the serving fleet's token-gap SLO begins to regress. Which tenants are affected? Are long prompts responsible, or one hot error signature? Answering those questions requires summaries of request events across workers, including late and replayed events. The first four chapters build that telemetry path. The ML algorithms review is an optional implementation refresher; the remaining chapters then use the same care with state and evidence to design the documentation assistant and its bounded actions.
 
 ## Exact Streaming Queries and Time Windows
 

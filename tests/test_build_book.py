@@ -114,6 +114,13 @@ class BuildBookTests(unittest.TestCase):
         self.assertIn("t1: token 1", labels)
         self.assertIn("TTFT = t1 - t0", labels)
 
+    def test_accelerator_diagram_separates_contract_software_and_hardware(self):
+        labels = self.figure_labels("accelerator_portability")
+        for label in ["Shared model contract", "CUDA", "ROCm", "XLA / Pallas",
+                      "Neuron / NKI", "NVIDIA", "AMD", "TPU", "AWS Trainium"]:
+            self.assertIn(label, labels)
+        self.assertTrue(any("not feature parity" in label for label in labels))
+
     def test_decoder_diagram_separates_sums_from_outputs(self):
         labels = self.figure_labels("decoder_block")
         self.assertEqual(labels.count("+"), 2)
