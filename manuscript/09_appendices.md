@@ -38,7 +38,7 @@ This experiment checks optimization and serialization behavior on a tiny fixture
 | Step | Do this in the repository | Explain before moving on |
 | --- | --- | --- |
 | Targets and state | Run sequence-model tests and the tiny LM | Token IDs, masked loss, gradient, checkpoint identity |
-| Attention | Run the attention reference and partition tests | Stable softmax, masking, merge statistics, numerical tolerance |
+| Attention | Use the attention demonstration and exact test command in `examples/README.md` | Stable softmax, masking, merge statistics, numerical tolerance |
 | Adaptation and RL | Run post-training tests | DPO margin, advantage sign, clipping, group normalization, pass-at-k |
 | Inference | Run inference-mechanism tests | Acceptance plus residual correction; quantization range and scale |
 | Retrieval | Run the RAG fixture and ranking tests | Authorized current evidence versus mere semantic similarity |
@@ -432,25 +432,32 @@ Contain harm, state new evidence, reopen the choice, preserve trust by owning th
 
 ### Decision index
 
-| If the symptom is... | First model | Likely chapters |
+| If the symptom is... | First model | Chapter destinations (part — title) |
 | --- | --- | --- |
-| Slow first token | Queue plus prefill compute/IO | Prefill, scheduling, serving |
-| Slow token cadence | Weight/KV bytes plus collectives | Decode, quantization, distributed inference |
-| GPU OOM with free fragments | Logical versus physical KV allocation | Paged KV cache |
-| High acceptance, no speedup | Joint draft/verify/scheduler cost | Speculative decoding |
-| Training instability | Update, precision, data, synchronization | Optimization, recipe |
-| Benchmark gain, product loss | Evaluation contract and workload shift | Measurement, serving |
-| Low GEMM throughput | Tile, tensor-core, occupancy, shape | Tiled matrix multiplication |
-| Accelerator port compiles but misses SLOs | Backend support, layouts, padding, collectives | Accelerator Ecosystems Beyond CUDA and NVIDIA |
-| MoE slowdown | All-to-all and expert imbalance | Transformers, distributed systems |
-| Platform not adopted | Migration cost and ownership | Strategy and leadership |
-| Recurring disagreement | Goal, facts, risk, or incentives | Executive communication |
-| Hybrid cache estimate is wrong | Layer-specific attention/recurrent state | Compressed, Sparse, and Recurrent Model State |
-| More rollout GPUs hurt training | Queue growth, policy age, ratio variance | Distributed Reinforcement Learning and Policy Freshness |
-| Fluent but unsupported answers | Eligible evidence, ranking, generation | RAG, Vector Search, and Evaluation Pipelines |
-| Repeated or unauthorized actions | Capabilities, receipts, host-owned budgets | Building and Evaluating a Bounded Agent Loop |
-| Fast text but slow speech | Encoder, alignment, codec, playback queues | Multimodal Representations: Images, Video, and Speech |
-| Fewer generation calls but no gain | Positions per call, cache validity, quality | Diffusion and Block-Parallel Language Generation |
+| Slow first token | Queue plus prefill compute/IO | III — Prefill, Decode, and Performance Modeling; III — Scheduling, Batching, and Admission Control |
+| Slow token cadence | Weight/KV bytes plus collectives | III — Quantization, Compression, and Adapter Serving; V — Distributed Inference and Stateful Placement |
+| GPU OOM with free fragments | Logical versus physical KV allocation | III — KV Cache, Paging, and Prefix Reuse |
+| High acceptance, no speedup | Joint draft/verify/scheduler cost | III — Sampling, Structured Output, and Speculative Decoding |
+| Training instability | Update, precision, data, synchronization | I — Optimization as a Coupled Dynamical System; II — Designing a Training Recipe |
+| Benchmark gain, product loss | Evaluation contract and workload shift | I — Measurement and Experimental Judgment; III — Production Architecture, Capacity, and Reliability |
+| Low GEMM throughput | Tile, tensor-core, occupancy, shape | IV — Hierarchical Matrix Multiplication |
+| Accelerator port compiles but misses SLOs | Backend support, layouts, padding, collectives | IV — Accelerator Ecosystems Beyond CUDA and NVIDIA |
+| MoE slowdown | All-to-all and expert imbalance | V — Mixture-of-Experts and Sparse Communication |
+
+:::pagebreak
+
+**Decision index, continued**
+
+| If the symptom is... | First model | Chapter destinations (part — title) |
+| --- | --- | --- |
+| Platform not adopted | Migration cost and ownership | VIII — Strategy, Vision, and the First 90 Days |
+| Recurring disagreement | Goal, facts, risk, or incentives | VIII — Executive Technical Communication |
+| Hybrid cache estimate is wrong | Layer-specific attention/recurrent state | I — Compressed, Sparse, and Recurrent Model State |
+| More rollout GPUs hurt training | Queue growth, policy age, ratio variance | V — Distributed Reinforcement Learning and Policy Freshness |
+| Fluent but unsupported answers | Eligible evidence, ranking, generation | VI — RAG, Vector Search, and Evaluation Pipelines |
+| Repeated or unauthorized actions | Capabilities, receipts, host-owned budgets | VI — Building and Evaluating a Bounded Agent Loop |
+| Fast text but slow speech | Encoder, alignment, codec, playback queues | VII — Multimodal Representations: Images, Video, and Speech |
+| Fewer generation calls but no gain | Positions per call, cache validity, quality | VII — Diffusion and Block-Parallel Language Generation |
 
 ### Final principle
 

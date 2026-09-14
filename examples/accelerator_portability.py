@@ -79,7 +79,11 @@ class KVShardPlan:
 def kv_shard_plan(*, layers: int, batch: int, context: int, kv_heads: int,
                   head_dim: int, element_bytes: int, tp: int = 1,
                   cp: int = 1) -> KVShardPlan:
-    """Uniform full-history GQA, no pipeline partition, equal padded CP shards.
+    """Uniform full-history GQA with an abstract independent capacity axis.
+
+    ``cp`` adds ranks in this teaching model; it is neither PCP nor DCP nor a
+    portable engine flag. The model has no pipeline partition and uses equal
+    padded context shards.
 
     TP partitions whole KV heads when possible; TP beyond KV-head count
     replicates each head. Only exact head divisibility is modeled. An engine

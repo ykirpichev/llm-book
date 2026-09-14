@@ -17,7 +17,7 @@ REQUIRED_TERMS = [
     "Speculative Decoding",
     "KL Divergence",
     "Prefill",
-    "Tiled Matrix Multiplication",
+    "Hierarchical Matrix Multiplication",
     "Continuous Batching",
     "Technical Leadership",
     "Cross-Layer Design Prompt Bank",

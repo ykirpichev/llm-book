@@ -840,6 +840,8 @@ Decode context parallelism (DCP) instead partitions the historical KV cache alon
 
 Each history shard must first receive the query heads whose KV it owns, by replication or exchange according to the TP layout. The merge then needs a common maximum before rescaling and summing denominators and output numerators, or a collective that directly combines these states. An empty or fully masked shard contributes zero mass and a zero numerator; handle it explicitly so `exp(-inf - -inf)` is never evaluated. If every shard is empty, apply the declared fully masked-row policy instead of dividing by zero. The compact reduction saves historical-KV transfer, but it does not eliminate query exchange, collective latency, or local KV reads.
 
+The repository's `examples/attention.py` and the attention-test command in `examples/README.md` exercise this merge, including masked shards and rejected numerical overflow. They check single-head CPU semantics, not distributed execution or DCP performance.
+
 Interleaving token blocks across DCP ranks spreads future cache growth and attention work more evenly than assigning each rank one permanently contiguous interval.
 
 In the vLLM layout with PCP disabled, DCP reuses ranks inside each tensor-parallel group, and the tensor-parallel degree must be divisible by the DCP degree. This matters most for grouped-query and multi-query attention. With equal head partitions and a compatible TP degree, ordinary TP first shards KV heads; when the tensor-parallel degree `T` exceeds the number of KV heads `H_{kv}`, each head is repeated across `T / H_{kv}` ranks. DCP can use those otherwise duplicate-bearing ranks to shard each head's token history instead.
@@ -890,11 +892,13 @@ The word *sharding* is incomplete unless it names the tensor axis, phase, and co
 | --- | --- | --- | --- |
 | TP | Weight/output channels and attention heads; every rank processes the active prompt rows | The same model shards plus local KV heads or latent state | Per-layer reductions or gathers in both phases |
 | PCP | Prompt query positions; K/V may be gathered in full or circulated as partial sequence shards | Normally not the decode-history mechanism | K/V all-gather or ring/stream exchange during long prefill |
-| DCP | Relevant only when a prefill chunk attends to an already DCP-sharded history | Historical token blocks within each owned KV head or latent cache | Merge compact partial-attention states for each layer and new token |
+| DCP | A prefill chunk may attend to DCP-sharded history; backend-specific prefill modes need their own group and weight plan | Historical token blocks within each owned KV head or latent cache | Merge compact partial-attention states for each layer and new token |
 | P/D disaggregation | Whole requests execute in a separately sized prefill pool with its own TP/PP/PCP plan | Decode uses a separately sized pool with its own TP/PP/DCP plan | One logical KV handoff per admitted boundary, plus any resharding |
 | Serving DP | Different replicas own different requests and cache namespaces | Different replicas advance independent batches | Routing and cache-state publication, not a per-layer model collective |
 
 The [current vLLM context-parallel design](https://docs.vllm.ai/en/latest/serving/context_parallel_deployment/) describes two prefill cases—partial queries with full K/V and partial queries with partial K/V—and uses token-history sharding for decode. [Dynamo's disaggregated-serving contract](https://docs.nvidia.com/dynamo/dev/knowledge-base/concepts/system-architecture/disaggregated-serving) permits the two pools to choose different parallel plans and then transfers KV through a backend-specific connector. These mechanisms compose, but their degrees are not interchangeable: `TP=8, DCP=8` inside one decode group is not the same topology as eight prefill workers feeding eight decode workers.
+
+The SDK-scoped Neuron example in **Accelerator Ecosystems Beyond CUDA and NVIDIA** also has distinct prefill and decode group rules: a shared DCP flag name does not establish identical weight placement or execution geometry.
 
 ### KV transfer and remote memory
 
@@ -1438,3 +1442,5 @@ Confirm version, workload, topology, and measurement changes; compare the same s
 *A parallel plan is correct only when tensor ownership, communication order, physical placement, numerical semantics, and recovery state agree.*
 
 Scale is not the number of accelerators allocated. It is the amount of valid progress preserved per unit time and cost after communication, imbalance, queueing, checkpointing, and failure are included.
+
+Those claims become operational through the replayable telemetry, versioned summaries, and control paths developed in Part VI.

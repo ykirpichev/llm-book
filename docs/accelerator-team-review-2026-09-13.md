@@ -8,10 +8,10 @@
 - Start: September 13, 2026, 21:40:03 UTC.
 - Earliest completion: September 14, 2026, 00:40:03 UTC.
 - Baseline: `1fb029c`, chapter 36, 445 pages, 95 CPU tests.
-- Status: active; rounds 1–2 closed, round 3 independent reviewers running. This is not a
-  completion report.
+- Status: completed September 14, 2026. Three review/proposal/author/QC cycles
+  closed; final evidence and limitations are recorded at the end of this log.
 - Continuation: thread heartbeat every 15 minutes; automation id
-  `accelerator-chapter-review-team` (ACTIVE).
+  `accelerator-chapter-review-team`; pause at completion.
 - Scope: this chapter and directly supporting examples, tests, diagrams,
   navigation, and validation records. No remote publication or GPU benchmark
   claims. Preserve all unrelated material.
@@ -190,6 +190,22 @@ The main author checks source evidence and numerical/reference behavior while
 awaiting the three critiques, then requests the proposer. Do not mark either
 the renewed 30-minute minimum or the original campaign complete yet.
 
+22:32 UTC, round-3 author selections: all three critiques, author probes, and
+five-package proposal read. Accept Packages 1–5. Delegate only the attention
+oracle/range regressions and abstract-CP helper docstring to Terra; main author
+owns manuscript, navigation, and records. Keep the simple float reference and
+reject unrepresentable arithmetic rather than introducing a scaled accumulator.
+Use the seven-window/six-window-cap transfer exercise, exact chapter destinations,
+four causal handoffs, and five targeted lead replacements. Omit the optional
+Nixl example and another DSL survey; link the existing CuTe mention only.
+Current-source metadata will distinguish this checkpoint from five-pass history.
+
+Additional read-only CPU stress check (seed 9132026): 5,775 bounded masked
+attention comparisons with an independent dense formula and 480 independent-CP
+capacity invariants passed. Separate extreme-range probes exposed silent zero
+and infinity results; Astra independently reproduced them. These probes are
+not device or distributed-runtime evidence and do not inflate the test count.
+
 22:06 UTC: round-1 checkpoint committed locally as `a287725`; no push or release.
 Post-commit HEAD audit scanned 77 blobs with no selected credential/path flags.
 Round-2 reviews dispatched to all three existing agents; expected files are
@@ -221,3 +237,42 @@ catalog. Final campaign completion must update README/release-readiness with
 current counts, commit scoped changes locally, leave private remote releases
 unchanged, deliver the PDF with an honest readiness verdict, and pause the
 heartbeat. Do not finalize before the clock reaches the deadline.
+
+## Final completion — September 14, 2026
+
+At 02:42:55 UTC both the original three-hour minimum and the renewed 30-minute
+minimum had elapsed. The entries above preserve the campaign's intermediate
+instructions and checkpoints; they are historical, not pending work.
+
+Round 3 completed three independent reviews, a five-package proposal, author
+integration of all five packages, and technical/editorial QC with fixes.
+Astra's integrated technical QC passed, including the masked attention range
+regressions and the watermark-lag capacity exercise. Sol's requested copy fixes
+were applied. Its rendered-page review found one remaining layout problem:
+the Decision Index spilled only two rows onto its second page. The author split
+the 17 entries into deliberate nine/eight-row tables, retained every canonical
+destination, and inspected both rebuilt pages. No clipping, ambiguous rows, or
+two-row spill remains. The regression checks all 17 destinations.
+
+Two attempts at an additional final Astra release pass failed because that
+model was at capacity. Sol's attempted recheck of the final index reflow also
+failed for capacity. Neither is counted as a successful independent review.
+The completed Astra technical gate and Sol changed-page inspection remain
+valid evidence; the last index reflow received author visual verification.
+
+Final validation: 108 CPU/reference/document tests pass; PDF verification passes
+at 460 pages, 80 outline entries, 274 external link annotations, and no flagged
+sparse pages. All 51 Part-IV source URLs responded successfully. The chapter
+has five native vector diagrams; the book has 48 distinct figure definitions.
+Round-3 visual evidence covers changed leads, attention/state/sharding regions,
+exercises, part transitions, capstone, and both index pages. All 20 freshly
+rendered chapter-36 pages are byte-identical to the fully inspected round-2
+page PNGs. This is targeted visual/regression closure, not a new word-by-word
+copy edit of all 70 chapters.
+
+Verdict: suitable for technical-reviewer circulation as a clearly labeled
+working draft, not a finished public edition. Hardware code remains uncompiled
+and unexecuted here; engine integration, distributed execution, and performance
+claims still require target-system evidence. Human technical/copy review is
+also outstanding. Save scoped changes locally, leave remote releases and
+visibility unchanged, and pause the campaign heartbeat.

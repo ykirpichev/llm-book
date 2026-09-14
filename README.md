@@ -12,9 +12,11 @@ The [September 8 Part I review](docs/part1-review-2026-09-08.md) records an earl
 
 ## Read the draft
 
-The latest [five-pass revision](docs/five-pass-review-2026-09-13.md) builds to 445 pages with 95 passing CPU tests. It adds [Serving Engines and Cache Backends in Practice](manuscript/03_inference.md#serving-engines-and-cache-backends-in-practice): vLLM, SGLang, TensorRT LLM, FlashInfer, llama.cpp, and the cache/fleet ecosystem. It also updates FSDP2 and training/RL implementation paths, corrects numerical and recovery details, and strengthens the capstone. These are source-grounded explanations, not reproduced engine or accelerator benchmarks. All 44 distinct diagram proofs and the full PDF at contact-sheet scale were visually checked; see the review for limitations.
+The completed [accelerator-team campaign](docs/accelerator-team-review-2026-09-13.md) builds to 460 pages with 108 passing CPU/reference and document checks. Three review/proposal/author/QC cycles deepen accelerator portability, repair numerical edge cases, and improve the book's prose, exercises, and navigation. No accelerator compilation, device execution, or serving-engine benchmark is claimed.
 
-The new chapter [Accelerator Ecosystems Beyond CUDA and NVIDIA](manuscript/04_cuda.md#accelerator-ecosystems-beyond-cuda-and-nvidia) covers Triton, ROCm/HIP, TPU/XLA/Pallas, AWS Neuron/NKI, and a bounded porting evaluation. Its [source and validation record](docs/accelerator-ecosystems-review-2026-09-13.md) is dated September 13, 2026; it does not claim cross-device benchmark results.
+The earlier [five-pass checkpoint](docs/five-pass-review-2026-09-13.md) recorded 445 pages and 95 passing CPU tests. It added [Serving Engines and Cache Backends in Practice](manuscript/03_inference.md#serving-engines-and-cache-backends-in-practice): vLLM, SGLang, TensorRT LLM, FlashInfer, llama.cpp, and the cache/fleet ecosystem. It also updated FSDP2 and training/RL implementation paths, corrected numerical and recovery details, and strengthened the capstone. Its 44 distinct diagram proofs and full PDF at contact-sheet scale were visually checked; see that dated review for its scope and limitations.
+
+The expanded chapter [Accelerator Ecosystems Beyond CUDA and NVIDIA](manuscript/04_cuda.md#accelerator-ecosystems-beyond-cuda-and-nvidia) covers Triton, ROCm/HIP, TPU/XLA/Pallas, AWS Neuron/NKI, and a bounded porting evaluation. The [team campaign](docs/accelerator-team-review-2026-09-13.md) records its current source, code, and visual checks; the [initial chapter review](docs/accelerator-ecosystems-review-2026-09-13.md) preserves the earlier scope. Neither claims cross-device benchmark results.
 
 | Part | Manuscript |
 | --- | --- |

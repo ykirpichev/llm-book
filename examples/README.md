@@ -24,7 +24,9 @@ measurement of an LLM, embedding model, ANN index, production accuracy, or
 adversarial robustness. It teaches failure isolation and regression contracts.
 
 The attention reference is a single-head semantic calculation, not optimized
-code. The top-k example assumes immutable records with unique stable IDs; it
+code. Run `python -m unittest tests.test_examples.AttentionTests -v` for its
+dense/partition, masked-shard, and numerical-range checks. The top-k example
+assumes immutable records with unique stable IDs; it
 rejects non-finite scores. Some manuscript excerpts illustrate a different
 declared policy (such as skipping invalid scores). Policies must not be mixed
 silently when comparing implementations.

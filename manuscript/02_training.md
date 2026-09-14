@@ -140,7 +140,7 @@ Use the staged reasoning example above for the recipe questions. The checkpoint 
 
 ## Data Contracts, Provenance, and Normalization
 
-LEAD: A training dataset is a versioned product, not a folder of text. Its contract defines what may be used, what each record means, how it was transformed, and how a source can be traced or removed after publication.
+LEAD: Removing a source requires tracing it from raw object through normalized records and packed sequences to affected releases and checkpoints. That lineage makes a training dataset a versioned product with an enforceable contract.
 
 :::diagram data_pipeline|A dataset is the result of transformations and gates. Every retained example should have provenance and a reason to exist.
 
@@ -354,7 +354,7 @@ Before publishing normalized data, verify:
 
 ## Deduplication, Quality, and Contamination
 
-LEAD: Filtering changes the empirical distribution learned by the model. Deduplication, quality scoring, and contamination controls must therefore be evaluated as statistical interventions, not treated as generic cleaning steps.
+LEAD: Every deduplication or quality threshold changes the empirical training distribution. Evaluate filtering and contamination controls as statistical interventions, with explicit effects on coverage, repetition, and held-out evidence.
 
 :::diagram dedup_clusters|A candidate-generation stage proposes pairs, verification creates edges, and grouping creates units for retention or split assignment. Similarity is not transitive: a connected component need not be a clique.
 
@@ -1261,6 +1261,8 @@ Before publishing a training dataset, verify:
 - **mixture:** token-level weights, constraints, reuse caps, expected epochs, and ESS;
 - **release:** immutable manifest, digests, validation report, rollback pointer, and approvals;
 - **operations:** partial reruns, backpressure, deletion, incident response, cost, and monitoring.
+
+A release platform earns trust when its artifacts support these claims through deletion, contamination, partial failure, and a changed mixture.
 
 ## Applied Data-System Casework
 

@@ -1,10 +1,35 @@
 # Working-draft release checks
 
-## Current reviewed source — five-pass revision, September 13
+## Current source — accelerator-team completion, September 14
+
+The [completed team campaign](accelerator-team-review-2026-09-13.md), through round 3,
+builds to 460 pages, 80 outline entries, and 274 external link annotations;
+108 CPU/reference and document checks pass. Three independent reviewers feed
+each proposer/author/quality-checker cycle. The current changes deepen the
+accelerator chapter, fix attention-reference overflow, sharpen phase/state
+contracts, replace a duplicated exercise, and make the decision index exact.
+
+The accelerator chapter was inspected page by page in round 2. Round 3 checks
+the changed chapter openings, technical regions, exercise, navigation seams,
+capstone, and decision index; it is not another word-by-word full-book copy edit.
+All 51 Part-IV source URLs responded successfully. Other source checks and their
+limits remain in the dated reports below. Astra passed the integrated round-3
+technical QC. An additional Astra release pass was unavailable because of model
+capacity; it is not counted as a review. Sol checked the final changed-page
+layout and requested a balanced index. The author applied and visually checked
+that final two-page reflow; Sol's attempted recheck also hit model capacity.
+
+Device compilation, accelerator numerics/performance, real serving engines,
+and distributed cache behavior remain untested here. This is a working draft
+for technical-reviewer circulation, not a finished public edition. Independent
+human technical/copy review and publication-boundary checks remain necessary.
+No remote push, release upload, or visibility change accompanied this checkpoint.
+
+## Historical reviewed source — five-pass revision, September 13
 
 The [five-pass review](five-pass-review-2026-09-13.md) records five sequential
 coverage, mechanism, source, editorial, and adversarial/production-check cycles,
-with a disposition for all 70 chapters. The current local PDF has 445 pages,
+with a disposition for all 70 chapters. That checkpoint's PDF has 445 pages,
 80 outline entries, and 245 external link annotations; 95 CPU tests pass.
 All pages were inspected at contact-sheet scale and all 44 distinct diagram
 proofs were inspected with captions, with enlarged changed-page checks.

@@ -294,7 +294,7 @@ Before moving on, explain why local top-k can be merged for immutable records bu
 
 ## Online Statistics and Sampling
 
-LEAD: A useful online summary must preserve the quantity the reader actually needs. Stable moments describe a distribution's center and spread; a uniform sample preserves inclusion probabilities. Neither replaces an explicit tail or window contract.
+LEAD: Moments, samples, and tail or window summaries answer different questions. Stable moments describe center and spread; uniform samples preserve inclusion probabilities. Each needs a contract for the quantity and time range it represents.
 
 The runnable `examples/streaming.py` reference includes mergeable Welford moments and exact immutable-record top-k. Its tests compare moments against Python's independent statistics implementation and compare partitioned top-k against a full sort. The remaining algorithms below are derivations and illustrative excerpts, not implementations certified by that suite.
 
@@ -950,7 +950,7 @@ Before shipping a streaming summary, verify:
 7. Derive the HyperLogLog update, estimator intuition, error-versus-memory tradeoff, union merge, and limitations for deletion and intersection.
 8. Derive Bloom-filter false-positive probability, optimal hash count, and memory formula. State the assumptions behind "no false negatives."
 9. Explain KLL compaction from first principles, including its rank-error mechanism, query, merge, and the difference between rank and value error.
-10. Design a self-contained event-time heavy-hitter service with late revisions, checkpoint recovery, skew handling, approximation metadata, and a numerical state budget.
+10. Keep the service's five-minute windows, 20-minute allowed lateness, 50,000 tenant-subshard pairs, and 304,528-byte sketches. Watermark lag grows to eight minutes, but retention is capped at six windows. Using the chapter's nominal window-count model, calculate the state requirement and explain the capacity, completeness, and recovery decision.
 
 ### Worked Solutions
 
@@ -1136,23 +1136,15 @@ To query rank `r`, attach each retained item its level weight, sort all retained
 
 Rank error is not value error. With 500 zeros and 500 values equal to one billion, a small median rank interval can allow either value. State whether the guarantee is pointwise or simultaneous, the failure probability, handling of duplicates and weights, and the exact quantile convention. KLL does not support arbitrary subtraction; sliding-window deletion needs pane decomposition, an expiration-aware sketch, or retained data.
 
-#### 10. Event-time heavy hitters
+#### 10. A retention cap cannot advance a watermark
 
-Define a half-open window, stable event identity, partition rule, and expected lateness distribution. Use exact keyed counts if feasible; otherwise pair a mergeable frequency sketch with a candidate summary whose recall contract is explicit. Include estimator parameters and seeds in state.
+The nominal requirement becomes `ceil((5 + 20 + 8) / 5) = 7` windows. Dense sketch tables alone need `50,000 * 7 * 304,528 / 2^30`, about 99.3 GiB. Six windows consume about 85.1 GiB, leaving a 14.2 GiB shortfall before candidates, deduplication, snapshots, and object overhead. Trigger alignment can require another boundary window; this estimate is a planning floor under the stated model, not an exact peak allocation.
 
-For the proposed service, use five-minute half-open event-time windows. Partition by tenant and a stable subshard; salt measured hot signatures only if a second stage recombines their partial counts. Per active window, maintain Count-Min point estimates, a mergeable Misra-Gries candidate table, `F_1`, revision, source progress, and schema/seed metadata. Every key above `F_1/(r+1)` is a candidate; if the kth true key may fall below that, increase `r` or provide an exact path.
+The seventh window still accepts legitimate corrections. Increase or tier capacity, or use declared backpressure and durable buffering while recovering source progress; buffering alone cannot free already retained state. If the hard cap forces eviction, mark the affected result incomplete and preserve the late-data/reconstruction policy. Memory pressure cannot justify labeling an unfinished window final.
 
-Generate source-aware watermarks and take the minimum over non-idle inputs. Emit early speculative results, an on-time revision when the watermark passes window end, late revisions during 20 minutes of allowed lateness, and a final revision at the retention boundary. Route later events to a durable side output and measure them. A watermark is a progress claim, so on-time does not mean complete.
+Checkpoint completeness flags and output revisions with their source-offset boundary. Otherwise a restore can resurrect an evicted window as apparently complete, lose an accepted correction, or publish a stale revision. The changed workload therefore needs both a larger state budget and a tested degraded-result contract.
 
-Use atomic upserts keyed by tenant and window with monotonically increasing revisions. A pane should carry estimated counts, error bounds, completeness class, watermark, dropped-event count, and estimator version. Do not append unversioned competing top-k lists.
-
-Merge compatible Count-Min tables by addition and Misra-Gries tables by keywise addition plus pruning. For each candidate, emit interval `[max(0,f_hat-epsilon F_1), f_hat]`. Allocate a simultaneous failure budget for the complete independently discovered candidate set before selecting displayed winners. If boundary intervals overlap, mark order uncertain or verify exact counts.
-
-Checkpoint state at barriers that name a consistent source-offset prefix. On restore, load the snapshot, seek to those offsets, and write idempotently by revision or transactionally with the checkpoint. Deduplicate stable event IDs when redelivery can cross that boundary. Monitor watermark lag, open windows, bytes, checkpoint age, late rate, duplicate rate, and rank stability.
-
-Capacity arithmetic is mandatory. Five-minute windows plus 20-minute lateness retain about five windows. At 50,000 active tenant-subshard pairs and `304,528` bytes per dense sketch, Count-Min tables alone consume about `70.9 GiB`. Tier exact sparse maps for low-volume tenants, allocate dense sketches only when justified, reduce subshards, and choose `epsilon` from a business count gap. Include candidate, deduplication, object, checkpoint, and stalled-watermark overhead.
-
-Backpressure, a stalled watermark, and hot keys are correctness concerns. Prefer throttling and durable buffering. Any forced retention cap must mark results incomplete. If overload sampling is permitted, record inclusion probabilities and use a weighted estimator; silent loss biases counts and can reorder the output.
+The streaming arc is complete; the next chapter is an optional implementation refresher, while application-design readers can continue at **An Engineering System Design and Review Method** or **RAG, Vector Search, and Evaluation Pipelines**.
 
 ### Further Study and Primary References
 
@@ -1636,3 +1628,5 @@ Measure latency from request arrival to verified completion, including tool queu
 ### Part VI closing principle
 
 Production algorithms earn trust by making state, approximation, authority, and recovery explicit. The same rule governs a streaming sketch, a retrieval service, and an agent loop: define the contract, bound the failure, measure the outcome, and keep consequential control outside an unverified prediction.
+
+Part VII uses these contracts to judge which frontier mechanisms transfer to a real workload and which claims still need an experiment.

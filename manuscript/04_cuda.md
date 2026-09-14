@@ -950,7 +950,7 @@ Fusion can change operation order, numerical rounding, tie behavior, RNG indexin
 
 ## FlashAttention and IO-Aware Exact Attention
 
-LEAD: FlashAttention is not an approximate attention mechanism. It is an exact tiled schedule that avoids materializing the quadratic score and probability matrices in HBM.
+LEAD: FlashAttention computes dense attention through a tiled memory schedule that avoids writing the quadratic score and probability matrices to HBM.
 
 Online softmax made the merge rule available. FlashAttention is that rule applied to attention tiles so the running example's prefill path never writes `S` or `P` to HBM. Exact here means the same dense-attention operation without a sparsity or low-rank approximation; floating-point order and kernel precision can still change numerical results.
 
@@ -1109,7 +1109,7 @@ Training/prefill has many query rows and large tiles, enabling compute reuse and
 
 ## Blackwell Pipelines and Modern Attention Kernels
 
-LEAD: Faster matrix units do not automatically make a compound kernel faster. On modern GPUs, the main problem is often keeping several asynchronous engines supplied while preserving the lifetime and numerical meaning of every intermediate.
+LEAD: A compound GPU kernel must keep several asynchronous engines supplied while preserving every intermediate's lifetime and numerical meaning. Its speed depends on how those engines cooperate, as well as their individual throughput.
 
 ### Separate the hardware resources
 
@@ -1184,7 +1184,7 @@ An acceptance ladder is: compare against an FP32 reference on adversarial rows; 
 
 ### Choose the implementation boundary
 
-Use a library when its supported operation matches the contract. Use a kernel language or template system when fusion, a layout, or a workload specialization creates a measurable opportunity. Use hand-written low-level instructions only when their extra control addresses an observed limit and the team can maintain synchronization and architecture-specific tests. CuTe DSL and Triton change how schedules are expressed; they do not remove tile lifetimes, register pressure, or numerical obligations.
+Use a library when its supported operation matches the contract. Use a kernel language or template system when fusion, a layout, or a workload specialization creates a measurable opportunity. Use hand-written low-level instructions only when their extra control addresses an observed limit and the team can maintain synchronization and architecture-specific tests. [CuTe DSL](https://docs.nvidia.com/cutlass/latest/media/docs/pythonDSL/overview.html) and Triton change how schedules are expressed; they do not remove tile lifetimes, register pressure, or numerical obligations.
 
 Compare three baselines explicitly: a readable mathematical reference for semantics, a production implementation for performance, and the current deployed end-to-end path for value. A scalar CUDA loop is an excellent correctness starting point and usually an inappropriate headline performance denominator.
 
@@ -1204,7 +1204,9 @@ Prefill attention and GEMM covered the compute-rich path. This section specializ
 
 ### Serving contracts restated for kernel work
 
-Autoregressive decode keeps, for every layer and every active sequence, the keys and values of tokens processed so far, including the prompt. That working set is the **KV cache**. Its lifetime follows requests, not training batches. Capacity is measured as `2 * tokens * layers * KV_heads * head_dimension * bytes_per_element`, plus allocator fragmentation; the factor two counts K and V.
+For the running full-history GQA model, decode retains each layer's keys and values for tokens processed so far, including the prompt. That working set is the **KV cache**. Its lifetime follows requests, not training batches. The element payload is `2 * tokens * layers * KV_heads * head_dimension * bytes_per_element`, summed over active sequences; the factor two counts K and V, and physical allocation adds overhead.
+
+Other architectures need a different state ledger. Part I's hybrid example carries recurrent matrices and convolution history alongside attention KV; a port, prefix restore, or handoff must preserve them at the same accepted token boundary.
 
 A **paged KV cache** stores tokens in fixed-size physical pages and maintains a block table from logical token blocks to physical pages. Kernels must translate `(sequence, position)` into a page and offset, then load K/V vectors. The page size trades fragmentation against contiguous access and metadata overhead.
 
@@ -1291,7 +1293,7 @@ With grouped-query attention, several query heads read one KV head. Map those qu
 
 ### KV-cache quantization
 
-Quantized K/V reduces capacity and bandwidth. The kernel reads packed values plus scales, dequantizes into compute registers, and accumulates in higher precision. Scale granularity may be per tensor, head, channel, page, or token group.
+Quantized K/V reduces stored bytes and potential read traffic, leaving room for more context or requests in a fixed memory budget. The kernel reads packed values plus scales, dequantizes into compute registers, and accumulates in higher precision. Scale granularity may be per tensor, head, channel, page, or token group.
 
 Finer scales improve fidelity and increase metadata traffic. Dynamic token scales add append-time reduction. K and V can have different sensitivity and therefore different formats.
 
