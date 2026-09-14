@@ -58,6 +58,23 @@ class BuildBookTests(unittest.TestCase):
         self.assertNotIn("<i>", rendered)
         self.assertNotIn("\x00", rendered)
 
+    def test_code_status_keeps_with_panel_across_spacer(self) -> None:
+        from unittest.mock import Mock
+        source = Mock()
+        source.read_text.return_value = "Example status: Explanatory pseudocode.\n\n```text\nrun()\n```\n"
+        _, story = build_book.build_story([source], 400)
+        panel_index = next(i for i, item in enumerate(story) if isinstance(item, build_book.CodePanel))
+        self.assertTrue(story[panel_index - 2].getKeepWithNext())
+        self.assertTrue(story[panel_index - 1].getKeepWithNext())
+
+    def test_table_keeps_short_introduction(self) -> None:
+        from unittest.mock import Mock
+        source = Mock()
+        source.read_text.return_value = "A compact contract includes:\n\n| A | B |\n| --- | --- |\n| one | two |\n"
+        _, story = build_book.build_story([source], 400)
+        self.assertIsInstance(story[-1], build_book.KeepTogether)
+        self.assertEqual(story[-1]._content[0].getPlainText(), "A compact contract includes:")
+
     def test_slug_is_stable_and_bounded(self) -> None:
         first = build_book.slugify("A Heading With Punctuation!")
         second = build_book.slugify("A Heading With Punctuation!")
@@ -85,13 +102,110 @@ class BuildBookTests(unittest.TestCase):
     def test_diagram_content_stays_inside_canvas(self) -> None:
         import re
         source = (ROOT / "src" / "build_book.py").read_text()
-        for name in re.findall(r'name == "([a-z_]+)"', source):
+        names = re.findall(r'name == "([a-z_]+)"', source) + list(build_book.FIGURES)
+        for name in names:
             drawing = build_book.diagram(name, 407)
             x0, y0, x1, y1 = drawing.getBounds()
             self.assertGreaterEqual(x0, -1, name)
             self.assertGreaterEqual(y0, -1, name)
             self.assertLessEqual(x1, drawing.width + 1, name)
             self.assertLessEqual(y1, drawing.height + 1, name)
+
+    def test_manuscript_diagram_names_resolve(self) -> None:
+        import re
+        for path in sorted((ROOT / "manuscript").glob("*.md")):
+            for name in re.findall(r"^:::diagram ([a-z_]+)\|", path.read_text(), re.M):
+                with self.subTest(name=name):
+                    build_book.diagram(name, 407)
+        with self.assertRaises(ValueError):
+            build_book.diagram("missing_figure", 407)
+
+    def figure_labels(self, name):
+        # Wording guards supplement, but do not replace, semantic visual review.
+        return [item.text for item in build_book.diagram(name, 407).contents
+                if isinstance(item, build_book.String)]
+
+    def test_request_diagram_uses_client_timestamps(self):
+        labels = self.figure_labels("request_lifecycle")
+        self.assertIn("client receipt", labels)
+        self.assertIn("t1: token 1", labels)
+        self.assertIn("TTFT = t1 - t0", labels)
+
+    def test_accelerator_diagram_separates_contract_software_and_hardware(self):
+        labels = self.figure_labels("accelerator_portability")
+        for label in ["Shared model contract", "CUDA", "ROCm", "XLA / Pallas",
+                      "Neuron / NKI", "NVIDIA", "AMD", "TPU", "AWS Trainium"]:
+            self.assertIn(label, labels)
+        self.assertTrue(any("not feature parity" in label for label in labels))
+
+    def test_serving_stack_keeps_state_management_outside_kernels(self):
+        labels = self.figure_labels("serving_stack")
+        for label in ["Scheduler", "Model runner", "KV manager", "Device kernels",
+                      "Optional connector", "Remote KV tiers"]:
+            self.assertIn(label, labels)
+        self.assertIn("Connectors move state; they do not admit requests.", labels)
+
+    def test_accelerator_examples_keep_denominator_placement_and_miss_contracts(self):
+        self.assertIn("Divide by N = 3", self.figure_labels("rmsnorm_port"))
+        self.assertIn("not the padded tile width of 4", self.figure_labels("rmsnorm_port"))
+        self.assertIn("8 GiB: each head replicated twice", self.figure_labels("kv_port_placement"))
+        self.assertIn("Miss: admission policy", self.figure_labels("compile_lifecycle"))
+        self.assertIn("if admitted", self.figure_labels("compile_lifecycle"))
+        fragments = self.figure_labels("rmsnorm_fragments")
+        self.assertIn("Combine sums, then inverse RMS", fragments)
+        self.assertEqual(fragments.count("Partial squared sum"), 2)
+
+    def test_decoder_diagram_separates_sums_from_outputs(self):
+        labels = self.figure_labels("decoder_block")
+        self.assertEqual(labels.count("+"), 2)
+        self.assertIn("X next", labels)
+        self.assertFalse(any(label.startswith("Add:") for label in labels))
+
+    def test_speculation_diagram_names_both_branches(self):
+        labels = " ".join(self.figure_labels("speculative_decoding"))
+        self.assertIn("correction on rejection", labels)
+        self.assertIn("target bonus if all proposals pass", labels)
+        self.assertIn("EOS", labels)
+
+    def test_pipeline_diagram_has_four_balanced_microbatches(self):
+        labels = self.figure_labels("pipeline_bubbles")
+        for batch in "ABCD":
+            self.assertEqual(labels.count(batch), 4)
+        self.assertTrue(any("3/7" in label for label in labels))
+        self.assertTrue(any("Backward is not shown" in label for label in labels))
+
+    def test_agent_diagram_routes_trusted_authority(self):
+        labels = self.figure_labels("agent_trust_boundary")
+        self.assertIn("Trusted caller authority bypasses the model", labels)
+        self.assertIn("Policy gate", labels)
+
+    def test_figure_and_caption_share_keep_group(self) -> None:
+        from unittest.mock import Mock
+        source = Mock()
+        source.read_text.return_value = ":::diagram token_alignment|A caption.\n"
+        _, story = build_book.build_story([source], 407)
+        group = story[-1]
+        self.assertIsInstance(group, build_book.KeepTogether)
+        self.assertIsInstance(group._content[1], build_book.Drawing)
+        self.assertEqual(group._content[2].getPlainText(), "A caption.")
+
+    def test_figure_keeps_its_introducing_heading(self) -> None:
+        from unittest.mock import Mock
+        source = Mock()
+        source.read_text.return_value = "### Supervision\n\n:::diagram token_alignment|A caption.\n"
+        _, story = build_book.build_story([source], 407)
+        group = story[-1]
+        self.assertIsInstance(group, build_book.KeepTogether)
+        self.assertIsInstance(group._content[0], build_book.Heading)
+        self.assertIsInstance(group._content[2], build_book.Drawing)
+
+    def test_equation_keeps_its_explanation(self) -> None:
+        from unittest.mock import Mock
+        source = Mock()
+        source.read_text.return_value = ":::equation O = A V|Weighted values.\n"
+        _, story = build_book.build_story([source], 407)
+        self.assertIsInstance(story[-1], build_book.KeepTogether)
+        self.assertEqual(story[-1]._content[-1].getPlainText(), "Weighted values.")
 
 
 if __name__ == "__main__":

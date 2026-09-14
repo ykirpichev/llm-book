@@ -37,14 +37,15 @@ Before choosing an engine or optimization, define model semantics, supported req
 | Parallel and disaggregated serving | Place phases and state across devices and pools |
 | Quantization and adapters | Shrink bytes and multiply variants without changing the product |
 | Production and reliability | Operate the whole system through failures and rollouts |
+| Engines and cache backends | Read real implementations and run a controlled comparison |
 
 ## Request Lifecycle, Metrics, and Workload Models
 
-LEAD: An LLM request is a distributed transaction with a long, streaming response. Correct measurement separates queueing, model phases, transport, and user-visible cadence instead of collapsing everything into one throughput number.
+LEAD: An LLM request is a long-lived operation whose state spans several components. Once a token reaches the user, it cannot be rolled back like an uncommitted database write. Measure queueing, model work, and delivery separately to locate delays and define safe retries.
 
-The map starts here because every optimization in this part is judged against these measurements. For the running service the contract is concrete: a request must show its first token within 1.5 seconds at the 99th percentile and must never let the visible gap between tokens exceed 100 milliseconds.
+The map starts here because every optimization in this part is judged against these measurements. For the running service the contract is concrete: p99 time to first token is at most 1.5 seconds, and p99 visible inter-token gap is at most 100 milliseconds. These percentile targets allow a tail beyond the thresholds; a hard maximum-gap guarantee would be a stronger contract.
 
-:::diagram request_lifecycle|A request crosses gateway, queue, prefill, decode, and streaming boundaries. Each boundary needs an owner and a timestamp before any latency claim is meaningful.
+:::diagram request_lifecycle|Client-observed time to first token ends at receipt, not at the first GPU result. Inter-token gaps are measured between successive receipts. The processing path is schematic; decode and delivery repeat after the first token, and cleanup follows completion or cancellation.
 
 ### The request path
 
@@ -70,17 +71,17 @@ Let `a` be arrival at the service boundary, `s` the first model-service start, `
 
 | Metric | Definition | What it reveals |
 | --- | --- | --- |
-| Queue delay | `s - a` | Admission pressure and scheduler delay |
+| Pre-model delay | `s - a` | Preprocessing, routing, admission, and waiting before model execution |
 | Time to first token | `f - a` | Queueing, preprocessing, prefill, first sampling, and transport |
 | Inter-token latency | `o_i - o_(i-1)` | Per-step cadence and stalls |
 | Time per output token | Usually `(o_last - f) / (N - 1)` | Average generation speed after the first token |
 | End-to-end latency | `o_last - a` | Total user wait for a completed response |
 
-Time per output token is an average; it can hide a one-second generation stall among many fast tokens. Report an inter-token latency distribution or a maximum-gap metric for interactive products. Also define whether the first token means sampled on the GPU, serialized by the server, received by the gateway, or observed by the client. A metric without a boundary is ambiguous.
+Measure queue delay from explicit queue-entry and queue-exit spans; `s-a` also includes preprocessing and routing. Time per output token is defined only for `N>1` and is an average: it can hide a one-second generation stall among many fast tokens. Report an inter-token latency distribution or a maximum-gap metric for interactive products. Distinguish final-token latency from terminal-response latency if cleanup or a final event follows. Also define whether the first token means sampled on the GPU, serialized by the server, received by the gateway, or observed by the client. A metric without a boundary is ambiguous.
 
 For non-streaming clients, end-to-end latency matters most, but internal first-token and cadence metrics still locate faults. For streaming clients, a reasonable SLO often has separate thresholds for time to first token and inter-token latency.
 
-Decompose the running service's budget before optimizing anything. Of the 1.5-second first-token allowance, transport and tokenization cost tens of milliseconds and prefill for a 2,000-token prompt costs tens to low hundreds of milliseconds on a healthy replica. The remainder - often more than a second - is queueing and scheduling slack. That allocation is why later sections spend more effort on admission, batching, and cache reuse than on shaving prefill kernels.
+Decompose the running service's budget before optimizing anything. An illustrative allocation might assign tens of milliseconds to transport and tokenization and tens to low hundreds to a 2,000-token prefill, leaving substantial allowance for queueing and scheduling. Those times are hypotheses to measure, not benchmark results. Component p99 values do not generally add to end-to-end p99, so validate the joint request trace. That measurement determines how much effort belongs in admission, batching, cache reuse, or prefill kernels.
 
 ### Throughput, goodput, and capacity
 
@@ -88,9 +89,11 @@ Report input tokens per second and output tokens per second separately. They exe
 
 **Goodput** is work that satisfies the product contract. One useful definition is:
 
-`goodput = requests meeting every required SLO / measurement interval`
+`goodput = requests meeting declared per-request acceptance limits / measurement interval`
 
 A request that eventually completes but violates its time-to-first-token or token-cadence requirement consumes capacity without contributing to goodput. This makes goodput a better autoscaling and architecture objective than raw throughput under strict latency objectives.
+
+A percentile SLO belongs to a population and interval, not to one request. Define the request-level limits used for goodput separately. For cadence, state whether the population contains all token gaps, one summary per request, or one summary per session. Pooling gaps weights long answers more heavily. A p99 over all gaps below 100 ms does not mean 99 percent of requests avoid a gap above 100 ms: even under independent one-percent per-gap violations, a 300-token answer has about `1-0.99^299 = 95 percent` probability of at least one violation. Real gaps are correlated, so measure the request/session experience directly rather than using that toy calculation as a predictor.
 
 Capacity is not the peak point on a throughput curve. It is the highest sustained arrival process for which tail latency, error rate, memory reserve, quality, and fairness remain within contract. State the percentile and duration: for example, 99th-percentile first-token latency under a thirty-minute replay with a specified burst model.
 
@@ -205,7 +208,7 @@ Multimodal models may add an encoder phase before prefill. Image, audio, or vide
 | KV behavior | Creates prompt state | Reads history and appends one position |
 | Primary user metric | Time to first token | Token cadence and output rate |
 
-:::diagram roofline|Arithmetic intensity helps explain why a large prefill can approach compute throughput while small-batch decode remains limited by bytes moved per generated token.
+:::diagram roofline|A schematic roofline, not measured benchmark points. Large prefill can have enough arithmetic intensity to approach the compute ceiling; small-batch decode often moves too many bytes per generated token. Actual placement depends on model, batch, context, and hardware.
 
 ### Transformer work per phase
 
@@ -231,11 +234,11 @@ Let `W` be active model weight bytes per replica or model-parallel group and `BW
 
 `t_weights >= W / BW_w`
 
-Let `K(S, B)` be KV bytes read at current context and batch, `BW_kv` the sustainable bandwidth for that access pattern, `C` collective time, and `O` launch, scheduler, sampling, and synchronization overhead. A deliberately conservative step model is:
+Let `K(S, B)` be KV bytes read at current context and batch. When weights and KV share one HBM interface with bandwidth ceiling `BW`, their traffic consumes the same resource. Ignoring other traffic gives:
 
-`t_step >= max(t_weights, t_kv, t_compute) + C + O`
+`t_step >= max((W + K(S, B)) / BW, t_compute)`
 
-Some traffic and compute overlap, so do not blindly sum all resource bounds. Measure which terms overlap on the real engine. The model is valuable because it predicts how batch, precision, context, and topology should move the result.
+Compute may overlap memory traffic, but weight and KV bytes still count against the shared bandwidth budget. With distinct memory paths, use a separate traffic bound for each. Add collective and host overhead only to the extent that it is exposed on the critical path; summing all measured communication with the roofline term can double-count overlap. Use consistent per-device or group-wide byte and bandwidth units, and measure access-pattern efficiency rather than treating an unrelated throughput measurement as a ceiling.
 
 If latency is near the weight-read bound, optimizing scalar arithmetic cannot produce a large gain. Reduce bytes, increase batch reuse, improve placement, or change the model. If latency is far above every bound, examine kernel efficiency, launch gaps, collectives, and scheduling.
 
@@ -245,7 +248,7 @@ Plug in the numbers. Weights are approximately 14 GB in FP16 and the replica sus
 
 `t_weights >= 14e9 / 3e12 = 4.7 ms`
 
-That is a ceiling near 210 steps per second, shared by every sequence in the batch. KV traffic starts small by comparison: at batch 8 with 4,096-token contexts, a step reads about `8 * 4096 * 131 kB = 4.3 GB`, roughly 1.4 ms of additional bandwidth time. The two terms cross when the batch holds about 107,000 cached tokens (`14 GB / 131 kB`) - for example, eight sequences of about 13,000 tokens each. Below that point the service is mostly buying weight reads; beyond it, context length governs the step. This one number reappears in the KV, quantization, and disaggregation sections.
+That is a weight-only ceiling near 210 steps per second, shared by every sequence in the batch. At batch 8 with 4,096-token contexts, a step additionally reads about `8 * 4096 * 131 kB = 4.3 GB` of KV, raising the shared-HBM floor to about 6.1 ms before other costs. Weight and KV byte counts are equal when the batch holds about 107,000 cached tokens (`14 GB / 131 kB`) - for example, eight sequences of about 13,000 tokens each. This is a traffic crossover, not a guarantee about which kernel controls latency. It reappears in the KV, quantization, and disaggregation sections.
 
 ### KV-cache accounting
 
@@ -332,7 +335,7 @@ Weight traffic is roughly stable per step, while each query reads a KV history t
 
 #### 5. Chunked prefill
 
-Reserve a decode budget that maintains the declared maximum token gap, then spend remaining per-iteration compute or token budget on one or more prefill chunks. Adapt chunk size to decode pressure, estimated chunk time, prompt progress, priority, and pipeline shape. Age long prompts so they cannot starve, reserve KV before executing a chunk, and measure both cadence improvement for active decodes and added first-token latency for chunked requests.
+Reserve a decode budget against the declared token-gap SLO, then spend remaining per-iteration compute or token budget on one or more prefill chunks. Adapt chunk size to decode pressure, estimated chunk time, prompt progress, priority, and pipeline shape. Age long prompts so they cannot starve, reserve KV before executing a chunk, and measure both cadence improvement for active decodes and added first-token latency for chunked requests. Validate the p99 gap over request traces; a per-iteration budget does not guarantee a hard maximum at the client.
 
 #### 6. Multimodal accounting
 
@@ -342,7 +345,7 @@ Add preprocessing and encoder time, memory, and queueing as a separate phase. Ac
 
 LEAD: KV state is the working set of autoregressive inference. Its lifetime follows requests, not batches, so allocation, sharing, eviction, placement, and security are first-class serving decisions.
 
-The previous section priced KV by the byte; this section manages its lifetime. On the running replica, 131 kB per token means one long conversation can hold hundreds of megabytes hostage, and the shared 500-token system prefix costs about 65 MB per copy - large enough that whether it is shared or duplicated is a capacity decision, not a detail.
+At 131 kB per token on the running replica, a 500-token system prefix occupies about 65 MB. Storing it once for compatible requests can save substantial capacity. This chapter follows that state from allocation through sharing, eviction, and release.
 
 ### Logical state and physical storage
 
@@ -383,7 +386,11 @@ A robust allocator maintains:
 
 Reserve before launch rather than discovering out-of-memory after some requests in a batch have advanced. For uncertain output length, reserve a bounded horizon and repeat admission checks. A reservation is a promise to the scheduler, not necessarily immediate physical zero-filling.
 
+Output length is uncertain, so “reserve the declared maximum” and “reserve only the next token” are both poor universal policies. The first strands capacity; the second admits combinations that can fail together. Recent work on [robust KV-cache management under output-length uncertainty](https://arxiv.org/abs/2607.16892) makes this a joint decision across parallelism, reservation, routing, and prefix reuse. The durable lesson is to calibrate a length distribution by workload slice, reserve against an explicit tail-risk budget, and re-admit as evidence arrives. Treat paper-reported gains as workload-specific until replayed on the service's own arrival, prefix, and output correlations.
+
 ### Prefix cache identity
+
+:::diagram kv_page_sharing|Two compatible requests map their shared full prefix to the same physical pages and keep separate writable tails. Logical block order is independent of physical placement; reference counts protect shared pages from premature reuse.
 
 KV for a prefix is reusable only when the computation that produced it is identical under the product contract. A key commonly includes:
 
@@ -413,7 +420,7 @@ Measure four distinct outcomes:
 
 A high hit rate on tiny prefixes may save little. A lower hit rate on long system prompts can be far more valuable.
 
-The running service makes the distinction concrete. Its shared 500-token system prefix costs about 65 MB to retain and saves 500 tokens of prefill on nearly every request. A per-user greeting of a few tokens may hit just as often while saving almost nothing and fragmenting the pool with tiny published blocks.
+The running service makes the distinction concrete. Its shared 500-token system prefix costs about 65 MB to retain and can avoid up to 500 positions of prefill on compatible requests, subject to block alignment and any required logit recomputation. A per-user greeting of a few tokens may be common while saving almost nothing or failing to fill even one reusable block. Count actual reused positions and allocation overhead.
 
 ### Eviction as value density
 
@@ -432,6 +439,8 @@ In a replicated fleet, the router chooses between queue delay and cached state. 
 Sticky routing maximizes locality but can create hot spots. Pure least-loaded routing destroys reuse. A cache-aware router considers both, places common prefixes on enough replicas, and falls back when a cache owner is unhealthy or overloaded.
 
 Do not transfer a prefix merely because it exists elsewhere. Compare transfer time and network contention with recomputation. For a short prefix or a compute-rich prefill worker, recomputing may be cheaper and simpler.
+
+Several maintained systems now make this design concrete. [NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo) consumes worker cache events for KV-aware routing and supports separate prefill and decode pools; [LMCache](https://github.com/LMCache/LMCache) extends reusable KV across GPU, CPU, local storage, and remote backends; [llm-d](https://github.com/llm-d/llm-d) exposes heuristic and event-driven prefix routing, a cache index, tiered offload, and disaggregated transfer; and [Mooncake](https://github.com/kvcache-ai/Mooncake) is a reference implementation of KV-centric disaggregation. These are implementation maps, not interchangeable libraries. Before adopting one, trace five contracts end to end: block identity, source-of-truth cache state, ownership and invalidation, transfer format and transport, and routing under stale events or worker failure.
 
 ### Offload and migration
 
@@ -494,7 +503,7 @@ With phase costs and KV lifetime established, the scheduler is where they collid
 
 ### Iteration-level scheduling
 
-Autoregressive requests finish at different output lengths. A static batch keeps completed slots idle or delays their responses until the longest sequence finishes. Iteration-level scheduling rebuilds the active batch at token or bounded-chunk boundaries. Finished and cancelled requests leave; newly admitted work can enter.
+Autoregressive requests finish at different output lengths. A static batch keeps completed slots idle until the batch finishes; an implementation that also waits to return results can delay short responses further. Iteration-level scheduling rebuilds the active batch at token or bounded-chunk boundaries. Finished and cancelled requests leave; newly admitted work can enter.
 
 :::diagram continuous_batching|Continuous batching fills freed decode slots over time. The scheduler gains efficiency but must decide admission, phase mixing, fairness, and shape compatibility at every boundary.
 
@@ -536,7 +545,7 @@ A robust policy first reserves enough decode work to protect imminent deadlines,
 
 Pipeline-parallel execution may prefer iterations with similar compute to reduce bubbles. Chunk size should therefore consider stage balance as well as a single-device token budget.
 
-The running service shows why the compromise is necessary. An uninterrupted 2,000-token prefill occupies the replica for tens to low hundreds of milliseconds, which alone can exceed the 100 ms inter-token budget of every active decode. Chunking that prompt into a few hundred tokens per iteration bounds each gap while adding modest total prefill time; the long request pays a slightly later first token so that dozens of active streams keep their cadence.
+The running service shows why the compromise matters. If an uninterrupted 2,000-token prefill takes more than 100 ms, it can push active decodes past the gap threshold. Chunks of a few hundred tokens are a starting hypothesis; only measured iteration times show whether they protect cadence and how much first-token delay they add. Even small chunks do not guarantee a gap bound when decode, collectives, and host work already consume the budget.
 
 ### Fairness and priorities
 
@@ -575,17 +584,16 @@ Example status: Illustrative Python excerpt; not standalone.
 def schedule_tick(state, target_ms):
     candidates = state.ready_requests()
     selected = []
-    predicted_ms = 0.0
 
     for req in deadline_and_fairness_order(candidates):
         unit = next_feasible_unit(req, state)
         if not reserve_kv(unit, state.kv_pool):
             continue
-        if predicted_ms + estimate_ms(unit, selected) > target_ms:
+        trial_ms = estimate_ms(selected + [unit])
+        if trial_ms > target_ms:
             release_reservation(unit)
             continue
         selected.append(unit)
-        predicted_ms = estimate_ms(selected)
 
     return group_by_engine_shape(selected)
 ```
@@ -619,7 +627,7 @@ Maintain separate objective classes but one global capacity and memory governor.
 
 #### 2. Long prefills
 
-Split them into cost-bounded chunks. Reserve a decode time budget that keeps active requests below the maximum token gap, then schedule chunks in remaining capacity. Increase a waiting prompt's virtual priority with age and guarantee a minimum service share so continuous decode load cannot starve it. Adapt chunk size to measured phase cost and pipeline balance; report the added first-token latency paid by the long request.
+Split them into cost-bounded chunks. Reserve decode time against the token-gap SLO, then schedule chunks in remaining capacity. Increase a waiting prompt's virtual priority with age and allocate a minimum service share under the admitted-load policy so continuous decode load cannot starve it. Adapt chunk size to measured phase cost and pipeline balance; report both the observed gap distribution and the added first-token latency paid by the long request.
 
 #### 3. Near-full KV
 
@@ -641,7 +649,7 @@ Near saturation, queue delay and tail risk rise sharply, bursts cannot be absorb
 
 LEAD: Decoding is part of the model's externally visible semantics. Acceleration may reorganize computation, but it must preserve the declared probability distribution, constraints, random-number mapping, and termination behavior unless approximation is explicitly allowed.
 
-Scheduling decided when a request runs; this section governs what its tokens mean and how to produce them faster without changing them. The running service's 4.7 ms weight-streaming floor is the number to beat: any acceleration that commits more than one token per floor-priced step is attacking the sequential bottleneck itself.
+The running service's weight-only model gives a 4.7 ms floor per ordinary small-batch decode step. Speculative decoding tries to amortize one target-weight pass across several committed tokens. Whether it helps depends on proposal cost, acceptance, and verification work; first we need to define the distribution those tokens must follow.
 
 ### The token-selection pipeline
 
@@ -674,7 +682,7 @@ Do not promise the strongest level unless the whole logits pipeline, numeric pat
 
 ### Structured and constrained decoding
 
-Structured output restricts the next-token set according to a grammar, schema, regular expression, or application state. A common engine compiles the constraint into a finite-state representation and maintains a state per sequence. At each step it finds allowed tokens and masks the rest before sampling.
+Structured output restricts the next-token set according to a grammar, schema, regular expression, or application state. An engine compiles the constraint and maintains parser state per sequence. Regular constraints can use finite-state machinery; unbounded nesting generally requires a stack or an equivalent context-free parser. At each step the engine finds allowed tokens and masks the rest before sampling.
 
 The hard parts are often outside the model:
 
@@ -688,7 +696,7 @@ Precompute token-to-transition tables where possible, cache grammar artifacts by
 
 ### Beam search, best-of, and branch state
 
-Beam search maintains multiple scored hypotheses and selects expansions under a length-normalized objective. Best-of samples several candidates and returns a selected one. Both multiply KV state and scheduling work. Paged copy-on-write can share the common prefix, but diverged branches need private blocks.
+Beam search maintains multiple scored hypotheses and selects expansions under a declared sequence score, often with a length penalty or normalization. Best-of samples several candidates and returns a selected one. Both multiply KV state and scheduling work. Paged copy-on-write can share the common prefix, but diverged branches need private blocks.
 
 Define whether non-returned candidates count against token quotas and billing, how stop rules apply, and whether streaming is possible before the winner is known. Prune and release branches promptly. A scheduler that counts one API request rather than its active branches can under-reserve memory badly.
 
@@ -890,13 +898,13 @@ For transferred KV bytes `X` and sustainable path bandwidth `BW`, a lower bound 
 
 The actual path includes source readiness, registration, serialization or layout conversion, network queueing, destination placement, and synchronization. Long prompts create more state to transfer but also more prefill work that specialization may save.
 
-For the running service, a 2,000-token prompt hands off about 260 MB of KV (`2000 * 131 kB`). Over the assumed 50 GB/s path that is roughly 5 ms plus protocol overhead - cheap next to the prefill it frees the decode pool from repeating. The same transfer over a contended or slower path can erase the benefit, which is why the bound is a starting point and not a verdict.
+For the running service, a 2,000-token prompt hands off about 260 MB of KV (`2000 * 131 kB`). Over the assumed 50 GB/s path that is roughly 5 ms plus protocol overhead. The transfer lets the decode pool consume the prefill result while specializing independently; compared with colocated serving, it does not remove an otherwise duplicated prefill. A contended or slower path can erase the specialization and interference benefit, which is why the bound is a starting point and not a verdict.
 
 #### Different TP sizes for prefill and decode
 
 “Prefill TP” and “decode TP” usually refer to **the same tensor-parallel mechanism configured independently in two worker pools**, not two new forms of tensor parallelism. For example, one prefill instance could use TP=4 while each decode instance uses TP=2. Each engine still has its own weight shards, collectives, and KV ownership. The request crosses between engines; changing phase does not automatically resize a live TP group.
 
-[vLLM's disaggregated-prefilling documentation](https://docs.vllm.ai/en/latest/features/disagg_prefill/) explicitly supports choosing parallel strategies independently for TTFT and inter-token latency. The broader idea predates the recent vLLM conference: [DistServe at OSDI 2024](https://www.usenix.org/conference/osdi24/presentation/zhong-yinmin) co-optimized phase-specific resources and parallelism. Treat a conference presentation as an implementation or deployment update unless its novelty is established separately.
+[vLLM's disaggregated-prefilling documentation](https://docs.vllm.ai/en/latest/features/disagg_prefill/) describes choosing parallel strategies independently for TTFT and inter-token latency. [DistServe at OSDI 2024](https://www.usenix.org/conference/osdi24/presentation/zhong-yinmin) is an earlier example that co-optimized phase-specific resources and parallelism. Runtime support still depends on the connector and model layout used for the handoff.
 
 Why might the degrees differ? Large prefill matrix operations can amortize communication, and a tight first-token budget can justify a wider group. Small-batch decode performs frequent short steps; collective latency and local matrix shape can make a narrower group more efficient. But there is no rule that prefill TP must be larger. Weight fit, long-context KV reads, aggregate memory bandwidth, batch size, and a strict token-gap target may favor wider decode. Measure both phases rather than deriving the answer from “compute-bound” and “memory-bound” labels alone.
 
@@ -920,6 +928,8 @@ The architecture wins when phase specialization, independent scaling, and interf
 :::
 
 ### Handoff protocol
+
+:::diagram kv_handoff|Reserve destination capacity, transfer state, validate its contract, and publish ownership before decoding. Source release follows the protocol's acknowledgement and recovery rules; failed attempts must be idempotent.
 
 A correct handoff identifies model/adapter version, token range, position state, KV dtype and layout, source blocks, destination allocation, and ownership. One safe sequence is:
 
@@ -997,7 +1007,7 @@ Scale prefill from uncached input/encoder work and first-token risk; scale decod
 
 LEAD: Compression changes capacity, bandwidth, arithmetic, layouts, calibration, and quality risk at once. Adapter serving adds another layer of dynamic state and batch compatibility. Neither is merely a smaller checkpoint.
 
-The performance model made decode a bytes problem, and the fleet section made memory a replica-count problem. Compression attacks both at the source. The running service quantifies the stakes: 14 GB of weights set the 4.7 ms step floor, and KV at 131 kB per token caps concurrency near 200 conversations per replica.
+The performance model exposed decode's byte traffic, and fleet placement made memory a replica-count problem. Compression changes both. In the running example, streaming 14 GB of weights accounts for a 4.7 ms lower bound, while logical KV grows by about 131 kB per token. The earlier estimate of roughly 200 conversations depends on their lengths and memory reserve; it is not a fixed concurrency limit.
 
 ### Precision as a systems choice
 
@@ -1052,6 +1062,8 @@ Calibrate on the target input distribution, then evaluate on a held-out distribu
 
 ### Weight-only quantization
 
+:::diagram quantization_path|The packed weights and their scale metadata form one artifact contract. The serving kernel must consume that exact representation; reduced storage alone does not establish faster execution.
+
 In small-batch decode, weight reads often dominate dense linear layers. Weight-only quantization stores packed low-bit weights, loads scales, reconstructs or directly consumes low-precision values, and multiplies by higher-precision activations.
 
 Smaller weights can:
@@ -1065,7 +1077,7 @@ The path can lose if unpack and scale work is not overlapped, tensor-core instru
 
 Calibration-aware methods protect important weights or choose scales using representative activations. The serving team still owns format validation because a high-quality checkpoint can be paired with a poor runtime layout.
 
-On the running service, a well-executed 4-bit weight path shrinks streamed bytes from about 14 GB toward 4 GB and the small-batch step floor from 4.7 ms toward 1.5 ms - potentially tripling single-stream token rate. The same checkpoint behind a poor unpack path can sit above the FP16 floor. The format's arithmetic is a promise; the kernel's achieved bandwidth is the delivery.
+On the running service, shrinking streamed weights from about 14 GB toward 4 GB reduces the weight-read contribution at 3 TB/s from about 4.7 ms to 1.3 ms. That is not a prediction of token-rate improvement. At the earlier eight-request, 4096-token context, the roughly 4.3 GB of FP16 KV reads remain: the combined ideal HBM floor moves from about 6.1 ms to 2.8 ms before unpacking, computation, collectives, or scheduling. Compression shifts the dominant term instead of accelerating every byte equally.
 
 ### Weight-activation and floating formats
 
@@ -1077,9 +1089,9 @@ Accumulate sensitive reductions in an appropriate wider type. Protect normalizat
 
 ### MXFP8 and NVFP4: scales are hardware operands
 
-Blackwell-era low-precision paths use block scales to preserve useful local range. In the documented [Transformer Engine FP8/FP4 recipes](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/fp8_primer.html), MXFP8 groups 32 values with a power-of-two scale, while NVFP4 uses E2M1 four-bit values with finer blocks and additional scaling. Exact training recipes include operation-specific choices; consult the pinned runtime when selecting a layout rather than treating a format name as the complete recipe.
+Blackwell-era low-precision paths use block scales to preserve useful local range. In the documented [Transformer Engine FP8/FP4 recipes](https://docs.nvidia.com/deeplearning/transformer-engine/examples/fp8_primer.html), MXFP8 groups 32 values with a power-of-two scale, while NVFP4 uses E2M1 four-bit values with finer blocks and additional scaling. Exact training recipes include operation-specific choices; consult the pinned runtime when selecting a layout rather than treating a format name as the complete recipe.
 
-The [NVFP4 recipe documentation](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/features/low_precision_training/nvfp4/nvfp4.html) describes block-scale layout requirements and safeguards such as transformations and rounding choices for training. A packed checkpoint, the matrix instruction's operand layout, and the training quantizer are separate artifacts. In particular, quantizing a matrix by rows and then transposing its codes does not generally produce the same result as transposing the original matrix and quantizing its new rows.
+The [NVFP4 recipe documentation](https://docs.nvidia.com/deeplearning/transformer-engine/features/low_precision_training/nvfp4/nvfp4.html) describes block-scale layout requirements and safeguards such as transformations and rounding choices for training. A packed checkpoint, the matrix instruction's operand layout, and the training quantizer are separate artifacts. In particular, quantizing a matrix by rows and then transposing its codes does not generally produce the same result as transposing the original matrix and quantizing its new rows.
 
 For a small original example, imagine one row containing values `[1,1,1,100]`. A shared row scale sacrifices resolution for the three small values. After transposition into a different block grouping, those values may share scales with different neighbors. Both orientations may be required by forward and backward GEMMs. The extra representation and conversion work belongs in the memory/time ledger.
 
@@ -1093,7 +1105,7 @@ Scale choices include per-tensor, per-head, per-channel, per-token, or grouped b
 
 Evaluate long-context retrieval, position-sensitive tasks, multi-turn conversations, rare tokens, tool-use formats, and output distributions, not only short perplexity. A format that doubles theoretical capacity but slows attention can reduce serving capacity under latency SLOs.
 
-For the running service, FP8 KV doubles capacity toward 900,000 cached tokens - about 400 median conversations per replica - and a 4-bit format doubles it again. Each halving also halves long-context attention traffic, which matters once the batch's cached tokens approach the 107,000-token crossover where KV reads rival weight reads.
+For the running service, halving KV payload bytes moves ideal capacity toward 900,000 cached tokens - about 400 median conversations per replica - before scale metadata and reserve. Four-bit KV could halve payload again. At a fixed live-token count, each halving reduces ideal KV traffic, but increased admission can spend that saving on more state. The 107,000-token traffic crossover assumes FP16 weights and KV; it must be recomputed whenever either format changes.
 
 ### Compression shifts the optimum
 
@@ -1186,13 +1198,13 @@ Adapter identity includes content digest, base-model version, target modules, ra
 
 LEAD: A fast engine becomes a dependable service only when artifacts, control planes, observability, overload, failure recovery, security, and rollout are designed around its stateful streaming behavior.
 
-Everything so far tuned one replica or one mechanism. Production is where the running service must hold its two SLOs through bursts, failures, and rollouts, with a couple hundred conversations of KV state in flight on every replica. This final section closes the loop the part opened: the same boundaries the lifecycle section timestamped are now the boundaries that ownership, capacity, and recovery are organized around.
+The earlier chapters examined request phases, individual mechanisms, and fleet layouts. Now the service must meet its two SLOs through bursts, failures, and rollouts. Use the lifecycle's timestamps to assign ownership and reserve capacity at each boundary. The following engine chapter then shows where these responsibilities appear in real implementations.
 
 ### Data plane and control plane
 
 The **data plane** handles live requests: gateway, tokenizer, router, scheduler, model workers, KV transfer, sampling, and stream transport. The **control plane** manages model and adapter artifacts, placement, configuration, health, rollout, autoscaling, quotas, and policy.
 
-Keep the hot path independent of a synchronous control-plane lookup. Workers consume versioned snapshots and continue safely during temporary control-plane failure. Conversely, the control plane needs enough data-plane telemetry to stop routing to unhealthy or incompatible workers.
+Keep routine placement and rollout management off the synchronous hot path. Workers can consume versioned configuration snapshots during a temporary management-plane outage. This does not permit stale authorization: a revocation-sensitive service still needs the authoritative check or fail-closed mechanism defined by its disclosure contract. The control plane, in turn, needs enough data-plane telemetry to stop routing to unhealthy or incompatible workers.
 
 Define ownership at boundaries. The gateway owns authentication and client semantics; the router owns eligible placement; the scheduler owns local admission and execution order; the worker owns model state and token commit; the allocator owns KV lifetime. Ambiguous ownership produces double admission, leaked pages, or duplicate streaming during retries.
 
@@ -1210,6 +1222,10 @@ A deployable model is a bundle, not one weight file. It may include:
 - quality, performance, and security attestations.
 
 Build artifacts reproducibly, sign or verify them, and publish atomically. A worker should reject a partial or incompatible bundle before serving traffic. Engine caches and CUDA graphs are derived artifacts and must be invalidated when their relevant inputs change.
+
+Deserialization is a security boundary. [Safetensors](https://huggingface.co/docs/safetensors/index) stores tensor data without pickle's arbitrary-object execution model; it does not certify the model, surrounding Python code, or custom kernels. PyTorch's [serialization guidance](https://docs.pytorch.org/docs/2.14/notes/serialization.html) explains that `weights_only=True` restricts unpickling but is not a complete defense against malicious files. Do not disable a loader restriction or allowlist an unknown class simply to make an imported checkpoint open.
+
+Fetch and inspect artifacts in a restricted build environment without production credentials. Verify a digest against an authenticated release manifest, not a checksum supplied by the same untrusted download alone. Review any required model code separately, pin dependencies, bound memory and file sizes, and promote the verified bundle. A signature identifies the signing authority; it does not establish task quality or freedom from defects.
 
 ### Startup, warmup, and readiness
 
@@ -1236,7 +1252,7 @@ At a stable high level, Little's Law relates average in-system concurrency `N`, 
 
 It is an accounting identity, not a tail-latency guarantee. Use it to cross-check concurrency and memory, then use replay or a queueing model for variability and percentiles.
 
-For the running service, a median request spends roughly 20 to 30 seconds in the system: 300 output tokens at a batch-shared decode cadence plus queueing. At `T = 25 s` and about 200 concurrent conversations of KV capacity, one replica sustains `lambda = N / T = 8` requests per second - before failure headroom, bursts, and long-context outliers, which is exactly why the reserve terms in this section exist.
+For an illustrative capacity check, suppose a representative replay measures a **mean** time in system of 25 seconds. If the replica could maintain a mean of 200 in-system requests under the SLOs, Little's Law would give `lambda = N / T = 8` requests per second. The roughly 200-conversation KV estimate alone does not establish that rate: it is a resident-state limit based on a median-sized example, whereas Little's Law uses averages over the same population, including queued work. Measure mean residence, KV lifetime, and compute capacity before using the result as a plan.
 
 For a worker, enforce:
 
@@ -1245,7 +1261,7 @@ For a worker, enforce:
 Use usable memory after runtime and fragmentation measurements, not device nameplate capacity. For the fleet, include at least one relevant failure or maintenance scenario and the startup delay of replacement capacity.
 
 :::callout insight|Capacity is a memory claim as much as a compute claim
-On the running replica, admission is bounded by roughly 200 conversations of KV before compute saturates. State autoscaling, drain, and failure reserve in cached tokens and replicas, not in GPU utilization percentages.
+On the running replica, the illustrative KV budget holds roughly 200 median-sized conversations. Compute or latency can limit admission sooner. State autoscaling, drain, and failure reserve in cached tokens and replicas alongside the measured service curves, not in GPU utilization percentages alone.
 :::
 
 ### Autoscaling signals
@@ -1296,7 +1312,7 @@ Test fault injection at token-commit, KV handoff, cancellation, adapter eviction
 
 ### Graceful degradation
 
-Safe overload actions preserve model semantics: reject new work, queue within a bound, route, shed batch traffic, lower speculative effort, disable best-of, or evict reusable caches. Actions that change model, precision, context, safety filters, or sampling require explicit product policy and response metadata.
+Overload actions that preserve admitted requests' generation semantics include rejecting new work, queueing within a bound, routing to a compatible replica, shedding queued batch traffic, lowering exact speculative effort, and evicting reusable caches. Disabling best-of changes candidate selection and therefore requires an authorized degradation policy, as do changes to model, precision, context, safety filters, or sampling. Record the selected mode in response metadata.
 
 Protect already admitted requests according to the published contract, but do not let an unbounded generation monopolize the service. Enforce declared maximum output and context, tenant budgets, stream idle timeouts, and cancellation.
 
@@ -1374,7 +1390,7 @@ Scheduler regressions change queue delay, batch composition, phase mixing, itera
 
 #### 6. Overload and rollback
 
-Bound queues and memory reservations, reject early with retry guidance, protect admitted interactive work, shed batch and optional best-of/speculative effort, and enforce tenant quotas. Any change to model, precision, context, sampling, or safety requires an authorized degradation mode and response metadata. Rollout isolates versions and caches, preserves a warm rollback path, drains incompatible in-flight state or reconstructs from tokens, and triggers on goodput, semantic, quality, error, and memory guardrails rather than utilization alone.
+Bound queues and memory reservations, reject early with retry guidance, protect admitted interactive work, shed queued batch work, reduce exact speculative effort, and enforce tenant quotas. Disabling best-of or changing model, precision, context, sampling, or safety requires an authorized degradation mode and response metadata. Rollout isolates versions and caches, preserves a warm rollback path, drains incompatible in-flight state or reconstructs from tokens, and triggers on goodput, semantic, quality, error, and memory guardrails rather than utilization alone.
 
 ### Further Study and Primary References
 
@@ -1387,10 +1403,124 @@ Bound queues and memory reservations, reject early with retry guidance, protect 
 - [SmoothQuant](https://proceedings.mlr.press/v202/xiao23c.html) and [AWQ](https://proceedings.mlsys.org/paper_files/paper/2024/file/42a452cbafa9dd64e9ba4aa95cc1ef21-Paper-Conference.pdf) - activation-aware quantization methods.
 - [Punica: Multi-Tenant LoRA Serving](https://proceedings.mlsys.org/paper_files/paper/2024/hash/054de805fcceb78a201f5e9d53c85908-Abstract-Conference.html) - shared-base multi-adapter serving.
 - [TensorRT-LLM Documentation](https://nvidia.github.io/TensorRT-LLM/latest/index.html) - maintained engine features, KV reuse, quantization, and deployment guidance.
+- [NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo), [LMCache](https://github.com/LMCache/LMCache), [llm-d](https://github.com/llm-d/llm-d), and [Mooncake](https://github.com/kvcache-ai/Mooncake) - maintained reference implementations for KV-aware routing, tiered cache storage, and prefill-decode disaggregation.
 - [MLPerf Inference Documentation](https://docs.mlcommons.org/inference/submission/) - benchmark scenarios and reproducibility requirements.
 
 ### Final Inference Principle
 
 *The unit of optimization is a request completed within its semantic and SLO contract, not a kernel, token, batch, or GPU in isolation.*
 
-The serving design is complete only when performance models predict the important shapes, state transitions are safe under cancellation and failure, measurements include queueing and user-visible cadence, and rollout can reverse without corrupting live state. For the running service of this part, that means the 4.7 ms step floor, the 131 kB-per-token KV ledger, and the two latency SLOs from the opening table survive contact with schedulers, caches, fleets, and rollouts - defended end to end, not per component.
+The running service now has a logical KV budget, a phase-specific performance model, and two user-visible latency targets. The 4.7 ms weight-read floor is an estimate under declared assumptions, not a promised token interval; the 131 kB-per-token KV figure excludes physical allocation overhead. The next chapter uses these models to inspect real serving implementations and design a comparison that could reject an attractive but unsuitable engine.
+
+## Serving Engines and Cache Backends in Practice
+
+LEAD: A serving engine decides which tokens to compute next, where their state lives, and how the result reaches the caller. Learn those boundaries before comparing framework names or launch flags.
+
+The documentation assistant's first deployment works, but its p99 first-token latency degrades as more tenants arrive. A team proposes switching to SGLang; another proposes adding a remote cache to vLLM. Both could help, and neither proposal identifies the bottleneck. A cold-prefix workload, a CPU scheduling gap, and an overloaded decode pool require different interventions.
+
+The preceding chapters provide the mechanisms needed to investigate. This chapter maps them to vLLM, SGLang, TensorRT LLM, and the surrounding cache ecosystem. The implementation notes reflect primary documentation checked September 13, 2026. Pin a release and backend before executing a recipe; moving documentation and older blog posts can describe different architectures.
+
+### Place each component at the right layer
+
+:::diagram serving_stack|A representative engine path, not a required process layout. Left-hand arrows show forward dispatch; result and stream-return paths are omitted. Iteration scheduling and state management drive execution. An optional connector exchanges remote state without bypassing admission or granting execution ownership.
+
+An engine such as vLLM or SGLang owns iteration-level request execution. A kernel library such as FlashInfer implements operations that an engine can call. A cache system extends where reusable state can live. A fleet layer places replicas, routes requests, and may coordinate disaggregated pools. These responsibilities can coexist in one project, but they are not interchangeable.
+
+For example, replacing an attention kernel does not supply tenant admission, and adding remote KV storage does not choose a legal destination sharding plan. Trace the API, scheduler, cache manager, model runner, and output path separately. For every boundary, record the input identity, state owner, completion signal, and cleanup behavior.
+
+### vLLM: follow an iteration through the engine core
+
+vLLM's V1 architecture separates request/API processing, an engine core responsible for scheduling and KV management, and workers that execute the model. CPU allocation therefore matters even when the model runs on GPUs. The exact process count depends on the deployment; do not infer it from GPU count alone. Start with the [vLLM architecture overview](https://docs.vllm.ai/en/latest/design/arch_overview/).
+
+At the beginning of an iteration, the engine knows each request's computed positions and remaining work. The scheduler chooses a bounded amount of work and obtains space for the resulting state. The model runner translates that decision into tensors, attention metadata, and execution calls. Results advance request state, feed token selection and output handling, and eventually allow finished or cancelled requests to release resources. This is a useful reading model, not a promise that all stages execute synchronously or in one process.
+
+The [V1 scheduler interface](https://docs.vllm.ai/en/latest/api/vllm/v1/core/sched/interface/) makes the schedule/update boundary explicit. When investigating a regression, save the scheduled token counts and request IDs along with the model-runner timing. A fast forward pass cannot explain a long queue without this context.
+
+vLLM's automatic prefix cache uses block identities that include prior-prefix identity, tokens, and relevant extra identity such as adapters or multimodal inputs. Full reusable blocks are looked up and referenced through the KV manager. The important distinction is between an unused block that still contains reusable content and a block that is safe to overwrite. Reference counts and allocation transitions decide that, not merely a successful hash lookup. See the [prefix-caching design](https://docs.vllm.ai/en/latest/design/prefix_caching/).
+
+Suppose two 2000-token prompts share the first 500 tokens, and a simplified cache reuses only complete 16-token blocks. The reusable prefix is 496 tokens, leaving 1504 positions to process in the second prompt. The remaining four shared tokens do not form a complete reusable block in this example. This saves prompt work; it does not remove the new request's decode steps or its attention reads over the prefix. Real engines may impose additional alignment and last-token-logit requirements, so measure usable cached positions rather than string-prefix length.
+
+### SGLang: radix reuse and overlapped execution
+
+SGLang's RadixAttention organizes reusable token prefixes as a radix tree: common paths share prefix state, and divergent suffixes branch. Tree matching, active-reference protection, eviction, and scheduling must agree about which state can be reused. This makes branching conversations and repeated prompt prefixes useful cases to study, but does not establish a performance advantage over every hash-based cache. See the [SGLang paper](https://papers.nips.cc/paper_files/paper/2024/file/724be4472168f31ba1c9ac630f15dec8-Paper-Conference.pdf).
+
+The project also describes an overlap scheduler that prepares the next batch while device computation is in flight. Dependencies on not-yet-returned tokens are represented and resolved through the execution pipeline. The mechanism hides eligible CPU work; it does not make scheduling free or remove synchronization requirements. The [SGLang overlap-scheduler explanation](https://www.lmsys.org/blog/2024-12-04-sglang-v0-4/) is a useful historical design reference, not a current cross-engine benchmark.
+
+For an illustrative steady-state pipeline with 2 ms of preparable CPU work and 5 ms of GPU work, serialized execution costs 7 ms per iteration. Ideal overlap approaches 5 ms after filling the pipeline, a 1.4x improvement, before accounting for dependencies and communication. If the GPU work instead takes 20 ms, the same saved 2 ms matters much less. Inspect the timeline; do not borrow a release blog's speedup for a different model.
+
+SGLang's HiCache adds a hierarchy spanning device cache, host memory, and external storage. Its design exposes prefetch and write-back choices, including selective write-through and eviction-time write-back. Those policies trade saved future computation against bandwidth and storage pressure. A high storage-hit rate can still lose if fetching delays the critical path. Read the [HiCache design](https://docs.sglang.io/docs/advanced_features/hicache_design) with the earlier transfer-versus-recompute model beside it.
+
+### TensorRT LLM: qualify the backend before following a tutorial
+
+TensorRT LLM is another engine candidate for NVIDIA deployments. Its name is not sufficient to identify the execution path. The current migration guide states that the TensorRT engine backend has been removed and PyTorch is the sole execution backend, with AutoDeploy built on it. Older tutorials that convert a checkpoint and run `trtllm-build` describe an earlier path. See the [backend-removal migration guide](https://nvidia.github.io/TensorRT-LLM/latest/legacy/tensorrt-backend-removal.html).
+
+The [PyTorch architecture overview](https://nvidia.github.io/TensorRT-LLM/latest/torch/arch_overview.html) identifies a scheduler, a model engine for a forward step, and a decoder for token generation. Use those roles to compare with vLLM and SGLang rather than assuming identical class boundaries. The same model name can take a different attention, quantization, or collective path depending on hardware and enabled features. Require evidence for the feature combination, not just a check mark for each feature separately.
+
+### Kernel libraries, cache systems, and fleet layers
+
+[FlashInfer](https://docs.flashinfer.ai/) supplies inference kernels and attention interfaces; its [KV-layout tutorial](https://docs.flashinfer.ai/tutorials/kv_layout.html) explains how page tables and ragged metadata describe noncontiguous state. An engine remains responsible for allocating pages and supplying valid metadata. Planning and running a kernel are not substitutes for request scheduling or safe eviction.
+
+The cache ecosystem is best read by responsibility:
+
+| Project | Useful implementation focus | Boundary to investigate |
+| --- | --- | --- |
+| LMCache | Reuse and movement across KV storage tiers | Connector semantics, cache identity, and load/store completion |
+| Mooncake | KV-centric serving and a transfer/storage substrate | Registration, transfer lifecycle, failure, and placement |
+| Dynamo | Distributed serving, KV-aware routing, and phase pools | Worker events, routing staleness, and destination admission |
+| llm-d | Kubernetes-oriented distributed inference composition | Scheduling, cache indexing, worker compatibility, and operations |
+
+These are overlapping projects, not four interchangeable plugins. Use the [LMCache repository](https://github.com/LMCache/LMCache), [Mooncake repository](https://github.com/kvcache-ai/Mooncake), [Dynamo repository](https://github.com/ai-dynamo/dynamo), and [llm-d repository](https://github.com/llm-d/llm-d) to find their supported integrations. For a first deployment, introduce one additional boundary at a time. A local engine baseline should work before remote caching or phase disaggregation is credited with improving it.
+
+### A comparison that can change the decision
+
+The candidate set changes for a local or edge product. [llama.cpp](https://github.com/ggml-org/llama.cpp) provides a C/C++ inference stack with CPU execution, Apple Metal, and other accelerator backends, including mixed CPU/GPU placement. It belongs in a laptop or constrained-device investigation even when a datacenter comparison centers on vLLM and SGLang. Backend availability does not imply identical model, operator, or quantization support.
+
+For a local documentation assistant, measure first load, sustained token cadence, memory pressure, power/thermal behavior, and offline retrieval alongside answer quality. Moving work to the user's device changes the privacy and connectivity boundary, but does not automatically secure downloaded weights, local indexes, or outbound tools. Keep this experiment separate from a multi-tenant server benchmark; their concurrency and failure requirements differ.
+
+Select candidates that support the assistant's actual checkpoint, attention variants, precision, hardware, and API behavior. Start with two engines, not every combination of engine, transport, quantization, and cache tier. Keep weights, tokenizer, chat template, stop rules, output limits, sampling policy, and offered request trace fixed. Equal-looking API requests can otherwise become different token sequences or different tasks.
+
+Run two kinds of comparison. A controlled comparison holds the relevant resource and semantic choices fixed to isolate a mechanism. A deployment comparison lets each engine use its best supported configuration under the same hardware budget, quality limits, and service objectives. Report which you ran. One measures an intervention; the other chooses a system.
+
+For the assistant, include at least cold prefixes, repeated system prefixes, diverse tenant namespaces, long prompts mixed with short requests, and cancellation under load. Record offered, admitted, failed, cancelled, and completed requests. Sweep arrival rate until the p99 first-token and token-gap targets fail; report goodput and failure reserve, not just peak output tokens per second. Rerun the best configurations with one worker group unavailable and with cold replacements joining.
+
+A result table should identify why a candidate wins or fails:
+
+| Observation | Next check | Possible conclusion |
+| --- | --- | --- |
+| High cache hits, unchanged TTFT | Queue, usable hit tokens, transfer wait | Cache is not the controlling bottleneck |
+| Faster model steps, slower responses | CPU/output path, batching, network flush | Kernel gain is lost outside the model runner |
+| Better warm throughput, poor scale-out | Compilation, loading, graph warm-up | Recovery or readiness costs need mitigation |
+| Good averages, one tenant regresses | Shape mix, priority, cache locality | Aggregate throughput hides unfair allocation |
+
+### Read the implementation with a question
+
+Choose one short request and follow five events: admission, prefix lookup, slot allocation, one execution step, and release. Then repeat with cancellation after dispatch and with an allocator miss. Keep a small trace of request state, page ownership, and pending operations. This exposes more than reading the repository top to bottom.
+
+For vLLM, start at the architecture overview, then the scheduler interface and prefix-cache design linked above. For SGLang, pair the RadixAttention paper with the overlap and HiCache explanations. For TensorRT LLM, start with the current migration guide before the executor architecture. Once the engine path is clear, inspect the chosen kernel library or connector. Read source from the release actually deployed; a current design document can be ahead of a stable package.
+
+### Design Exercises
+
+1. A benchmark reports an 80 percent prefix hit rate but no TTFT gain. Which measurements are missing?
+2. Two engines return different outputs with temperature zero. Does that prove one is incorrect?
+3. An engine reports faster GPU steps after enabling overlap, but cancellation leaks KV pages. What boundary is broken?
+4. When should the assistant add a remote cache rather than switch engines?
+
+### Worked Solutions
+
+#### 1. Count saved work, not only matches
+
+Ask whether the rate counts requests, blocks, or tokens and whether those hits are usable under the actual layout. Split TTFT into queue, lookup/fetch, uncached prefill, sampling, and output delay. A warm 500-token prefix in a long request can be a hit while saving little work; a remote hit can arrive too late to help. Compare with recomputation under the same offered load.
+
+#### 2. Establish the same task first
+
+Compare tokenized inputs, templates, stop behavior, precision, and logits on controlled prompts. Greedy decoding can diverge at a nearly tied logit because floating-point reduction order differs. Use numerical tolerances and task-level quality evidence rather than require every continuation to match. Large logit discrepancies, mask errors, or different serialized prompts need investigation before performance claims are accepted.
+
+#### 3. Separate cancellation from physical reuse
+
+The request can stop producing output before all device work that references its pages has completed. Mark it cancelled, prevent further scheduling, and release physical resources only after the relevant completion/fence and references are resolved. Test cancellation at each pipeline stage. Overlap expands the set of in-flight owners; it does not weaken the allocator's lifetime contract.
+
+#### 4. Test the reuse hypothesis
+
+First show that reusable prefixes are being recomputed and that recomputation materially contributes to the service bottleneck. Measure their reuse distance, byte volume, and transfer path. If the working set fits locally, improve local allocation or routing first. If useful state exceeds local capacity and retrieval beats recomputation within the SLO, evaluate a compatible remote cache. If the bottleneck is scheduling or an unsupported kernel, remote storage addresses the wrong problem.
+
+The output of this chapter is a reproducible engine decision, including the losing configurations and the reason they lost. Part IV opens the next boundary: how the model runner's operations become a schedule over accelerator memory and execution resources.

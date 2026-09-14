@@ -20,6 +20,10 @@ class AttentionTests(unittest.TestCase):
     def test_all_masked(self):
         self.assertEqual(attention([2.0], [[1.0], [3.0]], [[9.0], [5.0]], [False, False], 1), [0.0])
 
+    def test_all_masked_skips_overflowing_scores(self):
+        for shard_size in (None, 1):
+            self.assertEqual(attention([1e308], [[1e308]], [[1.0]], [False], shard_size), [0.0])
+
     def test_partition_merge_against_independent_dense_formula(self):
         rng = random.Random(17)
         for length in [1, 2, 7, 11]:
@@ -32,6 +36,32 @@ class AttentionTests(unittest.TestCase):
                 result = attention(q, keys, values, shard_size=size)
                 for actual, target in zip(result, expected):
                     self.assertAlmostEqual(actual, target, delta=1e-12)
+
+    def test_partition_merge_ignores_fully_masked_shard(self):
+        result = attention([0.0], [[1.0], [2.0]], [[2.0], [4.0]],
+                           [False, True], shard_size=1)
+        self.assertEqual(result, [4.0])
+        query = [0.0, 0.0]
+        keys = [[float(i), -float(i)] for i in range(7)]
+        values = [[float(i), 2.0 * i] for i in range(7)]
+        allowed = [False, False, True, False, True, True, False]
+        expected = [sum(value[j] for value, keep in zip(values, allowed) if keep)
+                    / sum(allowed) for j in range(2)]
+        for shard_size in (1, 2, 3, 4):
+            result = attention(query, keys, values, allowed, shard_size)
+            for actual, target in zip(result, expected):
+                self.assertAlmostEqual(actual, target, delta=1e-12)
+
+    def test_attention_rejects_score_overflow_dense_and_sharded(self):
+        for shard_size in (None, 1):
+            with self.assertRaisesRegex(ValueError, "attention arithmetic"):
+                attention([1e308], [[1e308]], [[1.0]], shard_size=shard_size)
+
+    def test_attention_rejects_partial_and_merged_numerator_overflow(self):
+        args = ([0.0], [[1.0], [2.0]], [[1.7e308], [1.7e308]])
+        for shard_size in (None, 1):
+            with self.assertRaisesRegex(ValueError, "attention arithmetic"):
+                attention(*args, shard_size=shard_size)
 
     def test_extreme_scores_are_stable(self):
         self.assertEqual(attention([1000.0], [[1.0], [-1.0]], [[2.0], [8.0]], shard_size=1), [2.0])

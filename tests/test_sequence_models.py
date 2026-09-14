@@ -24,6 +24,16 @@ class SequenceMechanismTests(unittest.TestCase):
         self.assertEqual(out, [5.])
         self.assertEqual(state, [[2., 9.]])
 
+    def test_ignored_target_sentinel(self):
+        self.assertAlmostEqual(
+            masked_token_loss([[0, 0], [1, 2]], [0, -100], [1, 0]),
+            math.log(2))
+        for target in [-100, 2, 0.5]:
+            with self.assertRaises(ValueError):
+                masked_token_loss([[0, 0]], [target], [1])
+        with self.assertRaises(ValueError):
+            masked_token_loss([[0, 0], [float('nan'), 0]], [0, -100], [1, 0])
+
     def test_decay_then_correction(self):
         updated, _ = delta_step([[2., 9.]], [1., 0.], [5.], [0., 1.], alpha=.5, beta=.5)
         self.assertEqual(updated, [[3., 4.5]])

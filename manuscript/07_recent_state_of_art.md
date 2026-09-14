@@ -1,8 +1,10 @@
 # Part VII - Recent State of the Art
 
-This part connects selected research available by September 7, 2026 to the mechanisms developed throughout the book. It is a dated engineering snapshot, not an exhaustive catalogue or permanent leaderboard. Older results remain when they establish a useful mechanism; they are not presented as the newest available implementation. Reported speedups and benchmark scores belong to the cited paper's hardware, software, model, workload, baseline, and quality threshold.
+This part connects selected research and maintained implementation evidence available by September 13, 2026 to the mechanisms developed throughout the book. It is a dated engineering snapshot, not an exhaustive catalogue or permanent leaderboard. Older results remain when they establish a useful mechanism; they are not presented as the newest available implementation. Reported speedups and benchmark scores belong to the cited paper's hardware, software, model, workload, baseline, and quality threshold.
 
 The durable value of a recent result is usually not its rank. It is the mechanism that changed the resource model: sparse activation, better load balancing, reinforcement learning with verifiable rewards, explicit inference-time compute, asynchronous attention pipelines, disaggregated KV state, hierarchical memory, native-resolution multimodality, or enforceable trust boundaries for tools.
+
+Read this part as a decision filter, not a chronology. For each result, first identify the mechanism and the resource or behavior it changes; then reconstruct the evaluation boundary and compare it with your workload. Finally, name the integration cost, quality guardrail, and experiment that would justify adoption. Return to Parts II–VI when a claim depends on training data, serving state, kernel behavior, topology, or application policy—the dated examples here do not replace those durable models.
 
 :::callout decision|How to read a state-of-the-art claim
 Record the evaluated system, baseline, workload distribution, hardware, precision, quality constraint, and end-to-end boundary. Treat an isolated kernel speedup, benchmark score, or best-case throughput number as a hypothesis until the same advantage appears under the production contract.
@@ -50,7 +52,7 @@ This is not the same as retrieving current documents from an enterprise corpus. 
 
 ### Reasoning from reinforcement learning
 
-DeepSeek-R1-Zero reports that large-scale reinforcement learning without a supervised fine-tuning warm start can elicit stronger reasoning behavior, but also reports readability and language-mixing problems. DeepSeek-R1 adds cold-start data and a multi-stage training process before and after reinforcement learning. The report also releases distilled dense models from 1.5B through 70B parameters and reports that reasoning behavior can transfer into smaller students.
+[DeepSeek-R1-Zero](https://arxiv.org/abs/2501.12948) reports that large-scale reinforcement learning without a supervised fine-tuning warm start can elicit stronger reasoning behavior, but also reports readability and language-mixing problems. DeepSeek-R1 adds cold-start data and a multi-stage training process before and after reinforcement learning. The report also releases distilled dense models from 1.5B through 70B parameters and reports that reasoning behavior can transfer into smaller students.
 
 This evidence changes the post-training design space in three ways.
 
@@ -102,7 +104,7 @@ The production acceptance test still needs ragged and causal shapes, head dimens
 
 ### Read the 2026 developments through the earlier chapters
 
-Part IV now derives Blackwell ownership and the FlashAttention-4 pipeline rather than stopping at Hopper. Part III compares feature-based and block-parallel speculative drafts, including EAGLE-3 and DFlash, while retaining the target-distribution verification contract. Part II develops group-relative RL, sequence-level ratios, and feedback-conditioned self-distillation; Part V explains why asynchronous training needs policy-freshness control. These are different changes to the system, not interchangeable ways of “making reasoning faster.”
+Part IV derives Blackwell ownership and the FlashAttention-4 pipeline. Part III compares feature-based and block-parallel speculative drafts, including EAGLE-3 and DFlash, while retaining the target-distribution verification contract. Part II develops group-relative RL, sequence-level ratios, and feedback-conditioned self-distillation; Part V explains why asynchronous training needs policy-freshness control. These changes act on different parts of the system, so each needs its own acceptance test.
 
 | Change | Quantity it tries to improve | Evidence that could reject it |
 | --- | --- | --- |
@@ -126,9 +128,15 @@ The general lesson is that disaggregation works only when state movement is firs
 
 Disaggregation can improve independent scaling and isolation while adding network dependence and a new distributed lifecycle. It wins when phase imbalance and placement flexibility repay the transfer and coordination cost.
 
+The implementation frontier now exposes this lifecycle as composable subsystems. [Dynamo](https://github.com/ai-dynamo/dynamo) combines event-informed KV routing with prefill/decode worker pools and NIXL transfer. [LMCache](https://github.com/LMCache/LMCache) focuses on reusable KV across accelerator, host, disk, and remote tiers. [llm-d](https://github.com/llm-d/llm-d) separates approximate or precise prefix routing, cache indexing, offload, and disaggregated orchestration. Their feature matrices and compatibility notes change faster than the mechanism, so record a tested revision. A useful bake-off replays the same trace and measures stale-route rate, reusable-token fraction, transfer versus recompute choice, admission failures after prefill, failover, and SLO goodput—not just a warm-cache microbenchmark.
+
+For the practical reading path, return to **Serving Engines and Cache Backends in Practice** in Part III. It distinguishes an engine iteration from a kernel call, a cache transfer, and a fleet-routing decision. The purpose of this research snapshot is to identify which of those boundaries a result changes, not to select a stack by counting project names.
+
+Within each pool, long-context sharding is also phase-specific. Current vLLM documentation distinguishes prefill context parallelism, which partitions prompt queries and either gathers or circulates K/V, from decode context parallelism, which shards historical KV tokens and merges partial attention. Disaggregation adds another axis: the prefill and decode pools may select different TP, PP, PCP, or DCP plans, but a heterogeneous boundary must reshard compatible state during handoff. Part V gives the full ownership ledger.
+
 ### Long-context memory is becoming hierarchical
 
-Recent work explores two complementary ways to reduce long-context pressure. [RocketKV](https://arxiv.org/abs/2502.14051) combines coarse eviction with fine-grained sparse attention and reports up to 3 times end-to-end decode speedup and up to 31 percent peak-memory reduction on H100 against a full-KV-cache baseline, with negligible loss on its evaluated tasks. [SparseServe](https://arxiv.org/abs/2509.24626v1) places unselected KV state in host memory, controls batch size from the active working set, and segments prefill by layer; it reports up to a 9.26-fold reduction in mean time to first token and up to 3.14 times higher generation throughput than its evaluated baselines. These maxima need not occur in the same configuration.
+Recent work explores two complementary ways to reduce long-context pressure. [RocketKV, version 1](https://arxiv.org/abs/2502.14051v1), combines coarse eviction with fine-grained sparse attention and reports up to 3 times end-to-end decode speedup and up to 31 percent peak-memory reduction on H100 against a full-KV-cache baseline, with negligible loss on its evaluated tasks. These numbers belong to the February 2025 version; later revisions report a different hardware evaluation. [SparseServe](https://arxiv.org/abs/2509.24626v1) places unselected KV state in host memory, controls batch size from the active working set, and segments prefill by layer; it reports up to a 9.26-fold reduction in mean time to first token and up to 3.14 times higher generation throughput than its evaluated baselines. These maxima need not occur in the same configuration.
 
 These are paper-reported maxima, not portable constants. They do establish a broader systems pattern: when attention becomes sparse, the bottleneck can move from HBM bandwidth to HBM capacity, irregular selection, or host-device movement. A valid comparison must include retrieval quality, task accuracy, selection overhead, cache thrashing, tail latency, and worst-case dense fallbacks.
 
@@ -156,6 +164,8 @@ LEAD: A multimodal model must turn signals with space and time into a representa
 
 ### From pixels to language-model inputs
 
+:::diagram multimodal_path|A common conceptual arrangement maps visual, audio, and text representations into language-model context. Position and time metadata preserve meaning across the interfaces; the exact encoder, projection, and fusion arrangement is model-specific.
+
 Begin with an image of height H and width W. A simple patch encoder divides it into patches of side p, producing approximately `(H/p) × (W/p)` tokens when dimensions divide evenly. Each flattened patch is projected into a vector; a vision transformer mixes these vectors with position information. A projector then maps visual features to the language model's hidden width. Insert them into a declared multimodal sequence or expose them through cross-attention.
 
 In sequence insertion, visual embeddings occupy positions alongside text and consume backbone context/attention work. In cross-attention, text queries read a separate visual representation; visual-token count still changes cross-attention and encoder cost, but it is not necessarily identical to text KV growth. Early joint training can learn richer integration across modalities; it does not remove modality-specific preprocessing or alignment requirements. [Visual Instruction Tuning](https://arxiv.org/abs/2304.08485) is a primary example of connecting a vision encoder and language model for instruction-following behavior.
@@ -178,7 +188,7 @@ A straightforward video pipeline samples frames, encodes each, and attaches time
 
 At two frames per second, a one-minute clip contains 120 sampled frames. With 196 visual tokens per frame, that is 23,520 tokens before text, audio, and temporal compression. A 100-millisecond event can occur entirely between the sampled frames. No downstream reasoning method can guarantee recovery of an unobserved event. Evaluate temporal localization, ordering, and evidence coverage separately from a general video summary.
 
-Grounded outputs need a coordinate contract. If a detector reports normalized `(x,y)` coordinates in a crop, first map them to crop pixels, then undo crop offset, scale, rotation, and padding to locate the point in the original image. A correct label with the wrong coordinate frame can trigger the wrong UI action. For video, preserve the source time base and dropped-frame policy similarly.
+Grounded outputs need a coordinate contract. If a detector reports normalized `(x,y)` coordinates, first map them to the pixel frame defined by its output schema, then invert the recorded preprocessing transforms in reverse order to locate the point in the original image. For example, remove model-input padding before undoing resize, then add the crop's original-image offset. Rotation requires its corresponding inverse transform. A correct label with the wrong coordinate frame can trigger the wrong UI action. For video, preserve the source time base and dropped-frame policy similarly.
 
 ### Speech has acoustic and linguistic time scales
 
@@ -192,7 +202,7 @@ The April 2026 [Qwen3.5-Omni report](https://arxiv.org/abs/2604.15804) describes
 
 ### Budget and evaluate the entire interaction
 
-Time to first audio includes input buffering, encoder work, decision latency, codec generation, waveform decoding, and playback buffering. An original budget of 80, 60, 140, 40, and 80 milliseconds for five sequential stages totals 400 milliseconds; overlap may reduce it, while queueing can enlarge it. A first text token is not a first audible response.
+Time to first audio includes input buffering, encoder work, decision latency, codec generation, waveform decoding, and playback buffering. An illustrative budget assigns 80 milliseconds to input buffering, 60 to encoding, 140 to the first response decision, 40 to codec generation plus waveform decoding, and 80 to playback buffering. These five sequential stages total 400 milliseconds; overlap may reduce the total, while queueing can enlarge it. A first text token is not a first audible response.
 
 For interruption, stop generation and playback coherently, release queued state, and record what the user actually heard. A tool action already committed cannot be canceled by muting its spoken confirmation. Define turn-taking, barge-in, maximum silence, and degradation on packet loss before optimizing throughput.
 
@@ -235,6 +245,8 @@ An eight-position sequence revealed two positions per round requires four denois
 
 ### Block diffusion and cache validity
 
+:::diagram diffusion_blocks|Three snapshots show an initially masked block and two reveal steps. The causal prefix stays fixed while the current block changes. Question marks denote masked positions. Cache validity depends on which representations can change under the method's attention mask.
+
 [Block Diffusion](https://arxiv.org/abs/2503.09573) interpolates between autoregressive blocks and within-block diffusion. Earlier blocks can become fixed context while positions in the current block are refined together. This introduces a tunable tradeoff among block size, denoising steps, parallelism, and quality.
 
 A causal prefix cache is valid because later output cannot alter its representations. A bidirectional mutable block lacks that property: changing one token can change the other positions' hidden states. Do not reuse its KV as if it were an unchanged autoregressive prefix. Cache reuse must follow the method's attention mask and update dependencies; an approximation needs an accuracy test of its own.
@@ -254,7 +266,7 @@ LEAD: Multimodal and agentic models turn context construction into an active sys
 
 ### Native-resolution vision and long video
 
-The Qwen2.5-VL technical report describes a native dynamic-resolution vision transformer, window attention, explicit temporal encoding, object localization, document parsing, and long-video processing. It reports competitive or leading results across several document, diagram, localization, and video benchmarks for the evaluated model sizes.
+The [Qwen2.5-VL technical report](https://arxiv.org/abs/2502.13923) connects the representation mechanisms above to document and interface tasks through dynamic resolution, window attention, temporal encoding, and geometric outputs. Its benchmark results are evidence for the evaluated tasks and model sizes; deployment still needs a contract for the actions those outputs can trigger.
 
 For engineers, variable visual resolution makes token count a function of input geometry and preprocessing. Capacity planning must model image area, frame sampling, patching, video duration, visual token compression, text length, and cross-modal attention. A request limit expressed only in text tokens is incomplete.
 
@@ -284,11 +296,11 @@ The engineering conclusion is stronger than "improve the system prompt." Natural
 - typed schemas and deterministic validation;
 - separation of untrusted content from control metadata;
 - information-flow labels for confidentiality and integrity;
-- explicit confirmation for destructive, financial, external, or privilege-changing actions;
+- explicit authorization rules and confirmation where the action exceeds the user's existing grant or the product's risk threshold;
 - rate, cost, and recursion limits;
 - immutable audit logs and replayable security tests.
 
-Recent information-flow-control research explores planners that track integrity and confidentiality labels and enforce policies independently of the model's textual judgment. The broad lesson is durable even while implementations evolve: authorization belongs in code that can deny an action deterministically.
+[Information-flow-control research](https://arxiv.org/abs/2505.23643) explores planners that track integrity and confidentiality labels and enforce policies independently of the model's textual judgment. The broad lesson is durable even while implementations evolve: authorization belongs in code that can deny an action deterministically.
 
 :::diagram agent_trust_boundary|Tool-using systems need a deterministic policy boundary between model proposals and side effects.
 
@@ -331,7 +343,7 @@ For every candidate technique, write a result card:
 | Failure | Unsupported shapes, overload, recovery, and fallback |
 | Currency | Paper version and reproduction date |
 
-Then map the claimed mechanism to a local bottleneck. An attention kernel cannot fix a service dominated by queueing. A KV offload system cannot help if weights dominate memory. Reasoning-time sampling cannot improve a task whose verifier selects confidently wrong candidates.
+Then map the claimed mechanism to a local bottleneck. A faster attention kernel may reduce queueing if it raises capacity at the saturated stage; it will have little effect when that queue is waiting on another resource. KV offload helps only to the extent that reclaimable KV capacity matters after weights and other state are reserved. Reasoning-time sampling depends on whether the reducer can recognize better candidates. Trace the causal path from the proposed change to the measured outcome.
 
 ### Reproduce in layers
 
@@ -361,27 +373,25 @@ At every layer, record negative results. A technique that loses under an importa
 3. Stop when the local bottleneck is absent, quality fails a hard floor, integration cost exceeds plausible value, the baseline closes the gap, or an unsupported production shape has no safe fallback.
 4. Assign an owner and snapshot date, prefer primary sources, preserve old claims with version history, distinguish peer-reviewed from preliminary work, and schedule review when hardware, model architecture, or serving workload changes materially.
 
-### Primary Sources for the 2024-2026 Snapshot
+### Selected Primary Sources for the 2024-2026 Snapshot
+
+Additional architecture, multimodal, and generation references appear beside their mechanisms above. Version-specific result links identify the experiment being quoted; a newer revision may change hardware, baselines, or conclusions.
 
 - [DeepSeek-V3 Technical Report](https://arxiv.org/abs/2412.19437) - sparse activation, load balancing, multi-token prediction, training scale, and reported training cost.
+- [Native Sparse Attention](https://arxiv.org/abs/2502.11089) and [Kimi Linear](https://arxiv.org/abs/2510.26692) - hardware-aware sparse selection and hybrid gated linear attention.
 - [DeepSeek-R1](https://arxiv.org/abs/2501.12948) - reinforcement learning for reasoning, cold-start and multi-stage training, and reasoning distillation.
-- [Test-Time Scaling in Reasoning LLMs](https://arxiv.org/abs/2608.04001) - inference regimes, compute accounting, evaluation, and reproducibility.
+- [Test-Time Scaling in Reasoning LLMs, version 2](https://arxiv.org/abs/2608.04001v2) - inference regimes, compute accounting, evaluation, and reproducibility.
 - [FlashAttention-3](https://arxiv.org/abs/2407.08608) - asynchronous attention pipelines and low-precision attention on Hopper.
 - [Mooncake](https://arxiv.org/abs/2407.00079) - KV-centric disaggregated serving, hierarchical cache, scheduling, and overload control.
-- [RocketKV](https://arxiv.org/abs/2502.14051) - two-stage KV-cache compression for long-context decode.
-- [SparseServe](https://arxiv.org/abs/2509.24626) - hierarchical KV placement and working-set control for dynamic sparse attention.
+- [Dynamo documentation](https://docs.nvidia.com/dynamo/dev/knowledge-base/concepts/system-architecture/disaggregated-serving), [LMCache](https://github.com/LMCache/LMCache), and [llm-d KV management](https://github.com/llm-d/llm-d/blob/main/docs/architecture/advanced/kv-management/README.md) - maintained implementations of KV-aware routing, transfer, indexing, and tiered offload.
+- [RocketKV, version 1](https://arxiv.org/abs/2502.14051v1) - two-stage KV-cache compression and the H100 results quoted above.
+- [SparseServe, version 1](https://arxiv.org/abs/2509.24626v1) - hierarchical KV placement and working-set control for dynamic sparse attention.
 - [Qwen2.5-VL Technical Report](https://arxiv.org/abs/2502.13923) - native-resolution vision, temporal encoding, document understanding, and visual agents.
 - [AgentDojo](https://arxiv.org/abs/2406.13352) - dynamic evaluation of indirect prompt injection in tool-using agents.
 - [ChatInject](https://openreview.net/forum?id=WVhgFSKniL) - ICLR 2026 evaluation of chat-template and multi-turn prompt injection attacks.
 - [Securing AI Agents with Information-Flow Control](https://arxiv.org/abs/2505.23643) - 2025 work introducing the Fides planner and deterministic confidentiality/integrity policies.
+- [Model Context Protocol, 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25) and [A2A 1.0](https://github.com/a2aproject/A2A/blob/main/docs/specification.md) - current protocol contracts for host-tool and agent-to-agent interoperability; neither substitutes for application authorization.
 
-### Recent State-of-the-Art Principles
+### From an experiment to a commitment
 
-1. Compare systems at the same boundary and quality level.
-2. Separate total parameters, active compute, and communication.
-3. Treat inference-time compute as a schedulable product resource.
-4. Move state only with explicit identity, ownership, and admission.
-5. Expect bottlenecks to migrate across compute, bandwidth, capacity, and coordination.
-6. Model multimodal token load from geometry and time, not text limits alone.
-7. Treat tool output as untrusted data and authorization as deterministic code.
-8. Preserve the full experimental protocol so a result can be reproduced or retired.
+A result card should now support one of three actions: adopt within a tested boundary, run a specific follow-up, or stop. A new attention kernel might qualify only for long prefills; an embedding migration might remain blocked on a filtered tenant. Part VIII asks who owns those decisions, how dissent and uncertainty are recorded, and what evidence permits a broader rollout.

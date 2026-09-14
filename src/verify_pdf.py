@@ -17,10 +17,10 @@ REQUIRED_TERMS = [
     "Speculative Decoding",
     "KL Divergence",
     "Prefill",
-    "Tiled Matrix Multiplication",
+    "Hierarchical Matrix Multiplication",
     "Continuous Batching",
     "Technical Leadership",
-    "Cross-Layer Design Synthesis",
+    "Cross-Layer Design Prompt Bank",
     "Recent State of the Art",
     "FlashAttention-3",
     "AgentDojo",
@@ -96,7 +96,13 @@ def verify(path: Path) -> None:
             page = pdf.pages[index]
             text = page.extract_text() or ""
             extracted.append(text)
-    corpus = "\n".join((page.extract_text() or "") for page in reader.pages)
+    page_texts = [page.extract_text() or "" for page in reader.pages]
+    corpus = "\n".join(page_texts)
+    # This book ends with a short closing section. A continuation page can
+    # exceed the sparse-character threshold while still being an orphan.
+    closing_pages = [i for i, text in enumerate(page_texts) if "Final principle" in text]
+    if closing_pages != [page_count - 1]:
+        raise SystemExit("FAIL: closing section is missing or split; inspect final pages")
     for term in REQUIRED_TERMS:
         if term.lower() not in corpus.lower():
             raise SystemExit(f"FAIL: required topic missing: {term}")

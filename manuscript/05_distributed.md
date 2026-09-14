@@ -44,7 +44,7 @@ A collective is both data movement and a participation contract. Every rank in t
 
 ### Ring all-reduce
 
-For `p` ranks and a tensor of `N` bytes per rank, a ring all-reduce is commonly decomposed into a reduce-scatter and an all-gather. Each rank sends and receives approximately:
+For `p` ranks and a tensor of `N` bytes per rank, a ring all-reduce is commonly decomposed into a reduce-scatter and an all-gather. Each rank sends approximately the following volume and receives the same volume; it is not their sum:
 
 `2 (p - 1) N / p bytes`
 
@@ -177,7 +177,7 @@ Scaling `d` increases global batch unless `b` or `g` changes. That can alter opt
 
 Frameworks register backward hooks and place parameters into buckets. When all gradients for a bucket are ready, its all-reduce can overlap with backward computation for earlier layers.
 
-Small buckets start early but pay more launch and latency. Large buckets use bandwidth well but may not begin until late in backward. Parameter registration order should roughly match gradient-ready order; unused or conditional parameters complicate readiness.
+Small buckets start early but pay more launch and latency. Large buckets use bandwidth well but may not begin until late in backward. Bucket order should track observed gradient readiness. PyTorch DDP normally launches reductions in reverse parameter-registration order, so registering parameters in approximate forward-execution order often aligns the schedule with backward; bucket rebuilding, unused parameters, and conditional paths can change the observed order and should be inspected rather than assumed.
 
 Gradient accumulation can suppress synchronization for intermediate microbatches and reduce once at the accumulation boundary. This saves communication but holds gradients longer and changes the overlap opportunity. Ensure the final microbatch triggers synchronization on every rank, including early termination paths.
 
@@ -205,6 +205,8 @@ The inference request's KV budget also does not transfer into training unchanged
 
 ### ZeRO stages
 
+:::diagram zero_shards|A four-rank ownership sketch. Ordinary data parallelism retains every model-state partition; successive ZeRO stages shard optimizer state, gradients, then parameters. Cells encode ownership, not equal byte sizes across state types.
+
 ZeRO-style sharding progressively removes data-parallel redundancy:
 
 | Stage | Sharded across data ranks | Main new communication/lifetime issue |
@@ -228,9 +230,17 @@ A fully sharded module generally performs:
 5. reduce-scatter gradients to owners;
 6. update local optimizer shards.
 
-Wrapping granularity controls this schedule. Very small units issue many latency-bound gathers. Very large units raise peak memory and delay prefetch. Flattening compatible parameters reduces metadata and improves collective efficiency but complicates per-parameter tooling and checkpoints.
+Communication-group granularity controls this schedule. Very small units issue many latency-bound gathers. Very large units raise peak memory and delay prefetch. Older flattened-parameter implementations combine parameter storage; do not assume that representation when reading a newer sharding API.
 
 Backward prefetch can overlap the next parameter gather with current gradient computation. Forward prefetch is useful when execution order is static and CPU issue cannot stay ahead. Too much prefetch creates multiple live gathered units and causes OOM.
+
+### Read a current training implementation
+
+PyTorch's [FSDP2 tutorial](https://docs.pytorch.org/tutorials/intermediate/FSDP_tutorial.html) uses `fully_shard` and per-parameter DTensor representations; it marks FSDP1 deprecated. Apply sharding to selected submodules and then the root, and construct the optimizer afterward. The grouping still controls collective timing even though parameters retain individual identities. Read the tutorial's state-dictionary and prefetch examples alongside the lifetime sequence above rather than translating old wrapper flags mechanically.
+
+[TorchTitan](https://github.com/pytorch/torchtitan) provides a PyTorch-native path through a training loop, parallelization, activation checkpointing, compilation, and distributed checkpointing. Follow one transformer block from model definition through parallelization to the checkpoint representation. [Megatron-LM and Megatron Core](https://github.com/NVIDIA/Megatron-LM) provide another reference for composing tensor, pipeline, context, and expert parallelism. These are implementation study paths, not a claim that either has the best configuration for every model.
+
+For a first experiment, compare one unsharded update with a sharded update on identical effective data. Check loss, gradients after the appropriate gathering, updated parameters, and checkpoint reload within declared tolerances. Only then profile communication and peak live memory. A configuration that launches successfully has not yet demonstrated the intended optimization problem.
 
 ### Reshard-after-forward decisions
 
@@ -240,11 +250,11 @@ Choose by available memory, module size, recomputation, pipeline schedule, and b
 
 ### Activation checkpointing and offload
 
-Activation checkpointing saves selected boundary tensors and recomputes internal forward operations during backward. It trades compute for activation memory and can change overlap timing. Selective checkpointing targets expensive saved tensors while avoiding recomputation of IO-heavy or nondeterministic work.
+Activation checkpointing saves selected boundary tensors and recomputes internal forward operations during backward. It trades compute for activation memory and can change overlap timing. Selective policies decide which operation outputs to save and which to recompute: preserving an expensive matrix multiplication while recomputing cheap pointwise operations is one useful starting hypothesis, not a universal rule.
 
 CPU or storage offload expands capacity but introduces transfer and page-fault risk. It is viable when transfers overlap and the interconnect sustains the required bytes per step. An offload plan that fits but extends step time beyond the training budget is not a solution.
 
-Checkpointed regions must preserve random-number behavior for dropout or other stochastic operations. Distributed recomputation also needs the same collective order as the original forward.
+Checkpointed regions must preserve random-number behavior for dropout or other stochastic operations. Distributed recomputation also needs the same collective order as the original forward. Mutable globals or buffers can make recomputation differ even with the same RNG state. PyTorch's [checkpoint reference](https://docs.pytorch.org/docs/2.14/checkpoint.html) documents non-reentrant behavior and selective policies; test gradients after changing the policy, not only peak memory.
 
 ### Mixed precision and global numerical state
 
@@ -313,7 +323,7 @@ Bias, activation, and gating should be applied locally when their partition matc
 
 Row parallelism partitions the input rows of `A` and the corresponding feature dimension of `X`. Rank `i` computes a partial output `X_i A_i`; partials must be summed across ranks. The result is usually produced by all-reduce, or reduce-scatter when the next region can consume a sharded output.
 
-A common transformer plan pairs a column-parallel expansion with a row-parallel contraction. The intermediate activation remains sharded, and only the final partial outputs require reduction. The same principle applies to attention projections: choose adjacent layouts so communication occurs at a small number of deliberate boundaries.
+A common transformer plan pairs a column-parallel expansion with a row-parallel contraction. In the forward pass, the intermediate activation remains sharded and the contraction's partial outputs require reduction. Backward has a corresponding boundary: a column-parallel layer produces partial input gradients that must be summed across tensor-parallel ranks, commonly by all-reduce or by a reduce-scatter/all-gather sequence when sequence parallelism is active. The same principle applies to attention projections: choose adjacent layouts so communication occurs at a small number of deliberate boundaries.
 
 ### Tensor layouts are types
 
@@ -353,7 +363,7 @@ Strong scaling eventually stops when smaller local work no longer amortizes coll
 
 ### Sequence parallelism
 
-Within a tensor-parallel region, operations such as layer normalization and dropout do not need the full hidden dimension to be replicated across ranks for every token. Sequence parallelism can partition activations along sequence for these regions, reducing replicated activation memory.
+Within a tensor-parallel region, LayerNorm and dropout can operate on separate sets of tokens. Sequence parallelism assigns each rank a sequence shard with the full hidden vector for every locally owned token, reducing replicated activation memory. LayerNorm still needs that token's full hidden dimension for its statistics; splitting the hidden dimension would require an additional distributed reduction.
 
 Transitions often use reduce-scatter to produce sequence shards and all-gather before operations that require another layout. It complements tensor parallelism; it does not by itself partition attention's all-token dependency.
 
@@ -363,7 +373,7 @@ Random operations need a logical mask policy. If dropout is intended to be invar
 
 Context parallelism partitions the entire sequence and its activations across a group. Tokenwise linear and normalization operations run locally. Attention is different: local queries require keys and values from the full logical context.
 
-That description is sufficient for training, where many query positions are processed together, but it is too coarse for serving. Prefill and autoregressive decode have different query-to-history ratios and therefore need different context-parallel layouts. The distributed-inference chapter distinguishes **prefill context parallelism (PCP)** from **decode context parallelism (DCP)**; the two should not be treated as interchangeable settings.
+In training, many query positions are processed together and the backward pass must return attention-gradient contributions to the owning sequence shards. Serving adds a different distinction: prefill and autoregressive decode have different query-to-history ratios and therefore need different context-parallel layouts. The distributed-inference chapter distinguishes **prefill context parallelism (PCP)** from **decode context parallelism (DCP)**; the two should not be treated as interchangeable settings.
 
 Do not confuse these with **phase-specific tensor parallelism**: a disaggregated service can run ordinary TP at one degree in its prefill pool and another degree in its decode pool. That changes model-group ownership across a KV handoff, whereas PCP and DCP partition sequence work or history. Part III's “Different TP sizes for prefill and decode” gives a concrete TP=4 to TP=2 handoff.
 
@@ -384,7 +394,7 @@ Packed ragged sequences add boundaries and different lengths. Do not let an atte
 
 ### Choosing TP versus CP
 
-Both can reduce activation memory, but they affect different work. Raising TP shrinks hidden-dimension GEMMs and adds collectives throughout the block. Raising CP shrinks sequence-local activations and attention queries while duplicating weights across the CP group and communicating attention context.
+Both can reduce activation memory, but they affect different work. Raising TP shrinks hidden-dimension GEMMs and adds collectives throughout the block. Raising CP shrinks sequence-local activations and attention queries while replicating weights across the CP group and communicating attention context. Because CP ranks process different fragments of one logical sequence rather than independent examples, their parameter-gradient contributions must also be combined before the optimizer step. In a dense layout this reduction commonly spans DP×CP ranks at fixed PP and TP coordinates, or the equivalent sharded group. Its normalization must preserve the intended logical-token objective rather than treating CP as another independent-example dimension.
 
 For very long sequence and already efficient hidden-dimension kernels, CP may preserve better local GEMM shapes than another TP step. For huge hidden layers that do not fit, TP remains necessary. Compose them only after measuring the communication paths and divisibility constraints.
 
@@ -411,7 +421,7 @@ For every transformer sublayer, label input, intermediate, and output as replica
 
 #### 1. Paired linear layers
 
-Column sharding replicates input `X`, partitions output columns of `A`, and produces a sharded feature activation with no reduction. A compatible activation and next linear consume that shard. Row sharding of the contraction computes partial full outputs from each input-feature shard, then all-reduces them, or reduce-scatters if the next region accepts a shard. The efficient pair avoids gathering the expanded intermediate and communicates only at the contraction boundary.
+Column sharding replicates input `X`, partitions output columns of `A`, and produces a sharded feature activation with no forward reduction. A compatible activation and next linear consume that shard. Row sharding of the contraction computes partial full outputs from each input-feature shard, then all-reduces them, or reduce-scatters if the next region accepts a shard. The efficient forward pair avoids gathering the expanded intermediate and communicates at the contraction boundary; during backward, the column-parallel layer also sums its partial input gradients across the tensor-parallel group.
 
 #### 2. Vocabulary-parallel loss
 
@@ -446,6 +456,8 @@ Partition a model into `s` ordered stages. A microbatch executes forward through
 For a forward-only pipeline with `m` equal-time microbatches and balanced stages, a simple bubble fraction is:
 
 `bubble = (s - 1) / (m + s - 1)`
+
+:::diagram pipeline_bubbles|Four microbatches traverse four stages in seven equal-duration slots. Each stage works for four slots and is idle for three. This forward-only example explains the bubble formula; a training schedule must also account for backward work, communication, and saved activations.
 
 Equivalently, useful stage slots are `m` out of `m+s-1`. For training schedules, exact utilization depends on forward/backward times, memory policy, and schedule. The approximation still shows why more microbatches amortize fill and drain.
 
@@ -572,7 +584,7 @@ Profile forward, backward, recompute, parameter bytes, and boundary activations 
 
 #### 4. Rank coordinates
 
-Assign deterministic `(dp, pp, tp, cp)` coordinates whose product equals world size for the dense case. TP groups vary `tp` while other coordinates are fixed; PP groups vary `pp`; CP groups vary `cp`; DP groups vary `dp`. Map TP to local fabric, PP to low-contention neighbor paths, and DP across replicas/rails. Print memberships and include expert folding explicitly rather than assuming another independent product dimension.
+Assign deterministic `(dp, pp, tp, cp)` coordinates whose product equals world size for the dense case. TP groups vary `tp` while other coordinates are fixed; PP groups vary `pp`; CP groups vary `cp`; DP groups vary `dp`. Also define the optimizer-synchronization group explicitly: with parameters replicated over CP, it commonly varies both `dp` and `cp` at fixed `pp` and `tp`, or uses the sharded equivalent. Map TP to local fabric, PP to low-contention neighbor paths, and replica synchronization across rails. Print memberships and include expert folding explicitly rather than assuming another independent product dimension.
 
 #### 5. Sixty-four GPUs
 
@@ -587,6 +599,8 @@ An isolated steady-state step excludes startup, data stalls, checkpoint pauses, 
 LEAD: Mixture-of-experts models increase parameter capacity while activating only a subset per token. The systems cost moves from dense compute to routing, variable all-to-all traffic, expert memory, and load imbalance.
 
 ### The MoE layer
+
+:::diagram moe_dispatch|For one token with top-2 routing, two selected experts execute and return outputs to its original owner for weighted combination. Expert dispatch and return may cross ranks; unselected experts still consume parameter storage.
 
 For each token representation, a router scores experts and selects top `k`. The layer then:
 
@@ -765,7 +779,7 @@ The fastest single request plan can lower fleet goodput if it consumes more devi
 
 Tensor parallelism shards weights and compute but adds reductions or gathers in many layers. Decode local matrix height is approximately active batch size, so high TP degree produces small per-rank GEMMs and latency-bound collectives.
 
-A simplified step decomposition is:
+A simplified step decomposition, with local compute excluding the separately counted KV-attention time, is:
 
 `T_step ~= T_local_compute + T_exposed_collectives + T_KV + T_host`
 
@@ -797,6 +811,8 @@ Block tables and prefix references must use the same distributed ownership. A re
 
 ### Phase-specific context parallelism
 
+:::diagram phase_sharding|Prefill partitions query rows; the contiguous split shown explains ownership, not balanced causal work. Decode partitions historical KV tokens, merges the per-rank maximum m, denominator l, and weighted numerator o, then normalizes. A transfer between separate prefill and decode pools is a different boundary.
+
 “Context parallelism” is not one inference plan. Prefill applies many queries to an expanding context and is usually optimized for time to first token. Decode applies one new query per active sequence to a large paged history and is usually optimized for inter-token latency, KV capacity, or batch goodput. A system can use different degrees and even different algorithms for these phases.
 
 #### Prefill context parallelism
@@ -810,7 +826,7 @@ Two implementation families make different memory-communication trades:
 
 The first is simpler but can reproduce the full-KV memory cost. The second bounds local KV working memory but introduces ordered communication and causal-load-balancing work. Contiguous causal partitions are imbalanced because late query blocks see more history; zigzag or interleaved mappings distribute early and late positions more evenly.
 
-PCP is normally an additional process-group dimension. In vLLM's current group geometry, PCP is separate from tensor parallelism and therefore increases the world size for a fixed tensor-parallel group. Support remains version- and attention-backend-dependent, so a deployment must validate the exact release and kernel path rather than assuming that every context-parallel prefill algorithm is production-ready.
+PCP is normally an additional process-group dimension. In the vLLM revision cited below, PCP is separate from tensor parallelism and therefore increases the world size for a fixed tensor-parallel group. Support remains version- and attention-backend-dependent, so a deployment must validate the exact release and kernel path rather than assuming that every context-parallel prefill algorithm is production-ready.
 
 #### Decode context parallelism
 
@@ -821,6 +837,10 @@ Decode context parallelism (DCP) instead partitions the historical KV cache alon
 :::equation l = Σ_{r} exp(m_{r} - m) l_{r}|Shifted local normalizers combine into the exact global softmax denominator.
 
 :::equation o = (1 / l) Σ_{r} exp(m_{r} - m) o_{r}|Only compact statistics need to be reduced; the historical KV tensors need not be gathered.
+
+Each history shard must first receive the query heads whose KV it owns, by replication or exchange according to the TP layout. The merge then needs a common maximum before rescaling and summing denominators and output numerators, or a collective that directly combines these states. An empty or fully masked shard contributes zero mass and a zero numerator; handle it explicitly so `exp(-inf - -inf)` is never evaluated. If every shard is empty, apply the declared fully masked-row policy instead of dividing by zero. The compact reduction saves historical-KV transfer, but it does not eliminate query exchange, collective latency, or local KV reads.
+
+The repository's `examples/attention.py` and the attention-test command in `examples/README.md` exercise this merge, including masked shards and rejected numerical overflow. They check single-head CPU semantics, not distributed execution or DCP performance.
 
 Interleaving token blocks across DCP ranks spreads future cache growth and attention work more evenly than assigning each rank one permanently contiguous interval.
 
@@ -864,6 +884,22 @@ A sound selection sequence is:
 
 Do not copy a training CP degree into serving by precedent. PCP and DCP solve different bottlenecks, have different process-group geometry, and can move opposite SLOs.
 
+#### Phase-specific sharding ledger
+
+The word *sharding* is incomplete unless it names the tensor axis, phase, and communication. The following ledger separates mechanisms that are often conflated:
+
+| Mechanism | Prefill ownership | Decode ownership | Recurring communication |
+| --- | --- | --- | --- |
+| TP | Weight/output channels and attention heads; every rank processes the active prompt rows | The same model shards plus local KV heads or latent state | Per-layer reductions or gathers in both phases |
+| PCP | Prompt query positions; K/V may be gathered in full or circulated as partial sequence shards | Normally not the decode-history mechanism | K/V all-gather or ring/stream exchange during long prefill |
+| DCP | A prefill chunk may attend to DCP-sharded history; backend-specific prefill modes need their own group and weight plan | Historical token blocks within each owned KV head or latent cache | Merge compact partial-attention states for each layer and new token |
+| P/D disaggregation | Whole requests execute in a separately sized prefill pool with its own TP/PP/PCP plan | Decode uses a separately sized pool with its own TP/PP/DCP plan | One logical KV handoff per admitted boundary, plus any resharding |
+| Serving DP | Different replicas own different requests and cache namespaces | Different replicas advance independent batches | Routing and cache-state publication, not a per-layer model collective |
+
+The [current vLLM context-parallel design](https://docs.vllm.ai/en/latest/serving/context_parallel_deployment/) describes two prefill cases—partial queries with full K/V and partial queries with partial K/V—and uses token-history sharding for decode. [Dynamo's disaggregated-serving contract](https://docs.nvidia.com/dynamo/dev/knowledge-base/concepts/system-architecture/disaggregated-serving) permits the two pools to choose different parallel plans and then transfers KV through a backend-specific connector. These mechanisms compose, but their degrees are not interchangeable: `TP=8, DCP=8` inside one decode group is not the same topology as eight prefill workers feeding eight decode workers.
+
+The SDK-scoped Neuron example in **Accelerator Ecosystems Beyond CUDA and NVIDIA** also has distinct prefill and decode group rules: a shared DCP flag name does not establish identical weight placement or execution geometry.
+
 ### KV transfer and remote memory
 
 Migration or prefill-decode disaggregation transfers state between model-parallel groups. A complete transfer plan specifies:
@@ -878,6 +914,8 @@ Migration or prefill-decode disaggregation transfers state between model-paralle
 If source TP and destination TP degrees differ, the transfer includes resharding. Avoid collecting the entire KV on one coordinator. Each source sends the intersections of its logical shards with destination ownership.
 
 Remote KV memory is useful for inactive sessions or pooled capacity when transfer/recompute cost is below holding scarce device memory. Fetching remote pages on every token makes the network part of the attention critical path and requires a much stronger availability and tail-latency contract.
+
+Modern reference stacks split this path into independently observable components. [Dynamo's documented disaggregated path](https://docs.nvidia.com/dynamo/dev/knowledge-base/concepts/system-architecture/disaggregated-serving) routes a request through a prefill worker, transfers KV directly between accelerator memories through [NIXL](https://github.com/ai-dynamo/nixl), and continues on a decode worker without blocking unrelated forward passes. [llm-d's KV architecture](https://github.com/llm-d/llm-d/blob/main/docs/architecture/advanced/kv-management/README.md) separates prefix-aware routing, an event-fed cache index, and multi-tier offload. The decomposition is more important than either product name: the router's belief can lag the allocator, the transfer can succeed after the destination loses admission, and transport completion is not ownership publication. Instrument and test those boundaries independently.
 
 ### Replica routing with distributed state
 
@@ -1001,6 +1039,10 @@ An original capacity calculation: if rollout workers produce 120,000 action toke
 
 ### Publication, replay, and recovery
 
+[verl](https://github.com/verl-project/verl) is a practical reference for this separation of roles: its documented training backends include FSDP2 and Megatron-LM, while rollout generation can use vLLM or SGLang. Trace one rollout batch across generation, reward, log-probability calculation, update, and weight publication. Backend support is not evidence that every combination is validated on every accelerator; pin and test the complete combination.
+
+Pay particular attention to training-versus-rollout numerical mismatch. Even nominally identical weights can produce different log-probabilities under different precision, kernels, batching, or token processing. Record the actual behavior probabilities when the algorithm requires them and compare a fixed sequence across both paths. Policy version alone does not identify the distribution that generated a sample.
+
 Publish weights through a manifest only after every required shard is available and validated. Rollout workers finish or invalidate incompatible in-flight state before acknowledging a version switch. Retain immutable behavior metadata even after an old weight checkpoint is garbage-collected. Store enough information to distinguish replay of an optimizer batch from regeneration of its samples; regeneration may produce different data.
 
 Checkpoint learner/optimizer state, consumed trajectory IDs, batch/group membership, policy publication state, and the disposition of in-flight work. A repeated learner batch doubles its influence. A repeated tool action can have an external effect. Exactly-once progress therefore cannot be achieved merely by saving model weights. Use committed batch IDs and an explicit replay policy; use tool-side idempotency where supported.
@@ -1042,6 +1084,8 @@ Optimizer state follows parameter identity, not current rank. Flattening, paddin
 
 ### Atomic publication
 
+:::diagram checkpoint_commit|Every required shard must be durable and validated before publication. The atomic pointer selects a complete manifest; a reader must never discover a partially written step through the latest-checkpoint pointer.
+
 One safe protocol is:
 
 1. coordinator allocates a unique checkpoint ID and immutable object prefix;
@@ -1074,6 +1118,10 @@ A synchronous save pauses training until required state is durable. It is simple
 An asynchronous save first snapshots or stages a consistent state, then writes while training continues. The snapshot must remain immutable. Copying to host frees device state sooner but consumes host memory and link bandwidth. Copy-on-write or double buffering can reduce pause but may temporarily double large state.
 
 Backpressure is mandatory. If storage is slower than checkpoint production, do not queue unbounded snapshots. Skip a nonessential interval, block at a safe point, or lower frequency while preserving the recovery objective.
+
+The asynchronous boundary has two different completion events. **Staging complete** means the checkpoint owns a stable snapshot that later parameter updates cannot alter. **Upload complete** means that snapshot has reached its storage destination; publication still follows the manifest protocol. PyTorch's [asynchronous distributed-checkpoint recipe](https://docs.pytorch.org/tutorials/recipes/distributed_async_checkpoint_recipe.html) exposes staging and upload completion separately for its asynchronous stager.
+
+Wait for staging before the next operation that can mutate captured state, not merely before the next checkpoint. If a forward pass mutates buffers, its boundary matters as well as `optimizer.step()`. Limit concurrent saves so pinned host snapshots do not exhaust memory. A process that exits after staging but before durable upload has not produced a remote recovery point. Inject failure at both boundaries and verify which checkpoint a replacement job can discover.
 
 ### Incremental and local checkpoints
 
@@ -1394,3 +1442,5 @@ Confirm version, workload, topology, and measurement changes; compare the same s
 *A parallel plan is correct only when tensor ownership, communication order, physical placement, numerical semantics, and recovery state agree.*
 
 Scale is not the number of accelerators allocated. It is the amount of valid progress preserved per unit time and cost after communication, imbalance, queueing, checkpointing, and failure are included.
+
+Those claims become operational through the replayable telemetry, versioned summaries, and control paths developed in Part VI.

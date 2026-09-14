@@ -1,10 +1,8 @@
 # Part VIII - Technical Leadership and Engineering Judgment
 
-Technical leadership is the ability to improve decisions beyond the code one person can write. The evidence is not senior-sounding vocabulary or organizational visibility. It is durable direction, aligned execution, technical risk retired early, and systems that continue working after attention moves elsewhere.
+A new embedding model is proposed for the documentation assistant. Aggregate retrieval improves, but one small tenant loses relevant evidence after permission filtering. The retrieval team wants to ship; the service owner is responsible for that tenant's failures. Neither a better kernel nor another average score settles the decision.
 
-Leadership in ML systems has an unusually wide control surface. A decision about data changes model behavior; a decision about topology changes failure domains; a decision about an evaluation threshold changes release velocity; and a decision about ownership changes how quickly the next incident is resolved. The job is to connect these surfaces without becoming the bottleneck for all of them.
-
-This part treats leadership as an engineering discipline. It covers how to create decision quality, establish operating mechanisms, lead through incidents and migrations, develop strategy from constraints, and communicate technical judgment in real systems and organizations.
+This part examines who can stop the rollout, which experiment should come next, and how the decision survives changes in team membership. Its fictional cases return to the assistant's index migration, latency budget, and permission incident. Communication, operating reviews, and incident roles matter because they determine whether the technical safeguards developed earlier are actually used.
 
 ## Executive Technical Communication
 
@@ -28,7 +26,7 @@ The memo is not a transcript of analysis. Put supporting benchmarks and architec
 
 Separate **known**, **estimated**, **assumed**, and **unknown**. Attach ranges where they change the choice. Name the observation that would invalidate the recommendation.
 
-"We do not know" becomes actionable when followed by: "The uncertainty is draft acceptance on code traffic; a 48-hour replay of 100,000 anonymized prompts can bound it to within two points, and the architecture decision flips below 62 percent."
+"We do not know" becomes actionable when followed by a concrete plan. For example: "The uncertainty is draft acceptance on code traffic. We will replay 100,000 representative prompts over 48 hours, report uncertainty by workload slice, and revisit the architecture if acceptance falls below our modeled break-even point of 62 percent." These are hypothetical planning values. A sample count alone does not guarantee a narrow interval: repeated users, correlated prompts, and rare slices change the effective sample size.
 
 ### Technical deep dive structure
 
@@ -113,7 +111,7 @@ Metrics need counterweights. Optimizing GPU utilization alone can increase queue
 
 ### Define ownership at interfaces
 
-Most cross-team failures occur between nominal owners. A model team owns a checkpoint, a serving team owns an engine, and a product team owns traffic; nobody owns whether that exact combination is safe to release.
+Cross-team failures often expose gaps between nominal owners. A model team owns a checkpoint, a serving team owns an engine, and a product team owns traffic; without an explicit release owner, nobody may own whether that exact combination is safe to release.
 
 For each critical interface, define:
 
@@ -204,7 +202,9 @@ Verify closure. A runbook is not complete until someone unfamiliar with the inci
 
 ### Lead migrations as products
 
-Large technical changes fail more often at adoption than implementation. Treat a migration as a product with users, economics, compatibility, support, and an end state.
+:::diagram migration_gates|Each stage increases commitment and needs evidence from the affected workloads. The old path is retired only after exit criteria are met; rollback must account for the state already changed during adoption.
+
+A migration can be implemented correctly and still fail at adoption. Treat it as a product with users, economics, compatibility, support, and an end state.
 
 Segment adopters by complexity and value. Start with workloads that exercise the important path without requiring every exception. Provide an automated inventory, compatibility test, cost comparison, migration tooling, and staffed escalation path. Publish known gaps rather than allowing each team to rediscover them.
 
@@ -269,6 +269,10 @@ Publish the decision and roadmap. Secure owners and capacity, define interfaces 
 
 ### Prioritization
 
+For the documentation assistant, suppose the first month's evidence shows that most release delay comes from rebuilding evaluation by hand, while existing serving capacity meets demand. This is a fictional diagnosis to test, not a forecast. A useful first-quarter commitment is then a repeatable model/index release and canary path for one team—not a fleet-wide engine migration.
+
+By day 60, run one release through that path and measure elapsed lead time, manual interventions, and missed defects. By day 90, demonstrate a second release, including rollback and a permission-revocation test, without the original implementer guiding every step. Keep quality and disclosure gates fixed so a faster release cannot win by omitting checks. If queue traces instead show a capacity problem, reopen the priority with that evidence. The calendar organizes learning; it does not justify keeping a disproved diagnosis.
+
 Score opportunities by impact, risk reduction, leverage, effort, dependency, and reversibility. Use scoring to expose assumptions, not replace judgment. Quantify adoption and duplicated work removed: a platform with no migration path has zero realized leverage.
 
 :::callout decision|Strategy includes a sequence
@@ -289,7 +293,7 @@ LEAD: A leadership story demonstrates scope, judgment, and durable influence. It
 
 ### The SCORE structure
 
-Use **SCORE** rather than a mechanical chronology:
+One optional outline is **SCORE**. Use it to recover the evidence for a real decision, not to turn every experience into the same five-paragraph success story:
 
 - **Situation:** the user and system context, scale, and stakes.
 - **Constraint:** the central technical and organizational tension.
@@ -297,7 +301,7 @@ Use **SCORE** rather than a mechanical chronology:
 - **Response:** your decisions, influence, mechanisms, and execution.
 - **Effect:** measurable outcome, second-order impact, and what you learned.
 
-The account should make clear what *you* did without erasing the team. Use "I" for decisions and actions you owned, "we" for collective execution, and name partners' contributions.
+The account should make clear what *you* did without erasing the team. Use "I" for decisions and actions you owned, "we" for collective execution, and name partners' contributions. Use real evidence when describing your work; if an outcome was not measured, explain the observable change and the limit of the evidence instead of inventing a metric.
 
 ### Customer obsession
 
@@ -327,9 +331,9 @@ At broad organizational scope, ambiguity often spans organizations: no shared me
 
 Mentorship is not only advice. It creates increasing ownership. Describe how you diagnosed a growth edge, set a stretch assignment with safety, provided feedback, opened stakeholder access, and stepped back. Hiring stories should include role definition, calibrated signal, closing, and the team's capability after hire.
 
-### Story bank
+### An evidence notebook
 
-Prepare six to eight stories that can flex across prompts:
+Keep a small set of decision records for reflection, mentorship, and interviews. Record the original uncertainty and contrary evidence while they are still available; a polished retrospective can otherwise make an ambiguous choice look inevitable.
 
 | Story | Primary signal | Useful alternate prompts |
 | --- | --- | --- |
@@ -341,7 +345,7 @@ Prepare six to eight stories that can flex across prompts:
 | Product-quality tradeoff | Customer judgment | Data, metrics, ethics |
 
 :::callout insight|End with the mechanism that remained
-Durable impact is durable. Mention the interface, metric, review, tool, ownership model, or talent growth that continued after the immediate result.
+Mention the interface, metric, review, tool, ownership model, or talent growth that continued after the immediate result. Explain who maintained it and what evidence showed it still worked after you stepped back.
 :::
 
 ### Design Exercises
@@ -352,9 +356,13 @@ Durable impact is durable. Mention the interface, metric, review, tool, ownershi
 4. Explain a cross-org disagreement without making the other side irrational.
 5. Demonstrate mentorship by the ownership the other person gained.
 
+### Leadership exercise criteria
+
+Apply this rubric to every exercise in Part VIII. A strong answer names the decision and accountable owner; distinguishes evidence from uncertainty; presents a credible alternative or dissenting view; installs a mechanism with a cadence or trigger; and defines an observable reversal, escalation, or completion boundary. Prefer a smaller claim supported by durable evidence over a sweeping story whose outcome cannot be verified.
+
 ### Three decision cases
 
-The following cases are fictional teaching examples, not claims about the author's employment or measured project outcomes. Each uses a concrete choice to show what a leadership mechanism changes.
+The following cases are fictional teaching examples, not claims about the author's employment or measured project outcomes. They serve as model answers for migration, prioritization, and incident decisions: each uses a concrete choice to show what a leadership mechanism changes.
 
 #### A migration that passes the average and fails a customer
 
@@ -378,15 +386,15 @@ After a permissions rollout, the documentation assistant begins returning cached
 
 Disable affected answer-cache reads and fail closed for protected content whose authorization cannot be established. Preserve scoped diagnostic evidence without copying confidential answers into a broad incident channel. One owner validates revocation and cache invalidation, another estimates the availability impact, and a communications owner gives users a concrete reduced-service status.
 
-Recovery requires replaying the previously failing access cases against the canonical authority, not merely seeing the error counter fall after traffic was rejected. The follow-up action is an authorization-aware cache contract with revocation tests and a named owner. “Be more careful during rollout” cannot be verified and therefore is not a sufficient corrective action.
+Recovery requires replaying the failing access cases against the canonical authority, not merely observing fewer errors after rejection. The corrective action is a named-owner, authorization-aware cache contract with revocation tests; “be more careful” is not verifiable.
 
-## Cross-Layer Design Synthesis
+## Cross-Layer Design Prompt Bank
 
-LEAD: The following scenarios connect the major technical layers of the book. Each decision path is deliberately compact and should be expanded through assumptions, equations, alternatives, failure modes, and measurement.
+LEAD: The following compact prompts connect the major technical layers of the book. The first ten include diagnostic questions; the final five leave those questions to the reader. Expand every decision path through assumptions, equations, alternatives, failure modes, and measurement.
 
 ### 1. Design a draft model for speculative decoding
 
-**Decision path:** Define target workload and exactness. Match tokenizer. Choose draft architecture from memory and latency budget. Train on production prompts with target logits or verified continuations, emphasizing rejection positions. Jointly tune draft size and proposal length. Evaluate acceptance per microsecond, committed tokens per cycle, target batch capacity, tail latency, and exact output distribution. Roll out by traffic slice with automatic fallback to ordinary decode.
+**Decision path:** Define target workload and exactness. Match tokenizer. Choose draft architecture from memory and latency budget. Train on production prompts with target logits or verified continuations, emphasizing rejection positions. Jointly tune draft size and proposal length. Evaluate acceptance per microsecond, committed tokens per cycle, target batch capacity, and tail latency. Establish target-distribution preservation from the verification algorithm and test its implementation on tractable distributions; finite task evaluations alone cannot prove exactness. Roll out by traffic slice with automatic fallback to ordinary decode.
 
 **Questions to resolve:** Why not only teacher outputs? What changes at high temperature? When does a larger draft win? How do you handle domain shift? Can K/V state be shared?
 
@@ -477,3 +485,5 @@ For each decision path, write the governing assumptions, derive the controlling 
 - Did I define offline, online, and guardrail metrics?
 - Did I explain rollout and rollback?
 - Did I make my own decision and remaining uncertainty clear?
+
+Return to the documentation assistant: can another team explain its latency budget, update its index without mixing versions, and stop an unauthorized answer? The capstone in Part IX asks you to assemble those decisions into one design and test it by changing the workload or introducing a failure.

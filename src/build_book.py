@@ -43,6 +43,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 from reportlab.platypus.tableofcontents import TableOfContents
+from book_figures import FIGURES, render_figure
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,18 +56,18 @@ MARGIN_X = 17 * mm
 MARGIN_TOP = 20 * mm
 MARGIN_BOTTOM = 18 * mm
 
-INK = HexColor("#152238")
-MUTED = HexColor("#5B687A")
-NAVY = HexColor("#0B1736")
-TEAL = HexColor("#00A6A6")
-CYAN = HexColor("#41D3D3")
-CORAL = HexColor("#FF6B5E")
-GOLD = HexColor("#F2B84B")
-PAPER = HexColor("#F7F5F0")
-PANEL = HexColor("#EEF2F5")
-PALE_TEAL = HexColor("#E5F7F5")
-PALE_CORAL = HexColor("#FFF0ED")
-PALE_GOLD = HexColor("#FFF7E4")
+INK = HexColor("#292B29")
+MUTED = HexColor("#6B6D68")
+CHARCOAL = HexColor("#29473F")
+TEAL = HexColor("#789487")
+CYAN = HexColor("#D9E4DE")
+CORAL = HexColor("#B9856A")
+GOLD = HexColor("#B69A62")
+PAPER = HexColor("#FBFAF6")
+PANEL = HexColor("#F1F0EA")
+PALE_TEAL = HexColor("#EDF2EF")
+PALE_CORAL = HexColor("#F6EEE9")
+PALE_GOLD = HexColor("#F5F1E7")
 WHITE = colors.white
 
 
@@ -135,7 +136,7 @@ def inline_markup(text: str) -> str:
     text = re.sub(r"`([^`]+)`", _stash_code, text)
     text = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<i>\1</i>", text)
-    text = re.sub(r"\[([^]]+)]\(([^)]+)\)", r'<link href="\2" color="#008C8C">\1</link>', text)
+    text = re.sub(r"\[([^]]+)]\(([^)]+)\)", r'<link href="\2" color="#49685D">\1</link>', text)
     for index, code in enumerate(code_spans):
         text = text.replace(_code_token(index), f'<font name="Courier">{code}</font>')
     return text
@@ -266,7 +267,7 @@ def make_styles() -> dict[str, ParagraphStyle]:
             fontName="Courier",
             fontSize=6.75,
             leading=8.7,
-            textColor=HexColor("#D9E4F2"),
+            textColor=HexColor("#ECEAE4"),
             leftIndent=8,
             rightIndent=8,
             spaceBefore=5,
@@ -361,12 +362,12 @@ class ChapterBand(Flowable):
     def draw(self):
         c = self.canv
         c.saveState()
-        c.setFillColor(NAVY)
+        c.setFillColor(CHARCOAL)
         c.roundRect(0, 0, self.width, self.height, 12, fill=1, stroke=0)
         c.setFillColor(TEAL)
         c.roundRect(0, self.height - 9, self.width, 9, 4, fill=1, stroke=0)
         if self.number:
-            c.setFillColor(HexColor("#20335D"))
+            c.setFillColor(HexColor("#527064"))
             c.setFont(FONT_BOLD, 66)
             c.drawRightString(self.width - 18, self.height - 70, self.number)
         c.setFillColor(CYAN)
@@ -458,9 +459,9 @@ class CodePanel(Flowable):
     def draw(self):
         c = self.canv
         c.saveState()
-        c.setFillColor(HexColor("#F0F4F8"))
+        c.setFillColor(HexColor("#F2F1ED"))
         c.roundRect(0, 0, self.width, self.height, 7, fill=1, stroke=0)
-        c.setFillColor(HexColor("#18284D"))
+        c.setFillColor(HexColor("#355149"))
         c.roundRect(0, self.height - self.header_h, self.width, self.header_h, 7, fill=1, stroke=0)
         c.setFillColor(CYAN)
         c.setFont(FONT_BOLD, 6.8)
@@ -495,12 +496,14 @@ def box(d: Drawing, x, y, w, h, label, fill=WHITE, stroke=TEAL, font=7.8, label_
 
 
 def diagram(name: str, width: float) -> Drawing:
+    if name in FIGURES:
+        return render_figure(name, width, (FONT, FONT_BOLD), globals())
     # Author all diagrams on one fixed canvas; scale the whole drawing into
     # the page instead of shrinking only its background around fixed nodes.
     w = 430
     h = 190
     d = Drawing(w, h)
-    d.add(Rect(0, 0, w, h, rx=9, ry=9, fillColor=PANEL, strokeColor=HexColor("#DCE3E8")))
+    d.add(Rect(0, 0, w, h, rx=9, ry=9, fillColor=PANEL, strokeColor=HexColor("#D8D7D1")))
 
     if name == "training_pipeline":
         labels = ["Raw data", "Curate", "Pretrain", "Post-train", "Evaluate", "Serve"]
@@ -573,15 +576,17 @@ def diagram(name: str, width: float) -> Drawing:
     elif name == "speculative_decoding":
         box(d, 22, 112, 90, 42, "Draft model\npropose gamma", fill=PALE_TEAL)
         box(d, 168, 112, 94, 42, "Target model\nverify in parallel", fill=PALE_GOLD, stroke=GOLD)
-        box(d, 318, 112, 90, 42, "Accept prefix\n+ correction", fill=PALE_CORAL, stroke=CORAL)
+        box(d, 318, 112, 90, 42, "Commit prefix\n+ one token", fill=PALE_CORAL, stroke=CORAL)
         arrow(d, 114, 133, 166, 133)
         arrow(d, 264, 133, 316, 133)
         arrow(d, 363, 108, 363, 62, CORAL)
         arrow(d, 363, 62, 67, 62, CORAL)
         arrow(d, 67, 62, 67, 108, CORAL)
-        d.add(String(w / 2, 43, "repeat from the first rejected position", textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=CORAL))
+        d.add(String(w / 2, 43, "correction on rejection; target bonus if all proposals pass", textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=CORAL))
+        d.add(String(w / 2, 26, "continue after committed output, unless EOS or an output limit stops it", textAnchor="middle", fontName=FONT, fontSize=8, fillColor=MUTED))
         d.add(String(w / 2, 173, "EXACT SAMPLING WITH A CHEAPER PROPOSAL DISTRIBUTION", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
     elif name == "roofline":
+        d.add(String(w / 2, 174, "SCHEMATIC: ILLUSTRATIVE REGIMES, NOT MEASURED POINTS", textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=INK))
         x0, y0, x1, y1 = 52, 34, w - 32, 158
         d.add(Line(x0, y0, x0, y1, strokeColor=INK, strokeWidth=1.2))
         d.add(Line(x0, y0, x1, y0, strokeColor=INK, strokeWidth=1.2))
@@ -599,45 +604,18 @@ def diagram(name: str, width: float) -> Drawing:
     elif name == "continuous_batching":
         d.add(String(20, 168, "STATIC BATCH", fontName=FONT_BOLD, fontSize=8.5, fillColor=MUTED))
         d.add(String(20, 80, "CONTINUOUS BATCH", fontName=FONT_BOLD, fontSize=8.5, fillColor=TEAL))
-        colors_ = [TEAL, GOLD, CORAL, HexColor("#6F7BF7")]
+        colors_ = [TEAL, GOLD, CORAL, HexColor("#81766D")]
         for row in range(3):
             y = 135 - row * 19
             for col in range(7 - row * 2):
                 d.add(Rect(105 + col * 30, y, 25, 13, rx=2, ry=2, fillColor=colors_[row], strokeColor=None))
-        for row in range(3):
-            y = 49 - row * 19
-            start = row * 2
-            for col in range(start, 10):
-                color = colors_[(row + col // 3) % len(colors_)]
-                d.add(Rect(105 + col * 27, y, 22, 13, rx=2, ry=2, fillColor=color, strokeColor=None))
-        d.add(String(w - 50, 12, "time ->", textAnchor="end", fontName=FONT_BOLD, fontSize=7.2, fillColor=MUTED))
-    elif name == "request_lifecycle":
-        d.add(String(w / 2, 172, "ONE REQUEST, MEASURED AT EVERY BOUNDARY", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
-        stages = [
-            ("Arrive\nauth + token", WHITE, INK),
-            ("Queue\n+ route", PALE_GOLD, GOLD),
-            ("Prefill\nprompt", PALE_TEAL, TEAL),
-            ("Decode\nloop", PALE_CORAL, CORAL),
-            ("Stream\nflush", WHITE, INK),
-            ("Cleanup\nfree KV", WHITE, MUTED),
-        ]
-        bw, bh, gap = 58, 36, 10
-        total = len(stages) * bw + (len(stages) - 1) * gap
-        x = (w - total) / 2
-        xs = []
-        for label, fill, stroke in stages:
-            box(d, x, 106, bw, bh, label, fill=fill, stroke=stroke, font=7)
-            xs.append(x)
-            x += bw + gap
-        for i in range(len(stages) - 1):
-            arrow(d, xs[i] + bw, 124, xs[i + 1] - 2, 124)
-        arrow(d, xs[3] + bw / 2 + 16, 104, xs[3] + bw / 2 - 16, 104, CORAL, 1.1)
-        d.add(String(xs[3] + bw / 2, 92, "one token / step", textAnchor="middle", fontName=FONT, fontSize=6.6, fillColor=CORAL))
-        arrow(d, xs[0] + 4, 66, xs[3] + 14, 66, TEAL, 1.2)
-        d.add(String((xs[0] + xs[3]) / 2 + 8, 52, "time to first token", textAnchor="middle", fontName=FONT_BOLD, fontSize=7.2, fillColor=TEAL))
-        arrow(d, xs[3] + 26, 66, xs[4] + bw - 4, 66, CORAL, 1.2)
-        d.add(String((xs[3] + xs[4] + bw) / 2 + 10, 52, "inter-token cadence", textAnchor="middle", fontName=FONT_BOLD, fontSize=7.2, fillColor=CORAL))
-        d.add(String(w / 2, 26, "each boundary needs an owner and a timestamp", textAnchor="middle", fontName=FONT, fontSize=7.3, fillColor=MUTED))
+        # Three slots initially occupied; replacement requests enter at boundaries.
+        schedules = [[0]*7+[3]*3, [1]*5+[0]*5, [2]*3+[1]*7]
+        for row, schedule in enumerate(schedules):
+            y = 55 - row * 18
+            for col, request in enumerate(schedule):
+                d.add(Rect(105 + col * 27, y, 22, 12, rx=2, ry=2, fillColor=colors_[request], strokeColor=None))
+        d.add(String(105, 7, "slots refill at request completion; time ->", fontName=FONT, fontSize=7.2, fillColor=MUTED))
     elif name == "disaggregation":
         d.add(String(w / 2, 172, "PREFILL-DECODE DISAGGREGATION AND THE KV HANDOFF", textAnchor="middle", fontName=FONT_BOLD, fontSize=8.6, fillColor=INK))
         box(d, 26, 84, 104, 62, "Prefill pool\ncompute-heavy\nbig batches", fill=PALE_TEAL, stroke=TEAL, font=7.2)
@@ -649,33 +627,31 @@ def diagram(name: str, width: float) -> Drawing:
         d.add(String(w / 2, 32, "transfer time + extra queueing + operational complexity", textAnchor="middle", fontName=FONT, fontSize=7.4, fillColor=MUTED))
     elif name == "memory_hierarchy":
         levels = [
-            ("Registers", 85, CORAL),
-            ("Shared / L1", 122, GOLD),
-            ("L2 cache", 170, TEAL),
-            ("HBM", 222, HexColor("#6F7BF7")),
-            ("Host / network", 284, MUTED),
+            ("Registers: thread-local state", 188, CORAL),
+            ("Shared memory / L1: SM locality", 218, GOLD),
+            ("L2: device-wide cache", 248, TEAL),
+            ("HBM: device memory", 278, HexColor("#81766D")),
+            ("Host / remote memory: transfer boundary", 308, MUTED),
         ]
-        cy = 96
+        d.add(String(w / 2, 172, "MEMORY LEVELS: SCOPE, CAPACITY, AND MOVEMENT", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
         for i, (label, ww, color) in enumerate(levels):
-            hh = 25
             x = (w - ww) / 2
-            y = cy - i * 8 - 14
-            d.add(Rect(x, y, ww, hh + i * 15, rx=6, ry=6, fillColor=None, strokeColor=color, strokeWidth=1.8))
-            d.add(String(w / 2, y + 8, label, textAnchor="middle", fontName=FONT_BOLD, fontSize=7.4, fillColor=color))
-        d.add(String(18, 168, "faster / smaller", fontName=FONT_BOLD, fontSize=7.5, fillColor=CORAL))
-        d.add(String(w - 18, 18, "slower / larger", textAnchor="end", fontName=FONT_BOLD, fontSize=7.5, fillColor=MUTED))
+            y = 140 - i * 27
+            d.add(Rect(x, y, ww, 22, rx=4, ry=4, fillColor=WHITE, strokeColor=color, strokeWidth=1.2))
+            d.add(String(w / 2, y + 7, label, textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=INK))
+        d.add(String(w / 2, 13, "schematic width indicates broader capacity; levels are not nested containers", textAnchor="middle", fontName=FONT, fontSize=7.4, fillColor=MUTED))
     elif name == "gemm_tiling":
         d.add(String(w / 2, 169, "TILED GEMM: DATA REUSE BEFORE MORE MATH", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
         for r in range(6):
             for c in range(6):
                 fill = PALE_TEAL if 1 <= r <= 3 else WHITE
-                d.add(Rect(30 + c * 18, 48 + r * 18, 16, 16, fillColor=fill, strokeColor=HexColor("#B7C3CC"), strokeWidth=.4))
+                d.add(Rect(30 + c * 18, 48 + r * 18, 16, 16, fillColor=fill, strokeColor=HexColor("#BBBAB4"), strokeWidth=.4))
         for r in range(6):
             for c in range(6):
                 fill = PALE_GOLD if 2 <= c <= 4 else WHITE
-                d.add(Rect(166 + c * 18, 48 + r * 18, 16, 16, fillColor=fill, strokeColor=HexColor("#B7C3CC"), strokeWidth=.4))
+                d.add(Rect(166 + c * 18, 48 + r * 18, 16, 16, fillColor=fill, strokeColor=HexColor("#BBBAB4"), strokeWidth=.4))
         box(d, w - 119, 78, 88, 48, "C tile\nregisters", fill=PALE_CORAL, stroke=CORAL)
-        arrow(d, 140, 101, 163, 101)
+        d.add(String(150, 98, "x", textAnchor="middle", fontName=FONT_BOLD, fontSize=10, fillColor=INK))
         arrow(d, 276, 101, w - 121, 101)
         d.add(String(82, 32, "A tile -> shared memory", textAnchor="middle", fontName=FONT, fontSize=7, fillColor=MUTED))
         d.add(String(218, 32, "B tile -> shared memory", textAnchor="middle", fontName=FONT, fontSize=7, fillColor=MUTED))
@@ -688,7 +664,7 @@ def diagram(name: str, width: float) -> Drawing:
         arrow(d, 128, 129, 166, 104)
         arrow(d, 128, 63, 166, 88)
         arrow(d, 266, 96, 306, 96, CORAL)
-        d.add(String(w / 2, 22, "l and o stay exact relative to one shared maximum", textAnchor="middle", fontName=FONT, fontSize=7.4, fillColor=MUTED))
+        d.add(String(w / 2, 22, "rescale l and o to the shared maximum; normalize o / l at the end", textAnchor="middle", fontName=FONT, fontSize=7.4, fillColor=MUTED))
     elif name == "prefill_decode_kernels":
         d.add(String(w / 2, 172, "ONE LAYER, TWO KERNEL REGIMES", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
         box(d, 18, 88, 176, 64, "Prefill\nmany Q rows x long K/V\nGEMM + FlashAttention", fill=PALE_TEAL)
@@ -699,63 +675,35 @@ def diagram(name: str, width: float) -> Drawing:
         d.add(String(w / 2, 12, "optimize the regime you are in; do not reuse the other tile plan blindly", textAnchor="middle", fontName=FONT, fontSize=7.2, fillColor=MUTED))
     elif name == "parallelism_map":
         labels = [
-            ("Data", 30, 123, TEAL),
-            ("Tensor", 150, 123, CORAL),
-            ("Pipeline", 270, 123, GOLD),
-            ("Sequence", 90, 54, HexColor("#6F7BF7")),
-            ("Expert", 220, 54, MUTED),
+            ("Data\nexample batches", 30, 118, TEAL),
+            ("Tensor\nweight dimensions", 165, 118, CORAL),
+            ("Pipeline\nlayer ranges", 300, 118, GOLD),
+            ("Sequence / context\ntoken-axis work", 95, 51, HexColor("#81766D")),
+            ("Expert\nexpert weights", 235, 51, MUTED),
         ]
         for label, x, y, color in labels:
-            box(d, x, y, 100, 38, label + "\nparallel", fill=WHITE, stroke=color)
+            box(d, x, y, 100, 42, label, fill=WHITE, stroke=color)
         d.add(String(w / 2, 174, "PARALLELISM AXES SOLVE DIFFERENT BOTTLENECKS", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
-        for x1, y1, x2, y2 in [(80,122,138,84),(200,122,200,94),(320,122,260,84)]:
-            arrow(d, x1, y1, x2, y2, MUTED, 1)
         d.add(String(w / 2, 20, "compose only after estimating communication, memory, and pipeline bubbles", textAnchor="middle", fontName=FONT, fontSize=7.3, fillColor=MUTED))
-    elif name == "system_design":
-        box(d, 18, 116, 72, 38, "Clients", fill=WHITE)
-        box(d, 119, 116, 88, 38, "Gateway\n+ admission", fill=PALE_TEAL)
-        box(d, 238, 116, 88, 38, "Scheduler\n+ batches", fill=PALE_GOLD, stroke=GOLD)
-        box(d, 357, 116, 62, 38, "GPU\npools", fill=PALE_CORAL, stroke=CORAL)
-        for x1, x2 in [(92,117),(209,236),(328,355)]:
-            arrow(d, x1, 135, x2, 135)
-        box(d, 119, 42, 88, 38, "Telemetry\n+ SLOs", fill=WHITE, stroke=INK)
-        box(d, 238, 42, 88, 38, "Model / KV\ncache", fill=WHITE, stroke=INK)
-        arrow(d, 282, 114, 282, 82, MUTED)
-        arrow(d, 236, 61, 209, 61, MUTED)
-        arrow(d, 163, 82, 163, 114, MUTED)
-        d.add(String(w / 2, 172, "SYSTEM DESIGN CLOSES THE CONTROL LOOP", textAnchor="middle", fontName=FONT_BOLD, fontSize=9, fillColor=INK))
-        d.add(String(w / 2, 19, "capacity, quality, reliability, isolation, and cost are first-class requirements", textAnchor="middle", fontName=FONT, fontSize=7.3, fillColor=MUTED))
-    elif name == "agent_trust_boundary":
-        d.add(String(w / 2, 169, "MODEL PROPOSALS CROSS A DETERMINISTIC POLICY BOUNDARY", textAnchor="middle", fontName=FONT_BOLD, fontSize=8.7, fillColor=INK))
-        box(d, 20, 104, 82, 42, "User goal\n+ authority", fill=WHITE, stroke=INK, font=7.1)
-        box(d, 129, 104, 82, 42, "Model\nproposal", fill=PALE_TEAL, stroke=TEAL, font=7.1)
-        box(d, 238, 94, 94, 62, "Policy gate\nidentity | schema\npermission | state", fill=PALE_GOLD, stroke=GOLD, font=6.8)
-        box(d, 359, 104, 52, 42, "Tool", fill=PALE_CORAL, stroke=CORAL, font=7.1)
-        arrow(d, 104, 125, 127, 125, INK, 1.3)
-        arrow(d, 213, 125, 236, 125, TEAL, 1.3)
-        arrow(d, 334, 125, 357, 125, GOLD, 1.3)
-        box(d, 129, 32, 203, 34, "Audit log + postcondition verification", fill=WHITE, stroke=INK, font=7.0)
-        arrow(d, 385, 101, 315, 68, CORAL, 1.2)
-        arrow(d, 230, 68, 170, 101, MUTED, 1.2)
-        d.add(String(w / 2, 16, "untrusted observations never grant authority", textAnchor="middle", fontName=FONT_BOLD, fontSize=7.3, fillColor=CORAL))
     elif name == "leadership_loop":
         center = (w / 2, 94)
         nodes = [
             (center[0], 157, "Frame"),
             (center[0] + 120, 115, "Align"),
-            (center[0] + 75, 40, "Commit"),
-            (center[0] - 75, 40, "Learn"),
-            (center[0] - 120, 115, "Decide"),
+            (center[0] + 75, 40, "Decide"),
+            (center[0] - 75, 40, "Commit"),
+            (center[0] - 120, 115, "Learn"),
         ]
         for i, (x, y, label) in enumerate(nodes):
-            d.add(Circle(x, y, 25, fillColor=WHITE, strokeColor=[TEAL, GOLD, CORAL, HexColor("#6F7BF7"), INK][i], strokeWidth=1.6))
+            d.add(Circle(x, y, 25, fillColor=WHITE, strokeColor=[TEAL, GOLD, CORAL, HexColor("#81766D"), INK][i], strokeWidth=1.6))
             d.add(String(x, y - 3, label, textAnchor="middle", fontName=FONT_BOLD, fontSize=7.6, fillColor=INK))
             nx, ny, _ = nodes[(i + 1) % len(nodes)]
             angle = math.atan2(ny - y, nx - x)
             arrow(d, x + 27 * math.cos(angle), y + 27 * math.sin(angle), nx - 27 * math.cos(angle), ny - 27 * math.sin(angle), MUTED, 1.1)
-        d.add(String(center[0], center[1] - 3, "intent\n+ evidence", textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=TEAL))
+        d.add(String(center[0], center[1] + 3, "intent", textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=TEAL))
+        d.add(String(center[0], center[1] - 9, "+ evidence", textAnchor="middle", fontName=FONT_BOLD, fontSize=8, fillColor=TEAL))
     else:
-        box(d, 36, 65, w - 72, 64, name.replace("_", " ").title(), fill=WHITE, stroke=TEAL, font=12)
+        raise ValueError(f"Unknown diagram: {name}")
     scale = min(1.0, width / w)
     d.scale(scale, scale)
     d.width = w * scale
@@ -821,9 +769,9 @@ class HandbookDocTemplate(BaseDocTemplate):
         canvas.setKeywords(self.meta.keywords)
         canvas.showOutline()
         canvas._doc.Catalog.Lang = PDFString("en-US")
-        canvas.setFillColor(NAVY)
+        canvas.setFillColor(CHARCOAL)
         canvas.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
-        canvas.setFillColor(HexColor("#122650"))
+        canvas.setFillColor(HexColor("#365A50"))
         for i in range(7):
             canvas.circle(PAGE_W - 24 - i * 30, PAGE_H - 38 - i * 34, 88 - i * 7, fill=0, stroke=1)
         canvas.setFillColor(TEAL)
@@ -842,7 +790,7 @@ class HandbookDocTemplate(BaseDocTemplate):
         canvas.setFillColor(WHITE)
         canvas.setFont(FONT_BOLD, 35)
         canvas.drawString(42, PAGE_H - 244, "MODELS")
-        canvas.setFillColor(HexColor("#B9C8DE"))
+        canvas.setFillColor(HexColor("#D9DED9"))
         canvas.setFont(FONT, 11)
         subtitle = ["TRAINING  /  INFERENCE  /  CUDA", "DISTRIBUTED SYSTEMS  /  TECHNICAL LEADERSHIP"]
         canvas.drawString(44, PAGE_H - 290, subtitle[0])
@@ -863,7 +811,7 @@ class HandbookDocTemplate(BaseDocTemplate):
         canvas.saveState()
         page = canvas.getPageNumber()
         if page > 1:
-            canvas.setStrokeColor(HexColor("#D8DEE4"))
+            canvas.setStrokeColor(HexColor("#D8D7D1"))
             canvas.setLineWidth(.45)
             canvas.line(MARGIN_X, PAGE_H - 13 * mm, PAGE_W - MARGIN_X, PAGE_H - 13 * mm)
             canvas.setFont(FONT, 6.8)
@@ -930,11 +878,11 @@ def table_flowable(rows: list[list[str]], width: float, leading: Flowable | None
     col_widths = [width / cols] * cols
     table = Table(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
     table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+        ("BACKGROUND", (0, 0), (-1, 0), CHARCOAL),
         ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
         ("FONTNAME", (0, 0), (-1, 0), FONT_BOLD),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("GRID", (0, 0), (-1, -1), .35, HexColor("#CCD5DC")),
+        ("GRID", (0, 0), (-1, -1), .35, HexColor("#D0CFC9")),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, PANEL]),
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
@@ -1050,7 +998,14 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
             while i < len(lines) and not lines[i].strip().startswith("```"):
                 code.append(lines[i])
                 i += 1
-            story.extend([Spacer(1, 4), CodePanel("\n".join(code), language, width), Spacer(1, 7)])
+            gap = Spacer(1, 4)
+            if (story and isinstance(story[-1], Paragraph)
+                    and story[-1].getPlainText().startswith("Example status:")):
+                # Keep the status with the start of the (splittable) code panel.
+                # The spacer must participate in the chain as well.
+                story[-1].keepWithNext = True
+                gap.keepWithNext = True
+            story.extend([gap, CodePanel("\n".join(code), language, width), Spacer(1, 7)])
             i += 1
             continue
         if stripped.startswith(":::callout"):
@@ -1071,7 +1026,13 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
             args = stripped[len(":::diagram"):].strip().split("|", 1)
             name = args[0].strip()
             caption = args[1].strip() if len(args) > 1 else name.replace("_", " ").title()
-            story.extend([Spacer(1, 6), diagram(name, width), Paragraph(inline_markup(caption), STYLES["caption"])])
+            # A section heading immediately introducing a figure belongs to the
+            # same unsplittable group; keepWithNext alone stops at KeepTogether.
+            introduction = [story.pop()] if story and isinstance(story[-1], Heading) else []
+            story.append(KeepTogether(introduction + [
+                Spacer(1, 6), diagram(name, width),
+                Paragraph(inline_markup(caption), STYLES["caption"]),
+            ]))
             i += 1
             continue
         if stripped.startswith(":::equation"):
@@ -1082,9 +1043,10 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
             args = equation_source.split("|", 1)
             expression = args[0].strip()
             caption = args[1].strip() if len(args) > 1 else ""
-            story.append(Paragraph(equation_markup(expression), STYLES["equation"]))
+            equation_group = [Paragraph(equation_markup(expression), STYLES["equation"])]
             if caption:
-                story.append(Paragraph(inline_markup(caption), STYLES["caption"]))
+                equation_group.append(Paragraph(inline_markup(caption), STYLES["caption"]))
+            story.append(KeepTogether(equation_group))
             i += 1
             continue
         if stripped == ":::toc":
@@ -1108,7 +1070,15 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
                 i += 1
             # A heading's automatic keepWithNext does not reliably cross the
             # table's KeepTogether wrapper. Put both in the SAME group.
-            leading = story.pop() if story and isinstance(story[-1], Heading) else None
+            leading = None
+            if story and isinstance(story[-1], Heading):
+                leading = story.pop()
+            elif (story and isinstance(story[-1], Paragraph)
+                  and story[-1].getPlainText().endswith(":")
+                  and len(story[-1].getPlainText()) < 250):
+                # A short table introduction should not be stranded on the
+                # previous page while the table starts on the next one.
+                leading = story.pop()
             story.append(table_flowable(parse_table(table_lines), width, leading))
             continue
         if stripped.startswith("# "):
@@ -1184,7 +1154,7 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
             continue
         if stripped == "---":
             flush_paragraph(buffer, story)
-            story.extend([Spacer(1, 6), Rule(HexColor("#CAD3DA"), width, .65, 0, 7)])
+            story.extend([Spacer(1, 6), Rule(HexColor("#CECDC7"), width, .65, 0, 7)])
             i += 1
             continue
         buffer.append(stripped)

@@ -2,13 +2,21 @@
 
 A working technical book by Yury Kirpichev covering model training, data, distillation, LLM inference, CUDA, distributed systems, ML coding, system design, and technical leadership.
 
-This is a **working draft**, not a finished first edition. Start with the [front matter](manuscript/00_front_matter.md), [release checks](docs/release-readiness.md), or [original review and completion status](docs/editorial-review.md). The existing all-rights-reserved terms are explicit in [LICENSE](LICENSE); no open-source or open-content license is granted at this stage.
+This is a **working draft**, not a finished first edition. Start with the [front matter](manuscript/00_front_matter.md), [current release checks](docs/release-readiness.md), or [five-pass review and 70-chapter ledger](docs/five-pass-review-2026-09-13.md). The existing all-rights-reserved terms are explicit in [LICENSE](LICENSE); no open-source or open-content license is granted at this stage.
 
 The expanded versioned PDF is attached to the [September 2026 end-to-end learning release](https://github.com/ykirpichev/llm-book/releases/tag/draft-2026-09-07-expanded). The [earlier checkpoint](https://github.com/ykirpichev/llm-book/releases/tag/draft-2026-09-07) is preserved. The repository and both releases remain private; access requires repository permission.
 
-The [chapter coverage audit](docs/coverage-audit-2026-09.md) records the expanded pass, with a September 7, 2026 research cutoff. Core mechanisms are explained in the book with examples and failure boundaries; references provide supporting evidence. The book does not claim to catalogue every paper or reproduce frontier training runs.
+The [chapter coverage audit](docs/coverage-audit-2026-09.md) records the expansion and subsequent additions. The current manuscript's research cutoff is September 13, 2026, with dated implementation checks. Core mechanisms are explained with examples and failure boundaries; references provide supporting evidence. The book does not claim to catalogue every paper or reproduce frontier training runs.
+
+The [September 8 Part I review](docs/part1-review-2026-09-08.md) records an earlier independent pass. The [September 13 multi-model review](docs/multi-model-review-2026-09-13.md) records the Astra technical, Sol prose, and Terra pedagogy reviews, final Astra gate, 77 passing CPU tests, and rebuilt 410-page PDF. Rebuild from the current sources for these revisions; the September 7 release PDFs remain unchanged historical checkpoints.
 
 ## Read the draft
+
+The completed [accelerator-team campaign](docs/accelerator-team-review-2026-09-13.md) builds to 460 pages with 108 passing CPU/reference and document checks. Three review/proposal/author/QC cycles deepen accelerator portability, repair numerical edge cases, and improve the book's prose, exercises, and navigation. No accelerator compilation, device execution, or serving-engine benchmark is claimed.
+
+The earlier [five-pass checkpoint](docs/five-pass-review-2026-09-13.md) recorded 445 pages and 95 passing CPU tests. It added [Serving Engines and Cache Backends in Practice](manuscript/03_inference.md#serving-engines-and-cache-backends-in-practice): vLLM, SGLang, TensorRT LLM, FlashInfer, llama.cpp, and the cache/fleet ecosystem. It also updated FSDP2 and training/RL implementation paths, corrected numerical and recovery details, and strengthened the capstone. Its 44 distinct diagram proofs and full PDF at contact-sheet scale were visually checked; see that dated review for its scope and limitations.
+
+The expanded chapter [Accelerator Ecosystems Beyond CUDA and NVIDIA](manuscript/04_cuda.md#accelerator-ecosystems-beyond-cuda-and-nvidia) covers Triton, ROCm/HIP, TPU/XLA/Pallas, AWS Neuron/NKI, and a bounded porting evaluation. The [team campaign](docs/accelerator-team-review-2026-09-13.md) records its current source, code, and visual checks; the [initial chapter review](docs/accelerator-ecosystems-review-2026-09-13.md) preserves the earlier scope. Neither claims cross-device benchmark results.
 
 | Part | Manuscript |
 | --- | --- |
@@ -56,6 +64,8 @@ Generated PDFs and previews are ignored by Git. A GitHub Release preserves the r
 
 See [examples/README.md](examples/README.md) for runnable CPU references covering a complete tiny-model lifecycle, tokenization/loss, recurrent state, post-training, speculative sampling, quantization, attention, streaming, retrieval, and a bounded agent loop. Each has explicit assumptions and tests. Manuscript snippets distinguish runnable code from illustrative excerpts and pseudocode. CUDA excerpts have not been compiled or benchmarked in this release.
 
+For an accelerator evaluation, start with the [optional target examples](examples/accelerators/README.md) and the [baseline/candidate acceptance record](docs/accelerator-acceptance-template.md). The latter is an unfilled reporting template, not a recorded benchmark.
+
 The [claim audit](docs/claim-audit.md) records selected source/version checks and the running-model arithmetic. It is not a line-by-line technical certification.
 
 ## Source layout
@@ -89,4 +99,4 @@ Compact content for a highlighted box.
 
 ## Editorial design
 
-The book is set in a 7 x 10 inch technical-book format with a navy/teal/coral system, embedded fonts, vector architecture diagrams, code panels, table styling, chapter openers, PDF outlines, and page headers/footers.
+The book is set in a 7 x 10 inch technical-book format with a forest-green, sage, ivory, brass, and terracotta palette, embedded fonts, original vector teaching diagrams, code panels, table styling, chapter openers, PDF outlines, and page headers/footers. Diagram labels are measured during the build and each figure stays with its caption. The new figure library is in `src/book_figures.py`; its diagrams explain tensor layouts, state ownership, timing, and component relationships.

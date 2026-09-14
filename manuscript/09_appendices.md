@@ -31,20 +31,22 @@ assert restored.generate("a", max_new_tokens=6) == "abababa"
 
 Run `python -m examples.tiny_lm` to see the loss decrease and generated sequence. Training data defines the vocabulary; the checkpoint stores both vocabulary order and logits. The decoder uses greedy selection and a hard generation bound, with no learned end token. The examples never join separate documents to create an artificial cross-document training pair.
 
-This experiment proves optimization and serialization behavior on a tiny fixture, not generalization. Evaluating more alternating characters repeats the same transition rule. A real validation split must challenge the intended capability without duplicating training examples, and a real tokenizer needs a declared unknown/byte-fallback policy. Here unknown characters raise an error so the limitation is visible.
+This experiment checks optimization and serialization behavior on a tiny fixture, not generalization. Evaluating more alternating characters repeats the same transition rule. A real validation split must challenge the intended capability without duplicating training examples, and a real tokenizer needs a declared unknown/byte-fallback policy. Here unknown characters raise an error so the limitation is visible.
 
 ### Connect the references in learning order
 
 | Step | Do this in the repository | Explain before moving on |
 | --- | --- | --- |
 | Targets and state | Run sequence-model tests and the tiny LM | Token IDs, masked loss, gradient, checkpoint identity |
-| Attention | Run the attention reference and partition tests | Stable softmax, masking, merge statistics, numerical tolerance |
+| Attention | Use the attention demonstration and exact test command in `examples/README.md` | Stable softmax, masking, merge statistics, numerical tolerance |
 | Adaptation and RL | Run post-training tests | DPO margin, advantage sign, clipping, group normalization, pass-at-k |
 | Inference | Run inference-mechanism tests | Acceptance plus residual correction; quantization range and scale |
 | Retrieval | Run the RAG fixture and ranking tests | Authorized current evidence versus mere semantic similarity |
 | Agents | Run the bounded agent fixture | Capabilities, observations, unknown write outcome, budgets |
 
 The CPU references teach and test semantics. They do not benchmark a model server, train a transformer, or validate CUDA programs. The hardware chapters explain how to move from semantic references to profiled implementations; their GPU acceptance checks remain work to perform on the actual target system.
+
+When the capstone compares accelerator paths, use the baseline/candidate acceptance record linked from the repository's **Verified teaching examples** index. It keeps model identity, workload, quality, service tails, and cost together; unavailable target measurements stay explicitly unmeasured.
 
 ### Design the complete documentation service
 
@@ -54,13 +56,17 @@ Use the running 7B documentation assistant as a capstone. Start with the hypothe
 2. **Unadapted baseline:** serve an existing compatible checkpoint with a bounded retrieval workflow. Record tokenizer/template, precision, context budget, and generation policy. Measure retrieval and generation separately.
 3. **Adaptation decision:** use SFT/LoRA only for demonstrated behavior gaps; use retrieval for changing facts. Require an independent verifier and enough interaction data before adding RL. Compare against the unadapted baseline at the same workload boundary.
 4. **Capacity ledger:** calculate weights, layer-specific state, workspaces, reserved memory, phase compute, and transfer budgets. A hybrid model requires a new state ledger; copying the dense transformer's KV formula is not a migration plan.
-5. **Performance experiment:** identify the measured bottleneck, then change one relevant mechanism—batching, quantization, speculation, attention, or placement. Keep correctness, quality, and SLO gates fixed.
+5. **Engine and performance experiment:** establish one compatible engine baseline, then compare a second using the controlled/deployment distinction in **Serving Engines and Cache Backends in Practice**. Identify the measured bottleneck before adding batching, quantization, speculation, remote cache, or phase sharding. Keep correctness, quality, and SLO gates fixed. If accelerator portability is required, repeat the full acceptance path on one alternative stack; translated code alone is not the result.
 6. **Bounded agent extension:** permit only the tools the task requires. Define action identity, timeout/reconciliation, memory provenance, stopping conditions, and final-state verification. Compare completed authorized tasks per budget with the fixed workflow.
 7. **Operational release:** bind model/data/index/harness versions, canary, inject failures, rehearse rollback, and assign ownership. Preserve both positive and negative results.
 
 ### What a good capstone answer contains
 
-A strong answer can explain why the next proposed technique should affect the actual bottleneck, calculate its resource tradeoff, name a plausible failure, and describe a test that would reject it. It does not need to use every advanced method. If the task is solved by a small model and a fixed workflow, adding MoE, distributed RL, and several agents is not evidence of mastery.
+Keep the checkpoint/engine revisions, rejected alternatives, workload trace, resource ledger, quality uncertainty, and latency decomposition together. Distinguish calculations, CPU tests, reported results, and your own measurements. Attach cache ownership through lookup, reservation, transfer, cancellation, and eviction; for a port, include the model/precision/sharding combination and cold-start/recovery results.
+
+If target hardware was unavailable, submit semantic tests and the proposed experiment with performance explicitly unmeasured. Peak specifications cannot fill those cells.
+
+A strong answer explains the bottleneck, calculates a tradeoff, and supplies a rejection test. It need not use every technique: a small model and fixed workflow may solve the task without MoE, distributed RL, or multiple agents.
 
 As a self-check, change one assumption at a time: double input length; revoke a document permission mid-request; replace attention layers with recurrent layers; lose the reply after a successful tool write; or make rollout production faster than the learner. Trace which state, budget, and acceptance rule changes. The relevant derivations and failure protocols are developed in the preceding parts; the reference sheets below help locate them.
 
@@ -73,10 +79,10 @@ As a self-check, change one assumption at a time: double input length; revoke a 
 | Global batch | `microbatch * accumulation * DP` | Schedule and optimizer comparisons |
 | Dense training compute | proportional to `parameters * tokens` | Budget and scaling estimates |
 | Adam state | weights + gradients + two moments, precision dependent | Device and sharding memory |
-| Pipeline bubble | roughly `(stages - 1) / microbatches` for simple schedule | Pipeline efficiency |
-| Ring all-reduce traffic | `2 (n - 1) / n * tensor_bytes` per rank | Network estimate |
+| Pipeline bubble fraction | `(stages - 1) / (microbatches + stages - 1)` for balanced forward-only stages | Fraction of schedule spent idle |
+| Ring all-reduce traffic | `2 (n - 1) / n * tensor_bytes` sent per rank; the same volume received | Network estimate |
 
-Always specify which bytes are sharded, replicated, offloaded, or temporarily gathered. Activation memory depends on sequence, microbatch, hidden width, saved intermediates, and checkpointing.
+Always specify which bytes are sharded, replicated, offloaded, or temporarily gathered. Adam memory may also include higher-precision master weights. Activation memory depends on sequence, microbatch, hidden width, saved intermediates, and checkpointing. The pipeline expression assumes equal stage times and ignores communication; training schedules need their own backward and overlap accounting. `(stages - 1) / microbatches` is bubble overhead relative to useful work, not the idle fraction of total time.
 
 ### Transformer inference
 
@@ -89,6 +95,8 @@ Always specify which bytes are sharded, replicated, offloaded, or temporarily ga
 `attention_scores = O(sequence^2)` values if materialized
 
 FlashAttention preserves `O(sequence^2)` arithmetic for dense attention while reducing HBM materialization.
+
+The KV expression assumes equal sequence lengths and head dimensions, with every listed layer storing full-history K and V. For ragged batches, replace `batch * sequence` by the sum of retained sequence lengths; then account for shared prefixes, block padding, replication, and sharding. The weight-streaming expression is a time bound for one pass over the listed weights, not a per-request latency prediction for a batch.
 
 ### Hybrid and recurrent state
 
@@ -106,6 +114,8 @@ The expression assumes one matrix state per listed head and omits model-specific
 
 `PPO_surrogate = min(ratio * advantage, clip(ratio, 1-eps, 1+eps) * advantage)`
 
+The PPO expression is maximized; a minimized policy loss uses its negative. DPO preference log-ratios compare chosen versus rejected response probabilities conditional on the same prompt.
+
 `group_advantage = (reward - group_mean) / group_std` for the stated standardized GRPO variant; zero-variance groups require a defined policy.
 
 `ESS = sum(weights)^2 / sum(weight^2)` for nonnegative weights with a positive total.
@@ -122,9 +132,9 @@ Reference-policy KL, behavior-policy ratios, and a learned value baseline have d
 
 `E[accepted] = sum_(k=1..gamma) Pr(accepted_prefix >= k)`
 
-`speedup = committed_target_equivalent_work / total_draft_plus_verify_time`
+`speedup = baseline_time_for_same_committed_tokens / speculative_time`
 
-The final expression must include draft memory, target batch capacity, queueing, and scheduling when making a deployment decision.
+Here `p` is the target distribution and `q` is the actual proposal distribution at the same history, after their respective sampling transformations. Acceptance is evaluated on a sampled proposal with `q(x) > 0`; the correction distribution is normalized only after rejection. Committed output also includes the correction token, or the extra target token when every proposal is accepted. Compare matched output work and include draft, verification, sampling, queueing, and scheduling in elapsed time; account for draft memory and lost target batch capacity separately.
 
 ### Distillation
 
@@ -143,9 +153,9 @@ Classic logit distillation often uses `T^2 * KL(teacher_T || student_T)` plus a 
 | Min-heap top-k | `O(log k)` update | `O(k)` | Exact for insert-only global top-k |
 | Monotonic deque | amortized `O(1)` | window size worst case | Exact sliding min/max |
 | Reservoir | `O(1)` expected | `O(k)` | Uniform sample of unknown-length stream |
-| Count-Min Sketch | `O(depth)` | `O(width * depth)` | One-sided frequency overestimate |
+| Count-Min Sketch | `O(depth)` | `O(width * depth)` | One-sided overestimate for nonnegative current frequencies under standard linear updates |
 | HyperLogLog | `O(1)` | fixed registers | Probabilistic cardinality |
-| Bloom filter | `O(hashes)` | bit array | False positives, no false negatives |
+| Bloom filter | `O(hashes)` | bit array | False positives, no false negatives for insert-only membership |
 
 ### Queueing and capacity
 
@@ -368,7 +378,7 @@ Contain harm, state new evidence, reopen the choice, preserve trust by owning th
 
 **Data lineage:** the versioned relationship from source through transformations to datasets, checkpoints, evaluations, and releases.
 
-**Forward KL:** divergence weighted by the reference or teacher distribution, penalizing missing its supported outcomes.
+**Forward KL:** in this book's teacher/student convention, `KL(teacher || student)`, weighted by the teacher distribution and penalizing missing its supported outcomes.
 
 **GQA:** grouped-query attention, where multiple query heads share a smaller number of key/value heads.
 
@@ -382,7 +392,7 @@ Contain harm, state new evidence, reopen the choice, preserve trust by owning th
 
 **Prefill:** prompt processing phase that creates KV state and produces first-token logits.
 
-**Reverse KL:** divergence weighted by the learned distribution, often favoring a supported mode when covering all modes is costly.
+**Reverse KL:** in the same convention, `KL(student || teacher)`, weighted by the student distribution and often favoring a supported mode when covering all modes is costly. Always state the operands because naming conventions vary.
 
 **Speculative decoding:** exact or controlled approximate generation using cheap proposals and expensive parallel verification.
 
@@ -418,29 +428,37 @@ Contain harm, state new evidence, reopen the choice, preserve trust by owning th
 
 **Idempotency key:** a stable operation identity allowing a service to reconcile repeated delivery of the same request without duplicating its effect, subject to that service's transaction guarantees.
 
+**Accelerator ecosystems:** For Triton, ROCm/HIP, XLA/Pallas, Neuron/NKI, and SYCL definitions and hardware mappings, see **Accelerator Ecosystems Beyond CUDA and NVIDIA**.
+
 ### Decision index
 
-| If the symptom is... | First model | Likely chapters |
+| If the symptom is... | First model | Chapter destinations (part — title) |
 | --- | --- | --- |
-| Slow first token | Queue plus prefill compute/IO | Prefill, scheduling, serving |
-| Slow token cadence | Weight/KV bytes plus collectives | Decode, quantization, distributed inference |
-| GPU OOM with free fragments | Logical versus physical KV allocation | Paged KV cache |
-| High acceptance, no speedup | Joint draft/verify/scheduler cost | Speculative decoding |
-| Training instability | Update, precision, data, synchronization | Optimization, recipe |
-| Benchmark gain, product loss | Evaluation contract and workload shift | Measurement, serving |
-| Low GEMM throughput | Tile, tensor-core, occupancy, shape | Tiled matrix multiplication |
-| MoE slowdown | All-to-all and expert imbalance | Transformers, distributed systems |
-| Platform not adopted | Migration cost and ownership | Strategy and leadership |
-| Recurring disagreement | Goal, facts, risk, or incentives | Executive communication |
-| Hybrid cache estimate is wrong | Layer-specific attention/recurrent state | Compressed, Sparse, and Recurrent Model State |
-| More rollout GPUs hurt training | Queue growth, policy age, ratio variance | Distributed Reinforcement Learning and Policy Freshness |
-| Fluent but unsupported answers | Eligible evidence, ranking, generation | RAG, Vector Search, and Evaluation Pipelines |
-| Repeated or unauthorized actions | Capabilities, receipts, host-owned budgets | Building and Evaluating a Bounded Agent Loop |
-| Fast text but slow speech | Encoder, alignment, codec, playback queues | Multimodal Representations: Images, Video, and Speech |
-| Fewer generation calls but no gain | Positions per call, cache validity, quality | Diffusion and Block-Parallel Language Generation |
+| Slow first token | Queue plus prefill compute/IO | III — Prefill, Decode, and Performance Modeling; III — Scheduling, Batching, and Admission Control |
+| Slow token cadence | Weight/KV bytes plus collectives | III — Quantization, Compression, and Adapter Serving; V — Distributed Inference and Stateful Placement |
+| GPU OOM with free fragments | Logical versus physical KV allocation | III — KV Cache, Paging, and Prefix Reuse |
+| High acceptance, no speedup | Joint draft/verify/scheduler cost | III — Sampling, Structured Output, and Speculative Decoding |
+| Training instability | Update, precision, data, synchronization | I — Optimization as a Coupled Dynamical System; II — Designing a Training Recipe |
+| Benchmark gain, product loss | Evaluation contract and workload shift | I — Measurement and Experimental Judgment; III — Production Architecture, Capacity, and Reliability |
+| Low GEMM throughput | Tile, tensor-core, occupancy, shape | IV — Hierarchical Matrix Multiplication |
+| Accelerator port compiles but misses SLOs | Backend support, layouts, padding, collectives | IV — Accelerator Ecosystems Beyond CUDA and NVIDIA |
+| MoE slowdown | All-to-all and expert imbalance | V — Mixture-of-Experts and Sparse Communication |
+
+:::pagebreak
+
+**Decision index, continued**
+
+| If the symptom is... | First model | Chapter destinations (part — title) |
+| --- | --- | --- |
+| Platform not adopted | Migration cost and ownership | VIII — Strategy, Vision, and the First 90 Days |
+| Recurring disagreement | Goal, facts, risk, or incentives | VIII — Executive Technical Communication |
+| Hybrid cache estimate is wrong | Layer-specific attention/recurrent state | I — Compressed, Sparse, and Recurrent Model State |
+| More rollout GPUs hurt training | Queue growth, policy age, ratio variance | V — Distributed Reinforcement Learning and Policy Freshness |
+| Fluent but unsupported answers | Eligible evidence, ranking, generation | VI — RAG, Vector Search, and Evaluation Pipelines |
+| Repeated or unauthorized actions | Capabilities, receipts, host-owned budgets | VI — Building and Evaluating a Bounded Agent Loop |
+| Fast text but slow speech | Encoder, alignment, codec, playback queues | VII — Multimodal Representations: Images, Video, and Speech |
+| Fewer generation calls but no gain | Positions per call, cache validity, quality | VII — Diffusion and Block-Parallel Language Generation |
 
 ### Final principle
 
-> Begin with the objective, quantify the bottleneck, choose the smallest coherent design, and close the loop with evidence.
-
-That principle is equally useful for a KL objective, a CUDA kernel, a distributed scheduler, and a cross-org strategy. The scale changes. The discipline does not.
+The documentation assistant owes its user an answer supported by current authorized evidence, delivered within its service target, with failures the team can detect and recover from. The model is essential, but the system around it determines whether that answer is useful.

@@ -25,14 +25,20 @@ def bpe_pieces(text, merges):
 
 
 def masked_token_loss(logits, targets, mask):
-    """Mean cross entropy over supervised positions, using log-sum-exp."""
+    """Mean cross entropy over supervised positions, using log-sum-exp.
+
+    Ignored positions may use sentinel targets such as -100. All logit rows
+    must still be nonempty and finite; only supervised targets index a row.
+    """
     if not (len(logits) == len(targets) == len(mask)) or not any(mask):
         raise ValueError("matching nonempty supervision required")
     losses = []
     for row, target, use in zip(logits, targets, mask):
-        if not row or not 0 <= target < len(row) or not all(map(isfinite, row)):
-            raise ValueError("invalid logits or target")
+        if not row or not all(map(isfinite, row)):
+            raise ValueError("invalid logits")
         if use:
+            if not isinstance(target, int) or not 0 <= target < len(row):
+                raise ValueError("invalid supervised target")
             maximum = max(row)
             losses.append(log(sum(exp(x-maximum) for x in row)) + maximum - row[target])
     return sum(losses) / len(losses)

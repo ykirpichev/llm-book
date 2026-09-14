@@ -2,11 +2,11 @@
 
 Training turns a capability hypothesis into a reproducible model release. The work is not a sequence of independent choices about data, loss, optimizer, and scale. It is a controlled program in which evidence from pilots determines what deserves more compute, every dataset release can be reconstructed, and every checkpoint can be evaluated against the behavior and serving envelope it is meant to satisfy.
 
-This part follows that program from end to end. It begins with recipe design and experiment gates, then develops data contracts, filtering, synthetic generation, mixture control, and release engineering. It closes with distillation and post-training, where a broad base distribution is transformed into a model with a specific capacity, policy, and operating role.
+This part follows two connected arcs. The first builds the training substrate: recipe design, experiment gates, data contracts, filtering, synthetic generation, mixture control, and release engineering. The second shapes behavior within a serving envelope: distillation, supervised adaptation, preference optimization, and reinforcement learning. The bridge between them is evidence—versioned data, protected evaluation, and release gates that make a behavioral change attributable and reversible.
 
 ## Designing a Training Recipe
 
-LEAD: A recipe is an executable theory of how a model will acquire a capability within a compute and time budget. Begin with the target behavior and work backward to data and objective.
+LEAD: A training recipe specifies the data, objectives, stages, budget, and tests for improving a capability. It must also say when to stop: a promising pilot is not enough evidence to spend the remaining compute on scale-up.
 
 ### The recipe canvas
 
@@ -29,7 +29,7 @@ A common failure is to train the most capable model that fits the training clust
 
 :::equation Value = QualityGain - TrainCost - ServeCost - OperatingRisk|A training program optimizes lifetime utility, not validation loss in isolation.
 
-The terms are not directly commensurate, but writing them forces a complete decision.
+This is a qualitative decision model. To optimize it numerically, convert the terms into a common utility unit or express cost and risk as explicit constraints; subtracting raw quality points, dollars, and probabilities would be meaningless.
 
 ### Budget the program, not only the final run
 
@@ -136,9 +136,11 @@ Name what evidence permits progression from pilot to scale-up, from supervised t
 4. What belongs in a resumable checkpoint for a sharded optimizer?
 5. How do you prevent a reasoning model from learning to exploit its verifier?
 
+Use the staged reasoning example above for the recipe questions. The checkpoint protocol in **Distributed Checkpoints, Recovery, and Elasticity** develops the recovery answer; **Applied Data-System Casework** supplies the data-lineage and verifier checks.
+
 ## Data Contracts, Provenance, and Normalization
 
-LEAD: A training dataset is a versioned product, not a folder of text. Its contract defines what may be used, what each record means, how it was transformed, and how a source can be traced or removed after publication.
+LEAD: Removing a source requires tracing it from raw object through normalized records and packed sequences to affected releases and checkpoints. That lineage makes a training dataset a versioned product with an enforceable contract.
 
 :::diagram data_pipeline|A dataset is the result of transformations and gates. Every retained example should have provenance and a reason to exist.
 
@@ -352,7 +354,9 @@ Before publishing normalized data, verify:
 
 ## Deduplication, Quality, and Contamination
 
-LEAD: Filtering changes the empirical distribution learned by the model. Deduplication, quality scoring, and contamination controls must therefore be evaluated as statistical interventions, not treated as generic cleaning steps.
+LEAD: Every deduplication or quality threshold changes the empirical training distribution. Evaluate filtering and contamination controls as statistical interventions, with explicit effects on coverage, repetition, and held-out evidence.
+
+:::diagram dedup_clusters|A candidate-generation stage proposes pairs, verification creates edges, and grouping creates units for retention or split assignment. Similarity is not transitive: a connected component need not be a clique.
 
 ### Deduplication at several radii
 
@@ -382,7 +386,7 @@ def exact_identity(record, normalizer_version, digest):
     return digest(payload).hexdigest()
 ```
 
-The null separator prevents ambiguous concatenation. The production schema also stores digest algorithm, serialization version, byte length, and source revision IDs.
+The null separator makes this concatenation unambiguous only if the version field cannot itself contain a null byte. A production schema should enforce that restriction or use length-prefixed fields. It also stores digest algorithm, serialization version, byte length, and source revision IDs.
 
 Decide the scope:
 
@@ -751,6 +755,8 @@ LEAD: Synthetic data is useful when generation, verification, and sampling creat
 
 ### Synthetic generation pipeline
 
+:::diagram synthetic_gate|Verified candidates enter deduplication and mixture construction. Rejections provide diagnostic evidence about the generator and verifier; neither acceptance rate nor generation volume establishes training value.
+
 Synthetic data is a programmable acquisition process, not a free source of truth:
 
 `seed -> generate -> verify -> score -> deduplicate -> balance -> audit -> train`
@@ -833,7 +839,7 @@ A verifier's pass rate is not its precision. Let:
 
 Then:
 
-:::equation P(bad;accept) = β(1-p) / (αp + β(1-p))|Bayes' rule converts verifier error and generator quality into accepted-data risk.
+:::equation P(bad given accept) = β(1-p) / (αp + β(1-p))|Bayes' rule converts verifier error and generator quality into accepted-data risk.
 
 If 60 percent of candidates are good, `alpha=0.95`, and `beta=0.10`, then:
 
@@ -939,7 +945,7 @@ Sampling by documents rather than tokens changes the objective when lengths diff
 
 #### Importance weights and target distributions
 
-If product traffic has target distribution `p_d` but training samples domains from `q_d`, an unbiased estimate of product-distribution loss can use:
+If product traffic has target distribution `p_d` but training samples domains from `q_d`, an unbiased estimate of product-distribution loss can use the following weights, provided `q_d>0` wherever `p_d>0` and within-domain sampling matches the target conditional distribution:
 
 :::equation w_{d} = p_{d} / q_{d}|Importance weighting corrects a sampling distribution toward a declared target distribution.
 
@@ -951,7 +957,7 @@ Large weights create high-variance gradients. In practice, cap or smooth weights
 
 :::equation ESS = (Σ_{i} w_{i})^{2} / Σ_{i} w_{i}^{2}|Effective sample size reveals concentration hidden by the nominal example count.
 
-If 1,000 examples have weight one, `ESS=1,000`. If a few examples carry most weight, ESS can be far smaller than the row count. Token count without ESS hides concentration.
+If 1,000 examples have weight one, `ESS=1,000`. If a few examples carry most weight, ESS can be far smaller than the row count. This weight-based diagnostic does not account for dependence among duplicates or related examples; audit that separately. Token count alone hides both forms of concentration.
 
 #### Constrained capability objective
 
@@ -1039,6 +1045,8 @@ LEAD: A data pipeline becomes a training platform when it can reproduce releases
 
 ### Data pipeline system design
 
+:::diagram data_release|Immutable objects carry payloads; a lineage catalog records how they were acquired and transformed. Selection combines versioned features with policy and mixture rules, then publishes a manifest that identifies the training inputs.
+
 At large scale, the architecture should make the correct path reproducible and the incorrect path visible. Separate immutable payloads, metadata and lineage, distributed transforms, indexes, scores, release manifests, and policy decisions.
 
 #### Logical architecture
@@ -1099,7 +1107,7 @@ For transform `F_v`:
 
 `output_id = H(input_id || F_v || config_hash || deterministic_seed)`.
 
-A retry first checks whether that output already exists and verifies its digest. Nondeterministic generation includes generator checkpoint, decoding configuration, and per-record seed in identity.
+A retry first checks whether that output already exists and verifies its digest. Generation identity includes generator checkpoint, decoding configuration, and per-record seed, but a seed alone does not guarantee identical outputs across execution backends. For nondeterministic transforms, use this identity as an idempotency key: publish one completed artifact atomically and retain its actual content digest. Retries reuse that artifact rather than silently replacing it with another sample.
 
 Partition work by stable input IDs rather than worker count so changing cluster size does not reshuffle identity. Store per-partition completion manifests. A failed 10,000-partition job should rerun failed partitions, not rewrite successful output.
 
@@ -1253,6 +1261,8 @@ Before publishing a training dataset, verify:
 - **mixture:** token-level weights, constraints, reuse caps, expected epochs, and ESS;
 - **release:** immutable manifest, digests, validation report, rollback pointer, and approvals;
 - **operations:** partial reruns, backpressure, deletion, incident response, cost, and monitoring.
+
+A release platform earns trust when its artifacts support these claims through deletion, contamination, partial failure, and a changed mixture.
 
 ## Applied Data-System Casework
 
@@ -1408,7 +1418,7 @@ To estimate target product loss under product distribution `p_d` while sampling 
 
 `w_d=p_d/q_d`.
 
-This is unbiased in expectation, but large weights raise gradient variance. Clip or smooth with an explicit bias tradeoff. Report:
+This is unbiased when every target domain has positive sampling probability and its within-domain conditional distribution is preserved. Large weights raise gradient variance. Clip or smooth with an explicit bias tradeoff. Report:
 
 :::equation ESS = (Σ_{i} w_{i})^{2} / Σ_{i} w_{i}^{2}|Effective sample size reveals how concentrated weighting reduces statistical support.
 
@@ -1457,6 +1467,8 @@ Balance near serving traffic with floors for rare costly failures and caps on us
 - [Li et al., DataComp-LM](https://arxiv.org/abs/2406.11794) - controlled experiments for filtering, mixing, and data-quality evaluation.
 - [Penedo et al., The FineWeb Datasets](https://arxiv.org/abs/2406.17557) - documented web-scale filtering and deduplication ablations.
 
+The data-system arc establishes what examples mean and how a release can be reconstructed. The remaining chapters use that substrate to change model behavior. Their objectives differ, but each must declare which distribution supplies the target, which model states receive updates, and which independent evaluation can detect regression.
+
 ## Distillation, KL Divergence, and Model Sizing
 
 LEAD: Distillation is distribution transfer under a capacity and serving constraint. The central question is not "teacher or student?" It is which information should cross the capacity boundary.
@@ -1497,26 +1509,30 @@ With temperature `T`, logits `z` become:
 
 :::equation p_{i}(T) = exp(z_{i}/T) / Σ_{j} exp(z_{j}/T)|Temperature reveals or suppresses probability structure among non-argmax tokens.
 
-Higher temperature softens the distribution and exposes relationships among non-argmax tokens. Lower temperature sharpens it. In classic distillation, multiplying the KL term by `T^2` compensates for the gradient scale change introduced by temperature.
+Higher temperature softens the distribution and exposes relationships among non-argmax tokens. Lower temperature sharpens it. In [classic distillation](https://arxiv.org/abs/1503.02531), multiplying the KL term by `T^2` compensates for the approximate inverse-square gradient scaling in the high-temperature regime. It does not make the objective or all finite-temperature gradients invariant to temperature.
 
 Example status: Illustrative Python excerpt; not standalone.
 
 ```python
 def distillation_loss(student_logits, teacher_logits, labels, T=2.0, alpha=0.7):
-    teacher = softmax(teacher_logits / T, dim=-1)
+    # Inputs: aligned, valid-token logits [N, V] and labels [N], N > 0.
+    # T > 0; 0 <= alpha <= 1; teacher is a fixed target.
+    teacher = softmax(teacher_logits.detach() / T, dim=-1)
     student_logp = log_softmax(student_logits / T, dim=-1)
     soft = kl_div(student_logp, teacher, reduction="batchmean") * (T * T)
     hard = cross_entropy(student_logits, labels)
     return alpha * soft + (1.0 - alpha) * hard
 ```
 
-The production version masks padding, normalizes by valid tokens, handles sharded vocabulary, controls teacher precision, and avoids storing full teacher logits when bandwidth dominates.
+The excerpt assumes next-token alignment and masking have already selected valid tokens. With `[N,V]` logits, `batchmean` divides the KL sum by the same valid-token count used by hard cross entropy. Applying it directly to `[B,S,V]` would divide by `B` instead and change the loss balance with sequence length; see [PyTorch's KL reduction contract](https://docs.pytorch.org/docs/2.14/generated/torch.nn.functional.kl_div.html). A production version also handles sharded vocabulary, controls teacher precision, and avoids storing full teacher logits when bandwidth dominates.
 
 ### Engineer the teacher data path
 
 Full-vocabulary logits can exceed the storage cost of the original training examples by orders of magnitude. A data path must choose among online teacher inference, offline dense logits, top-k logits plus residual mass, quantized scores, or sampled sequences.
 
 Online inference avoids a static logit corpus and can follow student-relevant prompts, but it couples training throughput to teacher capacity and version availability. Offline targets make runs reproducible but can become stale and create heavy object-store traffic. Top-k storage is effective when most useful probability mass is concentrated, provided the omitted tail is represented consistently rather than silently renormalized into a different target.
+
+Preserving the tail's total mass still discards its internal distribution. For teacher probabilities `[0.6,0.3,0.1]` and student probabilities `[0.6,0.1,0.3]`, full forward KL is `0.2*log(3)`, about 0.220 nats. If only the first token is stored and the remaining tokens become one tail event, both distributions are `[0.6,0.4]` and the coarsened KL is zero. That objective cannot see how probability is divided inside the tail. Specify whether a sparse target is a coarsened loss, a reconstructed approximation, or a sampled estimator of the full loss; they are different training signals.
 
 Version every teacher artifact with teacher checkpoint, tokenizer, prompt template, decoding or temperature configuration, precision, and generation code. If the student and teacher tokenize differently, sequence alignment and probability transfer require an explicit mapping; matching strings does not imply matching token events.
 
@@ -1548,9 +1564,9 @@ The best draft maximizes end-to-end target throughput under memory and latency c
 
 A larger draft costs more per proposed token but can raise acceptance. A smaller draft is cheap but may create verification waste. Let:
 
-- `C_d(m)` be draft cost for model size `m`;
-- `C_v(gamma)` be target verification cost for `gamma` proposed tokens;
-- `A(m, gamma)` be expected accepted tokens;
+- `C_draft(m, gamma)` be draft time for model size `m` and `gamma` proposed tokens;
+- `C_verify(gamma)` be target verification time for those proposals;
+- `A(m, gamma)` be expected committed output tokens per cycle, including any correction or bonus token;
 - `C_base` be one ordinary target decode step.
 
 A simple speed model is:
@@ -1605,6 +1621,8 @@ For each batch, retain the number of valid target tokens. Across unequal microba
 Inspect a tiny overfitting test before a full run: can the model drive loss down on a handful of valid demonstrations, and does decoded behavior match the target format? If not, first check token shifts, masks, frozen parameters, optimizer membership, and gradient flow. Success on this test establishes plumbing, not generalization. A held-out split must separate related documents, templates, or tasks to avoid measuring memorized variants.
 
 ### LoRA reduces trainable state, not all training memory
+
+:::diagram lora_paths|A frozen base projection and a trainable low-rank branch contribute to the same output. The diagram uses row-vector notation; the adapter scale multiplies the low-rank branch before addition.
 
 [LoRA](https://arxiv.org/abs/2106.09685) freezes a base matrix and learns a low-rank update. Using the book's row-vector convention, let `W` have shape `[d_in,d_out]`, `A` shape `[d_in,r]`, and `B` shape `[r,d_out]`:
 
@@ -1763,6 +1781,8 @@ Terminal reward offers weak credit assignment: every sampled action may inherit 
 
 ### PPO: distinguish the old policy from the reference
 
+:::diagram policy_learning|Rollouts carry sampled actions and their behavior-policy probabilities into the learner. Rewards and advantages provide the learning signal, while a separate reference policy can regularize the update. Newly published weights refresh the behavior policy.
+
 [PPO](https://arxiv.org/abs/1707.06347) uses a clipped surrogate to limit incentives for large policy changes on sampled actions. Let `r_t` be the new policy's probability of the sampled action divided by its probability under the behavior policy that collected the rollout. A simplified term to maximize is:
 
 :::equation J_{t} = min(r_{t} A_{t}, clip(r_{t}, 1-ε, 1+ε) A_{t})|Clipping limits the benefit of moving a sampled action too far in the advantageous direction.
@@ -1852,3 +1872,7 @@ Track answer length, entropy, group reward variance, discarded prompts, clipping
 3. **Can pass-at-8 rise while pass-at-1 falls?** Yes. Distributional changes can improve coverage while hurting the most likely or typical answer. Report both and the actual selection mechanism.
 4. **What is wrong with rewarding a process's printed `PASS`?** The actor can print it. The trusted verifier must inspect independently protected execution results, not accept self-reported success.
 5. **Which first optimization fits the numerical cycle above?** Improve valid rollout throughput or overlap before assuming optimizer speed dominates; include verifier capacity and policy staleness in the measurement.
+
+### Part II closing principle
+
+The training output is more than weights: retain the data release, objective, update configuration, and evaluation that justify the checkpoint. For the documentation assistant, adaptation might improve citation format or abstention while retrieval supplies changing facts. Part III takes that exact checkpoint and asks whether its behavior can be delivered within a latency and memory budget. A training improvement that disappears after deployment is not yet a product improvement.

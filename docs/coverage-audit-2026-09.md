@@ -12,7 +12,9 @@ semantics from approximations; give a failure case and a decision boundary;
 provide exercises with answer criteria; cite primary evidence for modern
 variants. CPU tests validate selected calculations, not GPU performance.
 
-The research cutoff is September 7, 2026. Recent preprints are labeled as such;
+The original research cutoff is September 7, 2026; the accelerator ecosystem
+chapter was added with a separate September 13, 2026 source check recorded in
+`accelerator-ecosystems-review-2026-09-13.md`. Recent preprints are labeled as such;
 reported maxima and adoption claims are not treated as universal conclusions.
 Links are evidence and further reading, not substitutes for the explanation.
 
@@ -70,6 +72,7 @@ adjacent chapters and are not duplicated at every chapter boundary.
 | Parallel, Replicated, and Disaggregated Serving | Retained | Distinct phase groups, KV transfer, pinned PCP/TP/DCP source check |
 | Quantization, Compression, and Adapter Serving | Expanded | Scalar error/scales, GPTQ/AWQ/SmoothQuant/SpinQuant, MXFP8/NVFP4 |
 | Production Architecture, Capacity, and Reliability | Retained | Capacity, release identity, failure domains, canaries and SLO goodput |
+| Serving Engines and Cache Backends in Practice | Added in five-pass review | vLLM V1, SGLang radix/overlap/HiCache, current TensorRT LLM backend boundary, layer map, controlled engine comparison, cancellation lifetime; no cross-engine benchmarks reproduced |
 | GPU Execution, Memory, and Resource Accounting | Retained | Coalescing, banks, occupancy and synchronization with worked solutions |
 | Host-Device Orchestration, Streams, and CUDA Graphs | Retained | Async host boundaries, graph lifecycle and measured-region semantics |
 | Hierarchical Matrix Multiplication | Retained | Scalar/tiled references, register reuse, tensor cores, split-K and grouped GEMM |
@@ -79,6 +82,7 @@ adjacent chapters and are not duplicated at every chapter boundary.
 | Blackwell Pipelines and Modern Attention Kernels | Added | TMEM/TMA ownership, buffer generations, timing model, FA4 and FP4 limits |
 | CUDA Kernels for LLM Inference | Retained | KV append, paged/split attention, GQA, quantized GEMM and MoE |
 | Kernel Engineering, Profiling, and Correctness | Retained | Three baseline boundaries, cold/warm measurement, race/numerical tests |
+| Accelerator Ecosystems Beyond CUDA and NVIDIA | Added September 13 | Stack/hardware distinction, Triton/HIP/Pallas/NKI, current Neuron transition, KV/padding examples, phase-specific portability and migration gates; no device benchmarks reproduced |
 | Communication Models, Collectives, and Topology | Retained | Alpha-beta, ring traffic, overlap, physical groups and deadlock |
 | Data Parallelism, ZeRO, and Fully Sharded Training | Retained | State ledger, gathers, checkpoint/offload and numerical agreement |
 | Tensor, Sequence, and Context Parallelism | Retained | Row/column layouts, vocabulary loss, CP merge and geometry |
@@ -92,8 +96,8 @@ adjacent chapters and are not duplicated at every chapter boundary.
 | Online Statistics and Sampling | Retained | Welford and reservoir derivations with worked examples |
 | Heavy Hitters and Probabilistic Sketches | Retained | Misra-Gries, CMS, HLL, Bloom and quantile error models |
 | Building a Streaming Telemetry Service | Retained | Complete service and ten worked solutions |
-| ML Algorithms in Production Code | Retained | Shape/numerical contracts and worked answer criteria |
-| An Engineering System Design Method | Retained | Contract, estimation, critical path, failure and decision method |
+| Compact Review of ML Algorithms in Production | Retained | Shape/numerical contracts and worked answer criteria |
+| An Engineering System Design and Review Method | Retained | Contract, estimation, critical path, failure and decision method |
 | RAG, Vector Search, and Evaluation Pipelines | Expanded | RRF/MaxSim, hierarchical/graph alternatives, authorized service fixture |
 | Building and Evaluating a Bounded Agent Loop | Added | Executable loop, capability denial, ambiguous writes, memory and task evaluation |
 | Efficient Frontier Models and Reasoning Training | Expanded | V4, Qwen3.5, Nemotron 3, mHC and Engram with independent toy examples |
@@ -107,7 +111,7 @@ adjacent chapters and are not duplicated at every chapter boundary.
 | Incident Leadership and High-Risk Change | Retained | Causal diagnosis, mitigation clock, migrations and rollback |
 | Strategy, Vision, and the First 90 Days | Retained | Staged discovery, commitments and falsifiable milestones |
 | Leadership Evidence and Reflective Practice | Retained | Three applied decision cases and evidence-based reflection |
-| Cross-Layer Design Synthesis | Retained | Fifteen cross-layer scenarios with answer structures |
+| Cross-Layer Design Prompt Bank | Retained | Fifteen cross-layer scenarios with answer structures |
 | End-to-End Learning Lab and Capstone | Added | Train/serialize/generate fixture; connected service design and self-check |
 | Formula and Capacity Sheet | Expanded | Hybrid state, LoRA, DPO/PPO/GRPO and ESS with assumptions |
 | CUDA Engineering Checklist | Retained | Correctness, race, timing and resource checklists |
