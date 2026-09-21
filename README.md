@@ -1,22 +1,18 @@
 # Engineering Large Language Models
 
-A working technical book by Yury Kirpichev covering model training, data, distillation, LLM inference, CUDA, distributed systems, ML coding, system design, and technical leadership.
+## [Download the free book (PDF · 460 pages)](https://github.com/ykirpichev/llm-book/releases/download/public-2026-09/engineering-large-language-models.pdf)
 
-This is a **working draft**, not a finished first edition. Start with the [front matter](manuscript/00_front_matter.md), [current release checks](docs/release-readiness.md), or [five-pass review and 70-chapter ledger](docs/five-pass-review-2026-09-13.md). The existing all-rights-reserved terms are explicit in [LICENSE](LICENSE); no open-source or open-content license is granted at this stage.
+**[Read online](manuscript/00_front_matter.md)** · **[Download source](https://github.com/ykirpichev/llm-book/releases/download/public-2026-09/engineering-large-language-models-source.zip)** · **[Release notes](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09)**
 
-The expanded versioned PDF is attached to the [September 2026 end-to-end learning release](https://github.com/ykirpichev/llm-book/releases/tag/draft-2026-09-07-expanded). The [earlier checkpoint](https://github.com/ykirpichev/llm-book/releases/tag/draft-2026-09-07) is preserved. The repository and both releases remain private; access requires repository permission.
+A free technical book by **Yury Kirpichev** about building and operating LLM systems: foundations, training and distillation, inference, CUDA and other accelerators, distributed systems, production design, and technical leadership.
 
-The [chapter coverage audit](docs/coverage-audit-2026-09.md) records the expansion and subsequent additions. The current manuscript's research cutoff is September 13, 2026, with dated implementation checks. Core mechanisms are explained with examples and failure boundaries; references provide supporting evidence. The book does not claim to catalogue every paper or reproduce frontier training runs.
+**Public Edition - September 2026.** Seventy chapters across nine parts, with worked examples, original diagrams, runnable CPU references, and design exercises. Research cutoff: **September 13, 2026**.
 
-The [September 8 Part I review](docs/part1-review-2026-09-08.md) records an earlier independent pass. The [September 13 multi-model review](docs/multi-model-review-2026-09-13.md) records the Astra technical, Sol prose, and Terra pedagogy reviews, final Astra gate, 77 passing CPU tests, and rebuilt 410-page PDF. Rebuild from the current sources for these revisions; the September 7 release PDFs remain unchanged historical checkpoints.
+## Read the book
 
-## Read the draft
+Start with the [introduction and learning path](manuscript/00_front_matter.md), or choose a part below. Read Parts I-III in order for the model-to-service path. Parts IV-V cover accelerators and clusters; Part VI develops retrieval, agents, and production design. The [capstone and field reference](manuscript/09_appendices.md) connect the examples into a complete learning path.
 
-The completed [accelerator-team campaign](docs/accelerator-team-review-2026-09-13.md) builds to 460 pages with 108 passing CPU/reference and document checks. Three review/proposal/author/QC cycles deepen accelerator portability, repair numerical edge cases, and improve the book's prose, exercises, and navigation. No accelerator compilation, device execution, or serving-engine benchmark is claimed.
-
-The earlier [five-pass checkpoint](docs/five-pass-review-2026-09-13.md) recorded 445 pages and 95 passing CPU tests. It added [Serving Engines and Cache Backends in Practice](manuscript/03_inference.md#serving-engines-and-cache-backends-in-practice): vLLM, SGLang, TensorRT LLM, FlashInfer, llama.cpp, and the cache/fleet ecosystem. It also updated FSDP2 and training/RL implementation paths, corrected numerical and recovery details, and strengthened the capstone. Its 44 distinct diagram proofs and full PDF at contact-sheet scale were visually checked; see that dated review for its scope and limitations.
-
-The expanded chapter [Accelerator Ecosystems Beyond CUDA and NVIDIA](manuscript/04_cuda.md#accelerator-ecosystems-beyond-cuda-and-nvidia) covers Triton, ROCm/HIP, TPU/XLA/Pallas, AWS Neuron/NKI, and a bounded porting evaluation. The [team campaign](docs/accelerator-team-review-2026-09-13.md) records its current source, code, and visual checks; the [initial chapter review](docs/accelerator-ecosystems-review-2026-09-13.md) preserves the earlier scope. Neither claims cross-device benchmark results.
+The **[public edition release](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09)** includes the PDF, editable source, and [SHA-256 checksums](https://github.com/ykirpichev/llm-book/releases/download/public-2026-09/SHA256SUMS). No account or payment is required to read or download the book. Build it locally with `make book`, or create all release assets with `make release`. See the [release evidence](docs/release-readiness.md) and [publication instructions](docs/publishing.md). Earlier draft releases are historical checkpoints with their original notices.
 
 | Part | Manuscript |
 | --- | --- |
@@ -30,16 +26,29 @@ The expanded chapter [Accelerator Ecosystems Beyond CUDA and NVIDIA](manuscript/
 | VIII | [Technical leadership](manuscript/08_technical_leadership.md) |
 | IX | [Field reference](manuscript/09_appendices.md) |
 
+## Reuse and contributions
+
+The book text and original figures are licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Original code examples and build tools use the [MIT License](LICENSE-CODE). Both permit commercial reuse under their respective terms. See [LICENSE](LICENSE) for the scope, including embedded code and third-party material.
+
+Corrections, clearer explanations, and reproducible examples are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for reporting errors and proposing changes.
+
+## How this edition was reviewed
+
+The book was developed with AI-assisted writing, technical review, and editing, including Astra, Sol, and Terra passes. It has **not** received independent human technical review or professional copy editing. That is a disclosed limitation, not a prerequisite for this free public edition.
+
+The CPU references and document checks are executable. Accelerator kernels, real serving engines, distributed execution, and performance results have not been validated on hardware in this project. Code blocks distinguish runnable references, illustrative excerpts, and pseudocode. Published performance results are attributed to their sources and bounded by those sources' workloads.
+
+Historical review reports in `docs/` record earlier checkpoints. Their draft-only release restrictions and test/page counts describe those checkpoints; [current release readiness](docs/release-readiness.md) governs this edition.
+
 ## Build
 
-The build uses ReportLab and Poppler. Install the pinned Python packages with
-`python3 -m pip install -r requirements.txt`; ensure `pdfinfo` from Poppler is
-available on `PATH`.
+The build uses ReportLab and Poppler. Install the pinned Python packages in the
+virtual environment below; ensure `pdfinfo` from Poppler is available on `PATH`.
 
-Python 3.12 is the CI reference environment. For an isolated local environment:
+Use Python 3.12 (the CI reference environment); the system Python on macOS may be too old. For an isolated local environment:
 
 ```bash
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
@@ -58,7 +67,7 @@ The final PDF is written to:
 
 `output/pdf/engineering-large-language-models.pdf`
 
-Generated PDFs and previews are ignored by Git. A GitHub Release preserves the reviewed PDF; successful GitHub Actions runs also attach their build as a temporary downloadable artifact. The manuscript and builder are the versioned sources. Platform font availability can affect line breaks, so use the same environment when comparing page layouts.
+Generated PDFs and previews are ignored by Git. Release packages contain the PDF and a source archive; successful GitHub Actions runs also attach their build as a temporary downloadable artifact. The manuscript and builder are the versioned sources. Platform font availability can affect line breaks, so use the same environment when comparing page layouts.
 
 ## Verified teaching examples
 
@@ -71,7 +80,7 @@ The [claim audit](docs/claim-audit.md) records selected source/version checks an
 ## Source layout
 
 - `manuscript/` - editable Markdown manuscript, ordered by filename.
-- `src/build_book.py` - deterministic typesetting, diagrams, cover, table of contents, headers, and PDF outlines.
+- `src/build_book.py` - typesetting, diagrams, cover, table of contents, headers, and PDF outlines.
 - `src/verify_pdf.py` - structural, navigation, pagination, and text-quality checks.
 - `examples/` - runnable, dependency-light teaching references and evaluation fixtures.
 - `tests/` - algorithm, arithmetic, manuscript, audit-tool, and builder checks.

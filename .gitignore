@@ -6,6 +6,7 @@ __pycache__/
 tmp/
 output/previews/
 output/pdf/
+output/release/
 
 # Local archives and unrelated presentation experiments
 .local-archive/

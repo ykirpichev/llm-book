@@ -106,7 +106,7 @@ def verify(path: Path) -> None:
     for term in REQUIRED_TERMS:
         if term.lower() not in corpus.lower():
             raise SystemExit(f"FAIL: required topic missing: {term}")
-    for publication_term in ["Copyright © 2026 Yury Kirpichev", "All rights reserved", "Working Draft - September 2026"]:
+    for publication_term in ["Copyright © 2026 Yury Kirpichev", "CC BY 4.0", "MIT License", "Public Edition - September 2026", "AI-assisted", "independent human technical review"]:
         if publication_term.lower() not in corpus.lower():
             raise SystemExit(f"FAIL: publication front matter missing: {publication_term}")
 
@@ -118,6 +118,8 @@ def verify(path: Path) -> None:
         "�",
         "■",
         "□",
+        "All rights reserved",
+        "Working Draft - September 2026",
     ]
     for token in bad_tokens:
         if token in corpus:

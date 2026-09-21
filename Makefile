@@ -2,7 +2,7 @@ PYTHON ?= python3
 PDF := output/pdf/engineering-large-language-models.pdf
 PREVIEW_PAGES ?= 1 2 3 9 100 200
 
-.PHONY: book test verify check-links previews clean
+.PHONY: book test verify check-links previews release clean
 
 book:
 	$(PYTHON) src/build_book.py --output $(PDF)
@@ -18,6 +18,9 @@ check-links:
 
 previews: book
 	$(PYTHON) src/render_previews.py $(PDF) $(PREVIEW_PAGES)
+
+release: verify
+	$(PYTHON) -m src.package_release
 
 clean:
 	rm -f $(PDF)

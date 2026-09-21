@@ -1,8 +1,25 @@
-Copyright (c) 2026 Yury Kirpichev. All rights reserved.
+Copyright (c) 2026 Yury Kirpichev
 
-This working draft does not grant an open-source or open-content license to
-the original manuscript, figures, or code. This notice preserves the existing
-publication terms; it does not change rights in third-party material.
+Engineering Large Language Models uses two licenses:
 
-Third-party works cited in the manuscript remain subject to their respective
-rights and terms. Citation is not a claim of ownership or a license grant.
+1. Book text, prose documentation, and original figures, including their
+   rendered PDF form: Creative Commons Attribution 4.0 International
+   (CC BY 4.0). The full legal text is in LICENSE-BOOK.
+   https://creativecommons.org/licenses/by/4.0/
+
+2. Original software in src/, examples/, and tests/, build and workflow
+   configuration, and original code snippets embedded in the manuscript or
+   documentation: MIT License. The full license is in LICENSE-CODE.
+   Code used to generate figures is MIT; the rendered artwork is CC BY 4.0.
+
+These terms apply to this public edition and later copies carrying this notice.
+They replace the prior all-rights-reserved notice for this edition; historical
+release files retain the notices with which they were distributed.
+
+Third-party works, quotations, software dependencies, names, and trademarks
+retain their respective rights and terms. Citations do not grant rights in
+cited works. No endorsement by a cited author or vendor is implied.
+
+Suggested book attribution:
+Engineering Large Language Models, Yury Kirpichev, Public Edition,
+September 2026, licensed under CC BY 4.0. Identify any changes you make.

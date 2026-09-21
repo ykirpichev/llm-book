@@ -716,7 +716,7 @@ class Meta:
     title: str = "Engineering Large Language Models"
     subtitle: str = "Training, Inference, CUDA, Distributed Systems, and Technical Leadership"
     author: str = "Yury Kirpichev"
-    edition: str = "Working Draft - September 2026"
+    edition: str = "Public Edition - September 2026"
     copyright_year: str = "2026"
     publication_date: str = "September 2026"
     keywords: str = "large language models, LLM systems, model training, inference, CUDA, distributed systems"
@@ -957,15 +957,15 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
         Spacer(1, PAGE_H - MARGIN_TOP - MARGIN_BOTTOM - 8),
         NextPageTemplate("Front"),
         PageBreak(),
-        Spacer(1, 310),
+        Spacer(1, 230),
         Paragraph(inline_markup(meta.title), STYLES["h2"]),
         Rule(TEAL, 42, 2.4),
         Spacer(1, 12),
         Paragraph(f"Copyright © {esc(meta.copyright_year)} {esc(meta.author)}", STYLES["body"]),
-        Paragraph("All rights reserved.", STYLES["body"]),
+        Paragraph(inline_markup("Book text and original figures: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Original code examples and build tools: [MIT License](https://opensource.org/license/mit). Third-party material retains its own terms."), STYLES["small"]),
         Spacer(1, 8),
         Paragraph(
-            inline_markup(f"{meta.edition}. Published {meta.publication_date}."),
+            inline_markup(f"{meta.edition}."),
             STYLES["body"],
         ),
         Spacer(1, 8),
@@ -974,7 +974,11 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
             STYLES["small"],
         ),
         Paragraph(
-            inline_markup(f"Research and software references were reviewed through {meta.publication_date}."),
+            "Research cutoff: September 13, 2026. Software checks are dated in the text.",
+            STYLES["small"],
+        ),
+        Paragraph(
+            "Prepared with AI-assisted writing, technical review, and editing, including Astra, Sol, and Terra review passes. This edition has not received independent human technical review or professional copy editing. CPU teaching examples are tested; accelerator code and performance have not been validated on hardware here.",
             STYLES["small"],
         ),
         NextPageTemplate("Body"),
