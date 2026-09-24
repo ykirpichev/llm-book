@@ -23,7 +23,7 @@ TOP_LEVEL = (
 )
 TREES = {
     "manuscript": {".md"},
-    "src": {".py"},
+    "src": {".py", ".css", ".js"},
     "examples": {".py", ".cpp", ".md"},
     "tests": {".py"},
     "docs": {".md"},

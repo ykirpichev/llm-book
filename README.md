@@ -1,8 +1,8 @@
 # Engineering Large Language Models
 
-## [Download the free book (PDF · 460 pages)](https://github.com/ykirpichev/llm-book/releases/download/public-2026-09/engineering-large-language-models.pdf)
+## [Read the book online — no download needed](https://ykirpichev.github.io/llm-book/)
 
-**[Read online](manuscript/00_front_matter.md)** · **[Download source](https://github.com/ykirpichev/llm-book/releases/download/public-2026-09/engineering-large-language-models-source.zip)** · **[Release notes](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09)**
+**[Download PDF · 460 pages](https://github.com/ykirpichev/llm-book/releases/download/public-2026-09/engineering-large-language-models.pdf)** · **[Download source](https://github.com/ykirpichev/llm-book/releases/download/public-2026-09/engineering-large-language-models-source.zip)** · **[Release notes](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09)**
 
 A free technical book by **Yury Kirpichev** about building and operating LLM systems: foundations, training and distillation, inference, CUDA and other accelerators, distributed systems, production design, and technical leadership.
 
@@ -10,21 +10,23 @@ A free technical book by **Yury Kirpichev** about building and operating LLM sys
 
 ## Read the book
 
-Start with the [introduction and learning path](manuscript/00_front_matter.md), or choose a part below. Read Parts I-III in order for the model-to-service path. Parts IV-V cover accelerators and clusters; Part VI develops retrieval, agents, and production design. The [capstone and field reference](manuscript/09_appendices.md) connect the examples into a complete learning path.
+The [online reader](https://ykirpichev.github.io/llm-book/) includes chapter navigation, full-book search, equations, and the original diagrams. It works on desktop and mobile.
+
+Start with the [introduction and learning path](https://ykirpichev.github.io/llm-book/introduction.html), or choose a part below. Read Parts I-III in order for the model-to-service path. Parts IV-V cover accelerators and clusters; Part VI develops retrieval, agents, and production design. The [capstone and field reference](https://ykirpichev.github.io/llm-book/part-09.html) connect the examples into a complete learning path.
 
 The **[public edition release](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09)** includes the PDF, editable source, and [SHA-256 checksums](https://github.com/ykirpichev/llm-book/releases/download/public-2026-09/SHA256SUMS). No account or payment is required to read or download the book. Build it locally with `make book`, or create all release assets with `make release`. See the [release evidence](docs/release-readiness.md) and [publication instructions](docs/publishing.md). Earlier draft releases are historical checkpoints with their original notices.
 
-| Part | Manuscript |
+| Part | Read online |
 | --- | --- |
-| I | [Foundations](manuscript/01_foundations.md) |
-| II | [Training systems, data, and adaptation](manuscript/02_training.md) |
-| III | [Inference systems](manuscript/03_inference.md) |
-| IV | [CUDA and accelerator programming](manuscript/04_cuda.md) |
-| V | [Distributed ML systems](manuscript/05_distributed.md) |
-| VI | [Coding and system design](manuscript/06_coding_and_design.md) |
-| VII | [Recent state of the art](manuscript/07_recent_state_of_art.md) |
-| VIII | [Technical leadership](manuscript/08_technical_leadership.md) |
-| IX | [Field reference](manuscript/09_appendices.md) |
+| I | [Foundations](https://ykirpichev.github.io/llm-book/part-01.html) |
+| II | [Training systems, data, and adaptation](https://ykirpichev.github.io/llm-book/part-02.html) |
+| III | [Inference systems](https://ykirpichev.github.io/llm-book/part-03.html) |
+| IV | [CUDA and accelerator programming](https://ykirpichev.github.io/llm-book/part-04.html) |
+| V | [Distributed ML systems](https://ykirpichev.github.io/llm-book/part-05.html) |
+| VI | [Coding and system design](https://ykirpichev.github.io/llm-book/part-06.html) |
+| VII | [Recent state of the art](https://ykirpichev.github.io/llm-book/part-07.html) |
+| VIII | [Technical leadership](https://ykirpichev.github.io/llm-book/part-08.html) |
+| IX | [Field reference](https://ykirpichev.github.io/llm-book/part-09.html) |
 
 ## Reuse and contributions
 
@@ -61,7 +63,10 @@ make test
 make verify
 make check-links
 make previews
+make site
 ```
+
+The website is written to `output/site/`. Preview it with `python -m http.server --directory output/site`, then open the printed localhost URL. GitHub Actions automatically deploys it from `main`; see [reader maintenance](docs/web-reader.md). The website follows the current manuscript; the versioned PDF remains a fixed release snapshot.
 
 The final PDF is written to:
 
