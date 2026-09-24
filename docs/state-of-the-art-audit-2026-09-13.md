@@ -1,5 +1,7 @@
 # State-of-the-Art Audit — September 13, 2026
 
+The [September 23 Part VII revision](part7-update-2026-09-23.md) supersedes the current-state assessment of Chapters 54-59 below. Earlier claim checks remain historical evidence, not a survey through the new date.
+
 ## Executive finding
 
 The manuscript's technical center remains current. Its strongest choice is to organize around durable resource and correctness models rather than transient leaderboards. A chapter-by-chapter audit found no missing development that justified rewriting the training-data, CUDA-basics, distributed-training, streaming-algorithm, leadership, or appendix chapters. Six targeted updates were warranted:

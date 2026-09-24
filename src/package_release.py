@@ -82,7 +82,7 @@ def package(root: Path = ROOT) -> Path:
         if term not in text:
             raise ValueError(f"Rebuild the public edition PDF: missing {term}")
 
-    destination = root / "output" / "release" / "public-2026-09"
+    destination = root / "output" / "release" / "public-2026-09-23"
     destination.mkdir(parents=True, exist_ok=True)
     source_name = f"{SOURCE_ROOT}-source.zip"
     manifest = "".join(f"{sha256(data)}  {name}\n" for name, data in sources.items())

@@ -1,5 +1,7 @@
 # Evidence audit: working-draft checkpoint
 
+The [September 23 Part VII revision](part7-update-2026-09-23.md) supersedes the current-state assessment of Chapters 54-59 below. Earlier claim checks remain historical evidence, not a survey through the new date.
+
 Checked September 7, 2026; updated September 13 after the final Astra review.
 This ledger covers the highlighted recent-result numbers and the shared
 running-model arithmetic. It does not certify every

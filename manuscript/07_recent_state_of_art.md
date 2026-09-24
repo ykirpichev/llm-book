@@ -1,6 +1,6 @@
 # Part VII - Recent State of the Art
 
-This part connects selected research and maintained implementation evidence available by September 13, 2026 to the mechanisms developed throughout the book. It is a dated engineering snapshot, not an exhaustive catalogue or permanent leaderboard. Older results remain when they establish a useful mechanism; they are not presented as the newest available implementation. Reported speedups and benchmark scores belong to the cited paper's hardware, software, model, workload, baseline, and quality threshold.
+This part was substantively updated on September 23, 2026. It connects current model cards, research reports, and implementation evidence to the mechanisms developed throughout the book. It is a dated engineering snapshot, not an exhaustive catalogue or permanent leaderboard. Earlier results are explicitly retained as foundations. Reported speedups and benchmark scores belong to the cited source's hardware, software, model, workload, baseline, and quality threshold; they were not reproduced on accelerators for this book. The other parts retain their September 13 research cutoff unless explicitly dated.
 
 The durable value of a recent result is usually not its rank. It is the mechanism that changed the resource model: sparse activation, better load balancing, reinforcement learning with verifiable rewards, explicit inference-time compute, asynchronous attention pipelines, disaggregated KV state, hierarchical memory, native-resolution multimodality, or enforceable trust boundaries for tools.
 
@@ -14,9 +14,28 @@ Record the evaluated system, baseline, workload distribution, hardware, precisio
 
 LEAD: Recent frontier systems show that capability is increasingly a co-design problem across architecture, data, optimization, precision, communication, and inference-time computation.
 
+### The frontier on September 23, 2026
+
+The frontier now includes several kinds of evidence: hosted capability, downloadable checkpoints, architectural reports, and experimental inference systems. The following map identifies representative current systems, not a ranking. A model card's existence does not establish access for every account, and open weights do not imply an open training corpus or unrestricted licensing.
+
+| System and primary evidence | What is established | Engineering question |
+| --- | --- | --- |
+| [GPT-6 Astra, Sol, and Luna](https://developers.openai.com/api/docs/guides/latest-model) | Official API guidance documents three capability/cost tiers, asynchronous tools, and mid-turn steering | How should routing, cancellation, and concurrent tool state change? |
+| [Claude Opus 5.5](https://www.anthropic.com/claude-opus-5-5), announced September 22 | A current hosted model with revised serving economics and account-dependent preserved-thinking requirements | Does a lower token price reduce cost per verified task? |
+| [Claude Fable / Mythos 5.1](https://www.anthropic.com/claude-fable-and-mythos-5-1), September 1 | The same model under different safeguards; Fable is generally available, Mythos has restricted access | Which capability and access policy will the actual application receive? |
+| [Gemini 3.8 Flash](https://deepmind.google/models/model-cards/gemini-3-8-flash/), September 2 card | Text output from text, image, audio, and video inputs, with configurable effort | Which modality, reasoning budget, and harness produced a result? |
+| [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) | Downloadable dense vision-language model with hybrid attention | Can recurrent state and attention KV be scheduled and restored correctly? |
+| [DeepSeek-V4.1-Flash](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash) | Downloadable multimodal model with redesigned cache ownership | What is persistent, shared, or reconstructed during a cache hit? |
+| [Kimi K3](https://huggingface.co/moonshotai/Kimi-K3) | Downloadable hybrid MoE with model-specific license and quantized deployment recipe | Does active compute fit while total expert storage and routing remain feasible? |
+| [GLM-5.3](https://huggingface.co/zai-org/GLM-5.3) and [GLM-5.3-Flash](https://huggingface.co/zai-org/GLM-5.3-Flash) | Distinct checkpoints: post-training gains versus a new multimodal hybrid base | Is a gain architectural, post-training, or a harness change? |
+
+Mutable API documentation and checkpoint cards in this map were inspected on September 23. Use an immutable checkpoint revision and model/API identifier in an actual evaluation. Preserve the provider's request configuration and response metadata. Product names alone are insufficient to reconstruct a run.
+
+Hosted capability advances also change the application contract. OpenAI's GPT-6 guidance documents tools that can run while reasoning continues and user instructions that can arrive during a turn. This motivates explicit pending-call IDs, dependency tracking, cancellation, and stale-result rejection in the application. It does not reveal a proprietary parameter count or training recipe. Anthropic's Opus 5.5 announcement applies preserved thinking to Opus 5.5 and Fable 5.1 for API accounts created on or after August 31, 2026. A migration therefore needs account-specific conversation-state and access-policy tests in addition to answer-quality tests. These are observable interface changes, not evidence that either vendor has solved autonomous reliability.
+
 ### Sparse activation changes the economic unit
 
-[DeepSeek-V3](https://arxiv.org/html/2412.19437v2) reports 671 billion total parameters while activating 37 billion parameters per token. Its technical report describes 14.8 trillion pretraining tokens and 2.788 million H800 GPU-hours for the official training run, including context extension and post-training but excluding prior research and ablation experiments. This is not the total research-and-development cost. The architecture combines a mixture-of-experts design, Multi-head Latent Attention, multi-token prediction, and an auxiliary-loss-free load-balancing strategy.
+[DeepSeek-V3](https://arxiv.org/html/2412.19437v2), a December 2024 foundation for this discussion, reports 671 billion total parameters while activating 37 billion parameters per token. Its technical report describes 14.8 trillion pretraining tokens and 2.788 million H800 GPU-hours for the official training run, including context extension and post-training but excluding prior research and ablation experiments. This is not the total research-and-development cost. The architecture combines a mixture-of-experts design, Multi-head Latent Attention, multi-token prediction, and an auxiliary-loss-free load-balancing strategy.
 
 The system lesson is not that every model should copy one expert layout. Sparse activation separates three quantities that dense scaling often conflates:
 
@@ -40,6 +59,16 @@ The official [Qwen3.5-35B-A3B model card](https://huggingface.co/Qwen/Qwen3.5-35
 
 For a generic expert layer, reducing communicated width from 4,096 to 1,024 quarters the activation payload per assignment at fixed dtype and routing count. Increasing active experts fourfold can spend that saving again. Projection overhead, scaling metadata, and expert compute remain in the ledger. Latent width, active count, and total count must therefore be listed together when making an efficiency claim.
 
+### Current open models require different state ledgers
+
+The [Qwen3.8-27B card](https://huggingface.co/Qwen/Qwen3.8-27B) specifies 64 layers arranged as sixteen groups of three Gated DeltaNet layers and one gated-attention layer. It lists a native context of 262,144 tokens, with extension up to one million. The hosted million-token service is described as forthcoming in the inspected card; do not turn that statement into an availability claim. Native, extended, and hosted context limits are different evidence. Dense feed-forward computation also does not imply full attention at every layer.
+
+The [Kimi K3 card](https://huggingface.co/moonshotai/Kimi-K3) lists 2.8T total and 104B active parameters, 69 KDA layers and 24 gated-MLA layers, and MXFP4 routed-expert weights with MXFP8 activations, while other components retain higher precision. Its [July technical report](https://arxiv.org/abs/2607.24653) provides the research context. Active parameters help estimate computation; they do not make the full checkpoint or expert placement disappear. Hybrid attention adds recurrent snapshots to the attention-cache ledger, and quantized weights add scale metadata and hardware-dependent kernels.
+
+[GLM-5.3](https://huggingface.co/zai-org/GLM-5.3) attributes its improvement over GLM-5.2 to post-training on the same base. [GLM-5.3-Flash](https://huggingface.co/zai-org/GLM-5.3-Flash), despite the related name, describes a newly trained multimodal base with sparse/linear attention and mHC. This distinction matters experimentally: changing a suffix can change the attention state, modality contract, and kernels, not only the price or decoding budget. Inspect each checkpoint's license separately from the license of this book.
+
+For a hybrid model, estimate persistent state as the sum of attention-layer KV, recurrent-layer state, compressed history, and any shared representations. Then add temporary workspaces, speculative branches, graph buffers, and allocator reserve. A million-token limit is an interface or evaluation boundary, not a claim that every million-token request fits one device or retains every detail with equal accuracy.
+
 ### Residual routing and learned lookup memory
 
 [Manifold-Constrained Hyper-Connections](https://arxiv.org/abs/2512.24880) studies multiple residual streams and constrained mixing between them. A doubly stochastic mixing matrix has nonnegative entries with every row and column summing to one. The intent is to retain richer routing without unconstrained amplification in the residual transport. This is a training architecture change, not a post-hoc serving flag.
@@ -52,7 +81,7 @@ This is not the same as retrieving current documents from an enterprise corpus. 
 
 ### Reasoning from reinforcement learning
 
-[DeepSeek-R1-Zero](https://arxiv.org/abs/2501.12948) reports that large-scale reinforcement learning without a supervised fine-tuning warm start can elicit stronger reasoning behavior, but also reports readability and language-mixing problems. DeepSeek-R1 adds cold-start data and a multi-stage training process before and after reinforcement learning. The report also releases distilled dense models from 1.5B through 70B parameters and reports that reasoning behavior can transfer into smaller students.
+The January 2025 [DeepSeek-R1-Zero](https://arxiv.org/abs/2501.12948) study reports that large-scale reinforcement learning without a supervised fine-tuning warm start can elicit stronger reasoning behavior, but also reports readability and language-mixing problems. DeepSeek-R1 adds cold-start data and a multi-stage training process before and after reinforcement learning. The report also releases distilled dense models from 1.5B through 70B parameters and reports that reasoning behavior can transfer into smaller students.
 
 This evidence changes the post-training design space in three ways.
 
@@ -61,6 +90,16 @@ This evidence changes the post-training design space in three ways.
 3. **Distillation is a deployment lever.** A high-compute teacher can create traces or targets for a smaller model, but the student still requires independent quality, contamination, and serving evaluation.
 
 Reward design must account for false acceptance, reward hacking, length incentives, duplicated samples, and train-evaluation overlap. Log the full rollout policy, sampling configuration, verifier version, reward components, rejected trajectories, and update batch. Without those artifacts, an apparent algorithmic gain may be an unrepeatable data-selection effect.
+
+### From reasoning rewards to agent environments
+
+The [DeepSeek-V4.1 technical report, section 5.1](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/main/DeepSeek_V41_Tech_Report.pdf), explicitly retains supervised fine-tuning, reinforcement learning, and on-policy distillation. It attributes the release's post-training advances to task synthesis, interactive environment construction, filtering, deduplication, and difficulty calibration rather than a new optimization algorithm. Its training unit includes a problem, an environment, and a verification system. This is a broader unit of curriculum design than an isolated answer with a scalar reward.
+
+[Kimi K3's report, version 2](https://arxiv.org/abs/2607.24653v2), likewise connects long-context agentic RL to persistent rollout and sandbox state. A long trajectory consumes environment lifetime, tool execution, checkpoint storage, and policy-freshness budget as well as tokens. The infrastructure must distinguish a slow but productive rollout from a stuck tool, an invalid environment, or a policy exploiting its grader.
+
+In on-policy distillation, a teacher provides learning targets on states visited by the student rather than only a fixed collection of teacher-generated solutions. This can reduce the mismatch between training states and deployed student behavior, but the teacher and its feedback remain fallible. Part II develops the post-training objectives and Part V the asynchronous rollout accounting; these model reports illustrate why the data and environment systems now matter as much as the named objective.
+
+A causal comparison should hold the base checkpoint, rollout budget, verifier, environment family, and evaluation harness constant while changing one training ingredient. Then test unseen environment families, tool errors, changed task wording, and held-out verifiers. Separate gains from additional task diversity, longer reasoning, a different teacher, and a stronger optimizer. A same-base post-training claim, such as GLM-5.3's, does not by itself identify which of those ingredients caused the improvement.
 
 ### Test-time scaling is a family of systems
 
@@ -82,6 +121,8 @@ A correct test-time compute budget includes input and output tokens, cached-pref
 2. What evidence would show that a reasoning RL gain comes from reward hacking?
 3. Compare the scheduler state required for sequential scaling, best-of-N, and prefix search.
 4. When should a distilled reasoning model replace its teacher in production?
+5. Why is a million-token context limit insufficient to compare Qwen3.8, Kimi K3, and a hosted model?
+6. How would you separate a post-training improvement from an architecture improvement?
 
 ### Worked Solutions
 
@@ -89,6 +130,9 @@ A correct test-time compute budget includes input and output tokens, cached-pref
 2. Use hidden verifiers, adversarially varied problem forms, manual trace audits, reward-component ablations, and pass rates on tasks where superficial shortcuts do not work. Check whether reward rises while independent correctness or readability falls.
 3. Sequential scaling owns one growing KV history; best-of-N owns independent completed trajectories plus reducer state; prefix search owns a branching frontier, shared prefixes, pruning metadata, and branch-specific RNG. Their cancellation and memory-reclamation semantics differ.
 4. Replace the teacher only when the student meets slice-level quality and safety floors, lowers end-to-end cost or latency under the real workload, and has a fallback for tasks where compression removed necessary capability.
+5. Record native versus extended context, input modality, model revision, cache/recurrent layout, numerical format, and long-range quality. A supported length does not establish equal memory, latency, recall, or account access.
+6. First hold the base checkpoint and evaluation harness fixed while changing post-training. Then compare architecture changes with training data, compute, effort, and harness differences explicitly recorded. GLM-5.3 and GLM-5.3-Flash illustrate why related names do not imply the same base.
+
 
 ## Serving, Attention, and Memory Hierarchies
 
@@ -96,11 +140,19 @@ LEAD: The recent inference frontier is defined less by one universal engine than
 
 ### Attention pipelines on newer accelerators
 
-[FlashAttention-3](https://arxiv.org/abs/2407.08608) targets Hopper GPUs with warp specialization, asynchronous Tensor Memory Accelerator transfers, overlap between matrix multiplication and softmax, and an FP8 path with block quantization. The paper reports 1.5 to 2.0 times speedup over FlashAttention-2 on H100, up to 740 FP16 TFLOP/s, and nearly 1.2 PFLOP/s for FP8. These are attention-kernel results over the evaluated shapes, not whole-model or service speedups. It also reports lower numerical error than a baseline FP8 attention implementation.
+The 2024 [FlashAttention-3](https://arxiv.org/abs/2407.08608) paper targets Hopper GPUs with warp specialization, asynchronous Tensor Memory Accelerator transfers, overlap between matrix multiplication and softmax, and an FP8 path with block quantization. The paper reports 1.5 to 2.0 times speedup over FlashAttention-2 on H100, up to 740 FP16 TFLOP/s, and nearly 1.2 PFLOP/s for FP8. These are attention-kernel results over the evaluated shapes, not whole-model or service speedups. It also reports lower numerical error than a baseline FP8 attention implementation.
 
 The durable mechanism is a deeper software pipeline. Once hardware exposes specialized asynchronous movement and matrix units, a kernel must schedule producer and consumer warps, manage barriers and buffers, and interleave non-matrix work so tensor cores remain fed. The optimization surface shifts from tile reuse alone to dependency timing.
 
 The production acceptance test still needs ragged and causal shapes, head dimensions, sequence tails, backward or decode variants, numerical drift by layer, graph capture, and end-to-end model throughput. Peak forward attention throughput does not establish application speedup.
+
+### Blackwell attention and the limits of FP4
+
+[FlashAttention-4](https://arxiv.org/abs/2603.05451), published in March 2026, addresses asymmetric hardware scaling: matrix throughput improves faster than exponential evaluation and shared-memory bandwidth. Its pipeline uses asynchronous matrix operations, tensor memory, and software techniques that reduce softmax overhead; its implementation uses CuTe-DSL. The paper reports up to 1.3 times the BF16 throughput of cuDNN 9.13 on B200 for its evaluated attention kernels. That comparator and hardware are essential; this is not a general service-level improvement over FlashAttention-3.
+
+The September 3 preprint [Hardware-Aware FP4 FlashAttention-4, version 1](https://arxiv.org/abs/2609.04105v1), sharpens the distinction between a fast kernel and a sound training recipe. It reports an FP4 noncausal inference path and a separate causal training path, but also reports divergence in every tested distributed-training trajectory using MXFP4 probabilities and values. Its matched distributed runs retain FP8 for those operands. Treat this as provisional, boundary-specific evidence, not proof that attention can now use four bits everywhere.
+
+The engineering implication is to keep a precision ledger for Q, K, V, scores, probabilities, accumulators, gradients, and scaling factors. Test long reductions, outliers, masks, and backward stability independently. A matrix unit's nominal throughput cannot compensate for conversion overhead, a softmax bottleneck, or failed optimization. Part IV supplies the ownership and synchronization details behind this pipeline.
 
 ### Read the 2026 developments through the earlier chapters
 
@@ -113,6 +165,12 @@ Part IV derives Blackwell ownership and the FlashAttention-4 pipeline. Part III 
 | Recurrent / compressed state | Persistent bytes and history processing | Required long-range information is lost |
 | Better RL feedback | Useful learning signal per rollout | Verifier shortcuts or held-out regression |
 | Asynchronous RL | Useful learner/rollout utilization | Stale-data bias, variance, or selection changes quality |
+
+### Draft quality must repay its own cost
+
+The 2026 speculative frontier extends beyond choosing a fixed draft length. [DFlare, version 2](https://arxiv.org/abs/2606.02091v2), conditions different draft layers on learned combinations of target-layer features to increase block-draft capacity. [CaDDTree, version 1](https://arxiv.org/abs/2606.01813v1), chooses both the candidate-tree structure and node budget against expected throughput, explicitly accounting for verification latency. These are research proposals with evaluated model/task boundaries, not universal engine defaults.
+
+For an independent worked example, a candidate that commits six tokens in a 12-millisecond draft/verify round yields 500 committed tokens per second. A wider candidate that commits eight in 20 milliseconds yields 400. Acceptance length increased while throughput fell. At larger serving batches, extra draft or verification work may also displace other requests. Measure committed tokens and SLO goodput, including rollback and scheduling, rather than acceptance alone. Exact target-distribution preservation still requires the correct proposal and verification procedure; it cannot be inferred from a model's use of the word "speculative."
 
 ### KV-centric disaggregation
 
@@ -134,6 +192,14 @@ For the practical reading path, return to **Serving Engines and Cache Backends i
 
 Within each pool, long-context sharding is also phase-specific. Current vLLM documentation distinguishes prefill context parallelism, which partitions prompt queries and either gathers or circulates K/V, from decode context parallelism, which shards historical KV tokens and merges partial attention. Disaggregation adds another axis: the prefill and decode pools may select different TP, PP, PCP, or DCP plans, but a heterogeneous boundary must reshard compatible state during handoff. Part V gives the full ownership ledger.
 
+### A cache is now part of the architecture
+
+The September-inspected [DeepSeek-V4.1-Flash card](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash) describes a causal encoder-decoder whose decoder global KV comes from final encoder states. Its CSA2 scheme shares KV and indexing state across layers; a sliding-window replay mechanism reconstructs recent local state. The card reports 890 bytes per token for global KV using FP4 main-cache storage. This is a component-level figure, not the entire request footprint. It also explicitly names Engram and DSpark, so those mechanisms can be attributed to this checkpoint; the earlier V4 discussion alone cannot establish that attribution.
+
+Using the reported global-KV figure, one million tokens occupy about 890 million bytes, or 0.83 GiB, for that component. Do not count that as the memory required to serve the model: weights, local/reconstructed state, vision processing, workspace, and concurrent requests remain. Similarly, a reusable global cache is not necessarily a zero-compute prefix hit if local state must be replayed.
+
+A cache-hit result should therefore report at least bytes reused, bytes transferred, state reconstructed, and resumed computation. A disaggregated handoff must carry the architecture's state schema, not only a list of ordinary per-layer K/V tensors. Mixing model revisions, quantization scales, compression layouts, or recurrent snapshots can produce plausible but incorrect continuations. Validate cold execution against cache reuse, offload/reload, interruption, and branch rollback at the intended numerical tolerance.
+
 ### Long-context memory is becoming hierarchical
 
 Recent work explores two complementary ways to reduce long-context pressure. [RocketKV, version 1](https://arxiv.org/abs/2502.14051v1), combines coarse eviction with fine-grained sparse attention and reports up to 3 times end-to-end decode speedup and up to 31 percent peak-memory reduction on H100 against a full-KV-cache baseline, with negligible loss on its evaluated tasks. These numbers belong to the February 2025 version; later revisions report a different hardware evaluation. [SparseServe](https://arxiv.org/abs/2509.24626v1) places unselected KV state in host memory, controls batch size from the active working set, and segments prefill by layer; it reports up to a 9.26-fold reduction in mean time to first token and up to 3.14 times higher generation throughput than its evaluated baselines. These maxima need not occur in the same configuration.
@@ -146,10 +212,12 @@ Eviction, quantization, sparse selection, and offload change the model's effecti
 
 ### Design Exercises
 
-1. Build an end-to-end benchmark that could reject a FlashAttention-3 deployment despite a faster kernel.
+1. Build an end-to-end benchmark that could reject a FlashAttention-4 deployment despite a faster kernel.
 2. Derive the break-even condition for moving KV between prefill and decode workers.
 3. How would admission control change when host memory is a KV backing tier?
 4. Compare KV eviction, sparse attention, quantization, and offload as long-context policies.
+5. A cache reports 890 bytes per token. What must be established before using it for fleet admission?
+6. Why might a speculative tree with a longer accepted prefix reduce throughput?
 
 ### Worked Solutions
 
@@ -157,6 +225,9 @@ Eviction, quantization, sparse selection, and offload change the model's effecti
 2. Disaggregation wins when saved queueing and improved phase utilization exceed transfer, synchronization, retry, and additional network-tail cost while KV fits within the destination's admission reserve.
 3. Admit from predicted active working set and transfer bandwidth, not nominal host capacity. Reserve headroom, bound concurrent promotions, detect thrashing, and reject or degrade before latency collapses.
 4. Eviction removes state and risks quality; sparse attention retains or tiers state but pays selection cost; quantization reduces bytes with numerical risk; offload preserves values but adds transfer latency. Hybrids should be evaluated against a full-attention quality and latency baseline.
+5. Establish exactly which state the figure includes, then add weights, local or recurrent state, replay workspace, scales, temporary buffers, concurrency, and reserve. Measure cache-hit reconstruction work and transfer tails rather than treating a component footprint as total service memory.
+6. More candidate nodes can increase verification, draft, and rollback costs faster than useful committed tokens. Compare committed tokens per complete round and fleet goodput under concurrency, not accepted length alone.
+
 
 ## Multimodal Representations: Images, Video, and Speech
 
@@ -200,6 +271,16 @@ A cascaded assistant uses speech recognition, a text model, then text-to-speech.
 
 The April 2026 [Qwen3.5-Omni report](https://arxiv.org/abs/2604.15804) describes hybrid-attention MoE components and adaptive text/speech alignment, addressing differing production rates between text and speech tokens. The underlying problem is general: if text outruns audio, buffering grows; if audio commits too early, later reasoning cannot retract spoken words cleanly. The book does not adopt the report's broad benchmark leadership claims as a universal ranking.
 
+### The September frontier has multiple interaction contracts
+
+The [Gemini 3.8 Audio card](https://deepmind.google/models/model-cards/gemini-3-8-audio/), listed as updated September 23 in the publisher's index, distinguishes Live and Live Extended Thinking from Flash TTS and Flash-Lite TTS. The Live variants accept audio, images, video, and text and return audio/text; the TTS variants take text and return audio. These are not interchangeable endpoints. The card also acknowledges hallucinations and occasional slowness or timeouts. A stronger reasoning mode must be evaluated against the interaction's silence and interruption budgets.
+
+[GPT-Live 1](https://developers.openai.com/api/docs/models/gpt-live-1) documents full-duplex speech and delegation to a backend agent. Its own model card lists audio/text, not image/video input. The [delegation guide](https://developers.openai.com/api/docs/guides/live-delegation) separates managed Responses delegation from application-owned client delegation: the latter owns the context and decides which backend results to return. Thus a multimodal backend does not make the live voice model itself a vision model, and finishing a backend request does not establish that its answer was spoken.
+
+[Gemini Omni Flash's August card](https://deepmind.google/models/model-cards/gemini-omni-flash/) describes a different boundary: generating and editing video with audio from multimodal input. It notes remaining problems with edit consistency, complex motion, and accurate text rendering. Understanding a video, generating one, and maintaining a real-time conversation require different evaluations. Treat media-generation quality as an adjacent system concern; it cannot be reduced to text perplexity.
+
+For a live assistant, model the conversation and the delegated task as two concurrent state machines. A correction can invalidate a pending task while audio continues. Attach a task generation number to each delegated result, check it before committing an action or speaking an answer, and record the last audio actually played. This is an application design principle, not a claim that any cited service supplies transactional cancellation automatically.
+
 ### Budget and evaluate the entire interaction
 
 Time to first audio includes input buffering, encoder work, decision latency, codec generation, waveform decoding, and playback buffering. An illustrative budget assigns 80 milliseconds to input buffering, 60 to encoding, 140 to the first response decision, 40 to codec generation plus waveform decoding, and 80 to playback buffering. These five sequential stages total 400 milliseconds; overlap may reduce the total, while queueing can enlarge it. A first text token is not a first audible response.
@@ -215,6 +296,8 @@ Evaluate recognition by language, accent, noise, and domain vocabulary; groundin
 3. **Why is a contrastive model not automatically a generative assistant?** Matching representations and generating conditional responses use different objectives and output mechanisms.
 4. **Why can a correct video summary miss an important action?** Sampling or compression can omit a brief event; evaluate coverage and temporal localization, not only summary fluency.
 5. **What counts as completed speech output?** Audio actually delivered under the interaction contract, with synchronized cancellation and tool state—not merely predicted text or queued codec tokens.
+6. **Can a delegated task finish after the spoken request has changed?** Yes. Track task generations and reject stale results before speaking or acting; cancellation of audio and cancellation of external work are separate operations.
+7. **Does a multimodal backend make GPT-Live a native video model?** No. Record the modalities supported by each component and the context actually transmitted across delegation.
 
 ## Diffusion and Block-Parallel Language Generation
 
@@ -253,12 +336,33 @@ A causal prefix cache is valid because later output cannot alter its representat
 
 A diffusion **draft** inside speculative decoding is a different system from a diffusion **target** model. In the former, an autoregressive target can still define the output distribution if the proposal and verification procedure is valid; Part III discusses DFlash in that role. In the latter, the denoising model and generation schedule define the output behavior. There is no general promise of equality to an unrelated autoregressive model.
 
+### From a denoising idea to a serving implementation
+
+[DiffusionGemma's July 31 technical report](https://arxiv.org/abs/2608.00146v1) describes an experimental Gemma 4 adaptation with 256-token blocks, supervised denoising, reinforcement learning, and sampler distillation. It reports roughly twenty tokens per forward pass and about 1,500 output tokens per second on one H100 across its evaluation suite. These are source-reported results, not measurements reproduced for this book.
+
+Unlike the masked example above, DiffusionGemma starts with random tokens, re-noises uncertain positions, and uses previous predicted distributions as self-conditioning. Entropy helps control refinement. Its [method and limitations](https://arxiv.org/html/2608.00146v1) also report lower absolute capability than the autoregressive initialization, occasional repetition, and a throughput crossover favoring autoregressive execution at higher concurrency. A crossover measured in that setup is not a universal user-count threshold.
+
+The [vLLM implementation account, June 10](https://vllm-project.github.io/2026/06/10/diffusion-gemma), exposes an important serving detail. Requests can occupy different denoising stages within one batch. A mutable canvas uses bidirectional attention, while accepting a completed canvas requires a causal pass to populate the reusable prefix cache. The implementation therefore uses per-request attention causality rather than one global causal flag for the entire batch. The model's architecture and scheduler must agree about which state is final.
+
+This changes the benchmark contract. Record time to the first committed readable block, total completion time, useful output tokens, denoiser passes, acceptance passes, and memory at the actual concurrent load. Count canceled or revised work. A low-latency single request and a high-throughput batch can prefer different block sizes or even different model families. Include an autoregressive baseline with a tuned speculative path, not only naive token-by-token execution.
+
+A useful toy calculation is a 32-token block refined in four 10-millisecond passes followed by a 4-millisecond acceptance pass. Its model-side rate is about 727 tokens per second, but the first committed block arrives no earlier than 44 milliseconds after the required prefix is ready. Reporting only 800 tokens per second from the four refinement passes omits necessary work. These numbers are illustrative, not measurements of DiffusionGemma.
+
+### Sequence editing and commercial diffusion
+
+The [LLaDA2.2-flash card](https://huggingface.co/inclusionAI/LLaDA2.2-flash), inspected September 23, introduces `DELETE` and `INSERT` controls, block-level MoE routing, and agentic reinforcement learning. This extends refinement beyond replacing tokens at fixed positions: deletion and insertion change sequence structure. Position indices, termination, visible streaming, and cache invalidation must follow the editing method. The card provides a Transformers example but says SGLang deployment support is coming soon; model availability does not establish readiness of every suggested engine.
+
+[Mercury 2.5](https://www.inceptionlabs.ai/blog/introducing-mercury-2-5), announced September 8, supplies a commercial contrast: Inception documents an available diffusion service with configurable reasoning, parallel tool calls, and schema-aligned JSON. Its production and performance claims are vendor evidence, not a matched benchmark against the open implementations above. Test structured-output validity, correct tool arguments, committed-output latency, and concurrent throughput under the same application contract before selecting a generation family.
+
 ### Exercises and worked answers
 
 1. **Does half as many model calls mean twice the speed?** No. Each call may process more positions and move more state; measure end-to-end time at matched quality and batch size.
 2. **Why train across corruption levels?** Inference encounters different amounts of known context as generation proceeds; training only at one mask rate can mismatch that sequence.
 3. **When may an earlier block be cached?** When its representations cannot depend on mutable later positions under the actual attention mask and model computation.
 4. **Is masked denoising exact speculative sampling?** No. It can supply proposals, but a target-preserving verifier needs the correct proposal semantics and acceptance/correction logic.
+5. **Why does an accepted diffusion block need a separate cache decision?** Mutable bidirectional representations are not automatically valid as causal prefix KV. Follow the method's acceptance/cache-population pass and include its work in latency.
+6. **What could reject a fast single-request diffusion deployment?** Worse task quality, slow first committed output, poor batching under mixed refinement stages, excessive workspace, or expensive cancellation can all violate the service contract.
+7. **Do all discrete diffusion models repeatedly reveal masked tokens?** No. Masked denoising, random-token corruption with self-conditioning, and length-changing sequence editing have different transition rules. Use the target method's sampler, termination, and cache dependencies.
 
 ## Multimodal and Tool-Using Systems
 
@@ -286,6 +390,22 @@ A production agent contains more than a language model. It has a tool registry, 
 
 Evaluate task success together with invalid calls, unnecessary calls, side effects, recovery after tool errors, budget use, latency, and security-policy violations. A benchmark that scores only the final answer can reward unsafe hidden trajectories.
 
+### Long-running agents need durable, testable state
+
+Current model releases put more weight on completing extended workflows, but a longer context window is not a recovery protocol. Persist the objective, current user constraints, tool-call IDs, authoritative resource versions, execution receipts, pending work, and budgets outside the model. After a restart, reconcile actual external state before replaying a write. A model's recollection that an action succeeded is weaker evidence than the service's receipt.
+
+Preserved reasoning history adds another compatibility boundary. The [Kimi K3 usage card](https://huggingface.co/moonshotai/Kimi-K3) requires complete returned assistant messages, including reasoning content and tool calls, to be passed back for multi-turn use. A generic adapter that strips everything except visible text can silently change the supported interaction. Follow the model's contract while applying the application's retention and access policies; raw reasoning history is not a substitute for a compact, authoritative task ledger.
+
+Persistent memory must retain provenance and user scope. A fact extracted from an untrusted page cannot become a higher-priority instruction merely because it was saved in a memory store or summarized. Test revocation, stale facts, contradictory updates, deleted records, and a malicious observation that attempts to survive across sessions. A successful memory retrieval test says little about whether the retrieved material may authorize a side effect.
+
+### Evaluate the model together with its harness
+
+[Terminal-Bench 4.0](https://www.tbench.ai/news/terminal-bench-4-0), released in August 2026, recalibrates time/CPU/memory resources, fixes tasks, and removes saturated tasks. Its authors describe an eight-hour task timeout and reduced infrastructure-induced measurement noise. Consequently, a score on 4.0 is not a direct continuation of a 2.1 or 3.0 score, and that evaluation budget is not a product latency guarantee. The published benchmark tracks an agent as well as a model.
+
+Record the task dataset revision, harness, system prompt, tool versions, sandbox resources, network access, retries, model effort, and timeout. Hold those fixed when asking whether a model changed; deliberately vary them when asking which complete system works best. Use task-level paired outcomes and uncertainty intervals. Count invalid or unauthorized actions separately from ordinary task failure, and keep verifiers outside the agent's writable environment. A final correct artifact should not erase an unsafe intermediate action.
+
+An independent reliability example illustrates the horizon problem. If twenty required stages each succeed with probability 0.98 and failures are independent with no recovery, complete-task success is about 0.668. Real errors are often correlated, so this is an explanatory calculation rather than a forecast. Checkpointing, verification, and targeted recovery change the result; simply selecting a model with a slightly higher short-task score does not measure those mechanisms.
+
 ### Prompt injection is a control-flow problem
 
 [AgentDojo](https://arxiv.org/abs/2406.13352) introduced 97 realistic tasks and 629 security test cases for agents operating over untrusted tool data. These counts describe the published benchmark, not every future repository version. Its evaluation found that agents could fail ordinary tasks even without attacks and that then-current attacks and defenses had uneven coverage. [ChatInject](https://arxiv.org/abs/2509.22830), published at ICLR 2026, reports that chat-template and multi-turn payloads substantially increased attack success over traditional prompt injection on AgentDojo and InjecAgent, including against prompt-based defenses.
@@ -302,6 +422,8 @@ The engineering conclusion is stronger than "improve the system prompt." Natural
 
 [Information-flow-control research](https://arxiv.org/abs/2505.23643) explores planners that track integrity and confidentiality labels and enforce policies independently of the model's textual judgment. The broad lesson is durable even while implementations evolve: authorization belongs in code that can deny an action deterministically.
 
+Deterministic enforcement is only as complete as the boundary it mediates. Sensitive tools must pass through protected enforcement code; labels must survive summarization, saved memory, and delegation; and side channels and tool side effects must be included in the threat model. Enforcing a specified policy does not prove that the policy captures every prohibited outcome. The June 2026 preprint [Adaptive Evaluation of Out-of-Band Defenses, version 1](https://arxiv.org/abs/2606.26479v1), reports a limited Progent reproduction and explicitly declines to establish general adaptive robustness. Test attackers that know the defense and can adapt attempts, while measuring benign task utility as well as unauthorized actions. Passing a fixed injection suite is useful regression evidence, not a security proof.
+
 :::diagram agent_trust_boundary|Tool-using systems need a deterministic policy boundary between model proposals and side effects.
 
 :::callout decision|Models propose; policy authorizes
@@ -314,6 +436,8 @@ Treat every model-generated tool call as untrusted input. Validate identity, arg
 2. Design idempotency and approval semantics for an agent that can issue refunds.
 3. Construct a prompt-injection test that distinguishes task failure from security failure.
 4. What information must an agent trace preserve for replay?
+5. A benchmark score rose after both a model and the sandbox changed. What can you conclude?
+6. A refund succeeded, its response was lost, and the user changed the amount before the agent restarted. How should recovery work?
 
 ### Worked Solutions
 
@@ -321,6 +445,9 @@ Treat every model-generated tool call as untrusted input. Validate identity, arg
 2. Use a user-scoped capability, deterministic refund limits, a stable operation key, read-before-write state checks, preview plus confirmation above a threshold, transactional execution, and a receipt verified against the ledger.
 3. Record benign task success first, then add untrusted content that requests a policy violation. Score utility and security separately: refusal of the entire task is not a successful defense, while task completion with an unauthorized side effect is a security failure.
 4. Preserve model and prompt versions, user authority, tool schemas and versions, inputs and outputs with trust labels, RNG and sampling policy where relevant, policy decisions, retries, approvals, side effects, timestamps, and final verification.
+5. Only that the measured system changed. Rerun paired tasks with fixed harness and resources to isolate the model, or report the full-system gain with all changes disclosed. Scores from different Terminal-Bench versions are not one continuous scale.
+6. Reconcile the operation ID, receipt, and current resource version with the external service before retrying. Do not replay the completed refund. Treat a changed amount as a new request requiring authority for its exact arguments; an old authorization or idempotency key must not silently authorize a different write.
+
 
 ## From Research Result to Production Decision
 
@@ -345,9 +472,23 @@ For every candidate technique, write a result card:
 
 Then map the claimed mechanism to a local bottleneck. A faster attention kernel may reduce queueing if it raises capacity at the saturated stage; it will have little effect when that queue is waiting on another resource. KV offload helps only to the extent that reclaimable KV capacity matters after weights and other state are reserved. Reasoning-time sampling depends on whether the reducer can recognize better candidates. Trace the causal path from the proposed change to the measured outcome.
 
-### Reproduce in layers
+### Compare verified outcomes, not headline scores
 
-Use an evidence ladder:
+Separate four claims: a provider announced a capability; an endpoint or checkpoint is accessible; an evaluation reports a gain; and the gain reproduces under your workload. These claims need different evidence. Do not fill unpublished training details with architectural guesses, or describe a restricted-access model as an ordinary public deployment option.
+
+A useful comparison includes a dated hosted candidate, a feasible open-weight candidate, and the incumbent. For each, record reasoning budget, cached and uncached input, output, tool/verifier work, retries, elapsed time, and whether the task passed independent checks. Report cost per verified success alongside success rate and tail latency. This prevents a cheap but frequently failing route from appearing preferable merely because its tokens cost less.
+
+For an illustrative batch of one hundred tasks, route A costs 20 units and completes eighty verified tasks: 0.25 units per success. Route B costs 30 units and completes ninety: about 0.33 per success. A is cheaper on that ratio, but B may be the only acceptable route if the required success floor is 85 percent. The result still needs workload slices and uncertainty; averages cannot decide which failures are tolerable. A fallback route requires a detector of failure, whose own accuracy and cost must be measured.
+
+Public benchmarks also become development material. [Terminal-Bench 4.0](https://www.tbench.ai/news/terminal-bench-4-0) removes tasks with public solutions and requires fresh trials after changes to tasks or agent resources. Keep development tasks separate from held-out adoption tests; record known benchmark exposure and public solutions; and do not tune prompts or routing on the final comparison set. Preserve failures, timeouts, and all planned repetitions in the denominator. Use paired task-level uncertainty and workload slices rather than selecting a favorable run. An observed ninety-percent success rate on one hundred tasks is not a guarantee that future success exceeds eighty-five percent.
+
+### What this snapshot does not establish
+
+The model map is selective. It does not exhaust every model family, rank proprietary systems under one common harness, or reproduce training recipes whose data and weights are unavailable. The newly cited attention, draft, and diffusion results remain source-reported until run on matched hardware. Robotics, general world models, and scientific-domain foundation models are adjacent fields, not comprehensively surveyed here.
+
+Maintain a source ledger containing the claim, publication/version date, inspection date, evidence type, and local adoption test. A moving model card should be archived or pinned for an actual experiment. When revising the chapter, update the failed or missing evidence as well as the successful result. A new publication date alone does not make an old comparison current.
+
+### Reproduce in layers
 
 1. reproduce the paper's narrow result or official reference configuration;
 2. compare against a tuned current baseline;
@@ -365,6 +506,8 @@ At every layer, record negative results. A technique that loses under an importa
 2. Why is a tuned baseline an ethical requirement as well as a technical one?
 3. Define stop conditions for a production reproduction effort.
 4. How should an organization maintain a dated state-of-the-art chapter?
+5. A cheaper model has lower cost per success but fails the product quality floor. Should it replace the incumbent?
+6. Two model scores use different Terminal-Bench versions, harnesses, resource budgets, and retry policies. How would you compare them?
 
 ### Worked Solutions
 
@@ -372,10 +515,12 @@ At every layer, record negative results. A technique that loses under an importa
 2. Weak baselines exaggerate novelty and can cause unnecessary cost or risk. A tuned baseline gives decision-makers a fair estimate of incremental value and avoids misrepresenting engineering work as research advantage.
 3. Stop when the local bottleneck is absent, quality fails a hard floor, integration cost exceeds plausible value, the baseline closes the gap, or an unsupported production shape has no safe fallback.
 4. Assign an owner and snapshot date, prefer primary sources, preserve old claims with version history, distinguish peer-reviewed from preliminary work, and schedule review when hardware, model architecture, or serving workload changes materially.
+5. No. Hard quality and policy constraints precede cost optimization. A selective route may be useful only if a tested detector and fallback satisfy those constraints after their latency and cost are included.
+6. The scores do not isolate a model improvement. Rerun both on the same held-out task revision, harness, sandbox resources, retry policy, and effort budget; retain every planned trial and compare paired task outcomes with uncertainty. If comparing complete systems instead, disclose all differences and report quality, cost, latency, and policy violations together.
 
-### Selected Primary Sources for the 2024-2026 Snapshot
+### Selected Primary Sources and Version Boundaries
 
-Additional architecture, multimodal, and generation references appear beside their mechanisms above. Version-specific result links identify the experiment being quoted; a newer revision may change hardware, baselines, or conclusions.
+The September 23 additions cite current model cards, FlashAttention-4 and its FP4 follow-up, DFlare, CaDDTree, DiffusionGemma and its serving implementation, live multimodal systems, and Terminal-Bench 4.0 beside the relevant mechanisms. The following earlier sources remain useful foundations, not a list of the latest releases. Version-specific result links identify the experiment being quoted; a newer revision may change hardware, baselines, or conclusions.
 
 - [DeepSeek-V3 Technical Report](https://arxiv.org/abs/2412.19437) - sparse activation, load balancing, multi-token prediction, training scale, and reported training cost.
 - [Native Sparse Attention](https://arxiv.org/abs/2502.11089) and [Kimi Linear](https://arxiv.org/abs/2510.26692) - hardware-aware sparse selection and hybrid gated linear attention.
@@ -390,7 +535,7 @@ Additional architecture, multimodal, and generation references appear beside the
 - [AgentDojo](https://arxiv.org/abs/2406.13352) - dynamic evaluation of indirect prompt injection in tool-using agents.
 - [ChatInject](https://openreview.net/forum?id=WVhgFSKniL) - ICLR 2026 evaluation of chat-template and multi-turn prompt injection attacks.
 - [Securing AI Agents with Information-Flow Control](https://arxiv.org/abs/2505.23643) - 2025 work introducing the Fides planner and deterministic confidentiality/integrity policies.
-- [Model Context Protocol, 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25) and [A2A 1.0](https://github.com/a2aproject/A2A/blob/main/docs/specification.md) - current protocol contracts for host-tool and agent-to-agent interoperability; neither substitutes for application authorization.
+- [Model Context Protocol, 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25) and [A2A 1.0](https://github.com/a2aproject/A2A/blob/main/docs/specification.md) - protocol references inspected for the September 13 baseline, for host-tool and agent-to-agent interoperability; neither substitutes for application authorization.
 
 ### From an experiment to a commitment
 

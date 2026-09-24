@@ -9,10 +9,36 @@ stated in the README and PDF imprint; no independent human certification is
 claimed. This policy supersedes the draft-only restrictions in historical logs.
 
 Book text and original figures use CC BY 4.0; original code uses MIT. The research
-cutoff remains September 13, 2026. Preparing a public edition does not imply a
-new survey of later research or new accelerator benchmark evidence.
+cutoff is September 23, 2026 for the revised Part VII and September 13 for
+other parts unless explicitly dated. This update adds no locally reproduced
+accelerator benchmark evidence.
 
-## Publication status
+## September 23 Part VII revision
+
+Versioned release: [public-2026-09-23](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09-23).
+Read [Part VII online](https://ykirpichev.github.io/llm-book/part-07.html) and the
+[chapter-by-chapter gap, source, and review record](part7-update-2026-09-23.md).
+The original September public release and its assets are preserved.
+
+| Check | Result and scope |
+| --- | --- |
+| Reviewer A, Chapters 54-55 | Approved after correcting post-training coverage, account scope, exercises, and a second-pass quantization precision finding. No unresolved substantive findings. |
+| Reviewer B, Chapters 56-57 | Approved after distinguishing diffusion mechanisms, concrete limitations, current commercial/open comparisons, and new exercises. No unresolved substantive findings. |
+| Reviewer C, introduction and Chapters 58-59 | Approved after adaptive-security qualifications, contamination controls, and recovery/comparison exercises. No unresolved substantive findings. |
+| CPU/reference/document suite | All 118 tests pass, including online-reader and source-package checks. |
+| Final PDF | 469 pages, 80 outline entries, 310 external link annotations. Geometry, navigation, text, metadata and sparse-page checks pass. |
+| Rendered layout | Front matter pages 1-8, all Part VII pages 395-426, and transition page 427 rendered at 130 dpi and inspected using contact sheets plus a full-size table check. Final exercise-numbering and heading-pagination fixes were rerendered; remaining inspected pages were pixel-identical to the previous render. |
+| Website | 70 chapters, nine parts, 80 reading pages and 48 figures. Automated internal-link/anchor/search coverage passes. Desktop and 390-pixel browser checks and a search for new material pass. |
+| Source links | 245 manuscript URLs checked: 241 successful responses, zero confirmed missing targets, four unchanged older publisher access blocks. Reachability is not claim verification. |
+
+The reviewer verdicts concern manuscript content and primary-source support,
+not independent model execution. The publication pipeline builds the exact
+pushed commit; consult [Book CI](https://github.com/ykirpichev/llm-book/actions/workflows/book.yml)
+and [Pages deployment](https://github.com/ykirpichev/llm-book/actions/workflows/pages.yml)
+for hosted results. Release asset hashes are in the attached `SHA256SUMS`;
+the source archive contains its own per-file manifest.
+
+## Original public-edition publication record
 
 Publication repository: [ykirpichev/llm-book](https://github.com/ykirpichev/llm-book).
 The [Public Edition - September 2026](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09)
@@ -37,7 +63,7 @@ remote branches and are excluded from the push. See [publishing.md](publishing.m
 The two existing release PDFs (348 and 402 pages), issue/PR descriptions,
 issue comments, and PR review comments also passed the bounded text scan.
 
-## Evidence
+## Original public-edition evidence
 
 The previous manuscript checkpoint had 70 chapters, a 460-page PDF, and 108
 passing CPU/reference/document tests. Its [completed AI review campaign](accelerator-team-review-2026-09-13.md)
