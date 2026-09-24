@@ -22,7 +22,7 @@ from build_book import diagram, metadata_from_text
 ROOT = Path(__file__).resolve().parents[1]
 SITE_URL = 'https://ykirpichev.github.io/llm-book/'
 REPO = 'https://github.com/ykirpichev/llm-book'
-PDF = REPO + '/releases/download/public-2026-09-24-part7/engineering-large-language-models.pdf'
+PDF = REPO + '/releases/download/public-2026-09-24-experiments/engineering-large-language-models.pdf'
 TITLE = 'Engineering Large Language Models'
 
 

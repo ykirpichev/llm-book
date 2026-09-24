@@ -2,11 +2,11 @@
 
 ## [Read the book online — no download needed](https://ykirpichev.github.io/llm-book/)
 
-**[Download PDF](https://github.com/ykirpichev/llm-book/releases/download/public-2026-09-24-part7/engineering-large-language-models.pdf)** · **[Download source](https://github.com/ykirpichev/llm-book/releases/download/public-2026-09-24-part7/engineering-large-language-models-source.zip)** · **[Release notes](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09-24-part7)**
+**[Download PDF](https://github.com/ykirpichev/llm-book/releases/download/public-2026-09-24-experiments/engineering-large-language-models.pdf)** · **[Download source](https://github.com/ykirpichev/llm-book/releases/download/public-2026-09-24-experiments/engineering-large-language-models-source.zip)** · **[Release notes](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09-24-experiments)**
 
 A free technical book by **Yury Kirpichev** about building and operating LLM systems: foundations, training and distillation, inference, CUDA and other accelerators, distributed systems, production design, and technical leadership.
 
-**Public Edition - September 2026.** Seventy chapters across nine parts, with worked examples, original diagrams, runnable CPU references, and design exercises. Part VI revised through **September 24, 2026**, and Part VII with worked additions on **September 24, 2026** (frontier snapshot: September 23); other parts retain their September 13 research cutoff unless explicitly dated. [What changed in Part VI](docs/part6-update-2026-09-24.md). [Part VII worked additions](docs/part7-followup-2026-09-24.md). [Earlier Part VII revision](docs/part7-update-2026-09-23.md).
+**Public Edition - September 2026.** Seventy chapters across nine parts, with worked examples, original diagrams, runnable CPU references, and design exercises. Part VI revised through **September 24, 2026**, and Part VII with worked additions on **September 24, 2026** (frontier snapshot: September 23); other parts retain their September 13 research cutoff unless explicitly dated. [What changed in Part VI](docs/part6-update-2026-09-24.md). [Part VII runnable experiments](docs/part7-experiments-2026-09-24.md). [Earlier worked additions](docs/part7-followup-2026-09-24.md). [Earlier Part VII revision](docs/part7-update-2026-09-23.md).
 
 ## Read the book
 
@@ -14,7 +14,7 @@ The [online reader](https://ykirpichev.github.io/llm-book/) includes chapter nav
 
 Start with the [introduction and learning path](https://ykirpichev.github.io/llm-book/introduction.html), or choose a part below. Read Parts I-III in order for the model-to-service path. Parts IV-V cover accelerators and clusters; Part VI develops retrieval, agents, and production design. The [capstone and field reference](https://ykirpichev.github.io/llm-book/part-09.html) connect the examples into a complete learning path.
 
-The **[public edition release](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09-24-part7)** includes the PDF, editable source, and [SHA-256 checksums](https://github.com/ykirpichev/llm-book/releases/download/public-2026-09-24-part7/SHA256SUMS). No account or payment is required to read or download the book. Build it locally with `make book`, or create all release assets with `make release`. See the [release evidence](docs/release-readiness.md) and [publication instructions](docs/publishing.md). Earlier draft releases are historical checkpoints with their original notices.
+The **[public edition release](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09-24-experiments)** includes the PDF, editable source, and [SHA-256 checksums](https://github.com/ykirpichev/llm-book/releases/download/public-2026-09-24-experiments/SHA256SUMS). No account or payment is required to read or download the book. Build it locally with `make book`, or create all release assets with `make release`. See the [release evidence](docs/release-readiness.md) and [publication instructions](docs/publishing.md). Earlier draft releases are historical checkpoints with their original notices.
 
 | Part | Read online |
 | --- | --- |

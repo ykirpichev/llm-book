@@ -14,6 +14,28 @@ September 24, with its frontier model map still dated September 23. Other parts
 retain September 13 unless explicitly dated. This update adds no locally reproduced
 accelerator benchmark evidence.
 
+## September 24 Part VII runnable experiments
+
+Versioned release: [public-2026-09-24-experiments](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09-24-experiments).
+This focused revision prioritizes Chapters 55 and 59. See the
+[experiment and scope record](part7-experiments-2026-09-24.md).
+Earlier releases and their original assets are preserved.
+
+| Check | Result and scope |
+| --- | --- |
+| Agent review | Mechanisms reviewer independently approved both modules, tests and chapter additions after clarifying rejection-counter precedence. Systems reviewer authored the adoption module, then reviewed the serving simulation and both chapter explanations. Both final verdicts have no blocking findings. |
+| CPU/reference/document suite | All 153 tests pass, including 19 new checks for serving event timelines, memory admission, offered-workload accounting, paired evidence, timeouts, failed gates and malformed evaluation records. |
+| Final PDF | 485 pages, 80 outline entries and 329 external link annotations. Structural, navigation, text, geometry and sparse-page checks pass. |
+| Rendered layout | Front matter pages 1-8 and Part VII through its transition, pages 402-443, rendered at 130 dpi. All 50 pages inspected in contact sheets; new serving table and statistical explanation inspected at full size. |
+| Website | 70 chapters, nine parts, 80 reading pages and 49 figures. Reader tests pass. Browser search locates adoption_analysis in Chapter 59; Chapter 55 fits a 390-pixel viewport without document overflow. |
+| Sources | New NIST confidence-interval reference inspected directly. The prior Part VII source audit remains recorded below; this focused revision adds no new model-performance claims. |
+
+The examples use invented inputs and Python's standard library. No GPU model,
+engine throughput, production latency or adversarial robustness is measured.
+The normal-approximation screening rule is explicitly heuristic, and the
+adoption script never recommends full rollout. The release package uses the
+existing allowlist, bounded source/PDF scan and per-file checksum manifest.
+
 ## September 24 Part VII worked additions
 
 Versioned release: [public-2026-09-24-part7](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09-24-part7).
