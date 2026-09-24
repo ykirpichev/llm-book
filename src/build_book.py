@@ -974,7 +974,7 @@ def build_story(files: Sequence[Path], width: float) -> tuple[Meta, list[Flowabl
             STYLES["small"],
         ),
         Paragraph(
-            "Revised September 24, 2026: Part VI updated through that date; Part VII through September 23. Other parts retain the September 13 research cutoff unless explicitly dated.",
+            "Revised September 24, 2026: Part VI updated through that date; Part VII worked examples updated September 24, with its frontier snapshot dated September 23. Other parts retain the September 13 research cutoff unless explicitly dated.",
             STYLES["small"],
         ),
         Paragraph(

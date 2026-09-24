@@ -668,7 +668,31 @@ def compile_lifecycle(f):
              "A supported fallback must exist before a policy can select it.")
 
 
+def residual_routing(f):
+    f.text(18, 374, "AttnRes: select across earlier depths", bold=True, size=9.2)
+    for x, label in [(18, "z0"), (96, "z1"), (174, "z2")]:
+        f.node(x, 316, 58, 38, label, size=9)
+        f.line(x+29, 316, x+29, 293)
+    f.line(47, 293, 330, 293)
+    f.arrow([(330, 293), (330, 316)])
+    f.node(248, 316, 164, 38, "Softmax depth weights\nweighted source aggregate", size=8.2)
+    f.text(18, 273, "One token position; learned query, input-dependent weights.", size=8.3)
+    f.text(18, 258, "Block form uses embedding + completed / partial block sums.", size=8.3)
+    f.line(18, 244, 412, 244)
+    f.text(18, 222, "mHC: transport parallel streams at the current depth", bold=True, size=9.2)
+    f.node(18, 139, 96, 53, "Current streams\nx1, x2, ...", size=8.6)
+    f.node(154, 139, 122, 53, "Constrained mix\nresidual transport", tone="GOLD", size=8.5)
+    f.node(318, 139, 94, 53, "Next streams\nadd layer update", size=8)
+    f.arrow([(114, 166), (154, 166)])
+    f.arrow([(276, 166), (318, 166)])
+    f.node(126, 57, 166, 43, "Read -> transform -> write\nseparate layer-update branch", tone="CORAL", size=8)
+    f.arrow([(66, 139), (66, 78), (126, 78)], "CORAL")
+    f.arrow([(292, 78), (365, 78), (365, 139)], "CORAL")
+    f.footer("Mechanism comparison only; not a benchmark or a token-attention map.")
+
+
 FIGURES = {
+    "residual_routing": (420, "RESIDUAL ROUTING USES DIFFERENT AXES", residual_routing),
     "rmsnorm_fragments": (293, "ROW FRAGMENTS MUST SHARE THE FULL-ROW NORM", rmsnorm_fragments),
     "rmsnorm_port": (304, "RMSNORM: ACTUAL WIDTH AND MASKED LANES", rmsnorm_port),
     "kv_port_placement": (298, "PER-RANK CAPACITY AND TOTAL MEMORY CAN DIVERGE", kv_port_placement),

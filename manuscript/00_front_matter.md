@@ -18,7 +18,7 @@ This book follows those dependencies from model training to an operating service
 
 ### A note on scope
 
-This public edition covers foundations, training, inference, CUDA, distributed systems, production algorithms, agents, multimodal systems, recent research, and technical leadership. Part VI was revised through September 24, 2026, and Part VII through September 23, 2026; other parts retain the September 13 research cutoff, with explicitly dated implementation checks where noted. It explains the central mechanisms in the text; primary-source links supply evidence and further detail rather than replacing the explanation. Links to moving documentation describe the implementation checked at that time, not a promise about later releases.
+This public edition covers foundations, training, inference, CUDA, distributed systems, production algorithms, agents, multimodal systems, recent research, and technical leadership. Part VI was revised through September 24, 2026, and Part VII received worked additions on September 24 (frontier snapshot: September 23); other parts retain the September 13 research cutoff, with explicitly dated implementation checks where noted. It explains the central mechanisms in the text; primary-source links supply evidence and further detail rather than replacing the explanation. Links to moving documentation describe the implementation checked at that time, not a promise about later releases.
 
 The book is not an exhaustive survey of every paper or a guarantee of production readiness. Recent preprints are treated as provisional evidence, and reported results must be revalidated on the reader's models, hardware, workloads, and quality constraints.
 

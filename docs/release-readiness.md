@@ -9,9 +9,33 @@ stated in the README and PDF imprint; no independent human certification is
 claimed. This policy supersedes the draft-only restrictions in historical logs.
 
 Book text and original figures use CC BY 4.0; original code uses MIT. The research
-cutoff is September 24, 2026 for Part VI, September 23 for Part VII, and
-September 13 for other parts unless explicitly dated. This update adds no locally reproduced
+cutoff is September 24, 2026 for Part VI. Part VII has worked additions dated
+September 24, with its frontier model map still dated September 23. Other parts
+retain September 13 unless explicitly dated. This update adds no locally reproduced
 accelerator benchmark evidence.
+
+## September 24 Part VII worked additions
+
+Versioned release: [public-2026-09-24-part7](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09-24-part7).
+Read [Part VII online](https://ykirpichev.github.io/llm-book/part-07.html) and the
+[chapter-by-chapter additions and review record](part7-followup-2026-09-24.md).
+The earlier Part VI release and its original assets are preserved.
+
+| Check | Result and scope |
+| --- | --- |
+| Mechanisms reviewer, Chapters 54 and 57 | Approved after correcting the AttnRes vector-coordinate example. No outstanding content findings. |
+| Systems reviewer, Chapters 55, 56, 58 and 59 | Approved after clarifying paired canary comparisons, validation overhead and timeout accounting. Recovery fixture reviewed with the manuscript. |
+| CPU/reference/document suite | All 134 tests pass. Eight new tests cover durable task recovery, exhausted budgets, stale generations, revoked authorization, immutable intent, conflicting receipts and missing or incompatible state. |
+| Final PDF | 483 pages, 80 outline entries and 328 external link annotations. Structural, navigation, text, geometry and sparse-page checks pass. |
+| Rendered layout | Front matter pages 1-8 and Part VII through its transition, pages 402-441, rendered at 130 dpi. All 48 pages inspected in contact sheets; the new residual-routing diagram and concurrent timeline also inspected at full size. |
+| Website | 70 chapters, nine parts, 80 reading pages and 49 figures. Internal-link/anchor/search tests pass. Browser search finds the new recovery material in Chapter 58; Chapter 54 fits a 390-pixel viewport without document overflow. |
+| Source links | All 64 distinct Part VII source URLs reachable, with zero missing or unverified targets. Reachability is separate from the reviewers' claim checks. |
+
+The new numbers are explicitly hypothetical worked examples, not model or
+accelerator benchmark results. The recovery fixture assumes one active runner
+and local SQLite effects; it does not establish remote exactly-once execution.
+The release source archive uses the bounded allowlist and per-file checksum
+manifest. Consult the release assets and GitHub Actions for hosted build results.
 
 ## September 24 Part VI revision
 

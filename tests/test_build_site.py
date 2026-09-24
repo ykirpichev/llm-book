@@ -42,7 +42,7 @@ class SiteTests(unittest.TestCase):
     def tearDownClass(cls): cls.temp.cleanup()
 
     def test_all_chapters_and_figures_are_published_and_searchable(self):
-        self.assertEqual(self.stats, {'chapters': 70, 'parts': 9, 'figures': 48, 'reading_pages': 80})
+        self.assertEqual(self.stats, {'chapters': 70, 'parts': 9, 'figures': 49, 'reading_pages': 80})
         index = json.loads((self.output/'search-index.json').read_text())
         self.assertEqual({p.filename for p in self.pages}, {p['url'] for p in index})
         self.assertTrue(all(p['text'].strip() for p in index))

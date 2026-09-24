@@ -22,7 +22,7 @@ from build_book import diagram, metadata_from_text
 ROOT = Path(__file__).resolve().parents[1]
 SITE_URL = 'https://ykirpichev.github.io/llm-book/'
 REPO = 'https://github.com/ykirpichev/llm-book'
-PDF = REPO + '/releases/download/public-2026-09-24/engineering-large-language-models.pdf'
+PDF = REPO + '/releases/download/public-2026-09-24-part7/engineering-large-language-models.pdf'
 TITLE = 'Engineering Large Language Models'
 
 
@@ -262,7 +262,7 @@ def build(output: Path, manuscript: Path = ROOT / 'manuscript') -> dict:
     for part in parts:
         roman, title = part.title.removeprefix('Part ').split(' - ', 1)
         hero += f'<section class="part-card"><header><span class="part-number">{escape(roman)}</span><div><h3><a href="{part.filename}">{escape(title)}</a></h3><a class="part-link" href="{part.filename}">Read the introduction →</a></div></header>{chapter_links(pages,part.part)}</section>'
-    hero += f'''</section><aside class="edition-note"><h2>About this edition</h2><p>Part VI revised September 24, 2026; Part VII September 23. Other parts retain their September 13 research cutoff unless explicitly dated. Prepared with AI-assisted writing, technical review, and editing. No independent human technical review or professional copy editing is claimed. CPU references are tested; accelerator execution and performance remain unverified here.</p><a href="{REPO}/blob/main/docs/release-readiness.md">Read the validation record ↗</a></aside>'''
+    hero += f'''</section><aside class="edition-note"><h2>About this edition</h2><p>Part VI revised September 24, 2026; Part VII worked examples September 24 (frontier snapshot September 23). Other parts retain their September 13 research cutoff unless explicitly dated. Prepared with AI-assisted writing, technical review, and editing. No independent human technical review or professional copy editing is claimed. CPU references are tested; accelerator execution and performance remain unverified here.</p><a href="{REPO}/blob/main/docs/release-readiness.md">Read the validation record ↗</a></aside>'''
     (output / 'index.html').write_text(shell(TITLE, 'index.html', hero, pages))
     search = '<header class="chapter-header"><p class="eyebrow">FIND AN IDEA</p><h1>Search the book</h1><p id="search-status" role="status">Enter a phrase in the search box above.</p></header><div id="search-results"></div><noscript><p>Search requires JavaScript. You can browse every chapter from the <a href="index.html#contents">table of contents</a>.</p></noscript>'
     (output / 'search.html').write_text(shell('Search', 'search.html', search, pages))

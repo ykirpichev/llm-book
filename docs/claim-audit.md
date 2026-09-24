@@ -1,5 +1,7 @@
 # Evidence audit: working-draft checkpoint
 
+The [September 24 Part VII worked additions](part7-followup-2026-09-24.md) implement the follow-up teaching and recovery recommendations; the frontier-model map remains dated September 23.
+
 The [September 24 Part VI revision](part6-update-2026-09-24.md) updates Chapters 46-53. Its source and validation record supersedes the corresponding current-state assessment below.
 
 The [September 23 Part VII revision](part7-update-2026-09-23.md) supersedes the current-state assessment of Chapters 54-59 below. Earlier claim checks remain historical evidence, not a survey through the new date.

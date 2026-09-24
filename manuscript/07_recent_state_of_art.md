@@ -1,6 +1,6 @@
 # Part VII - Recent State of the Art
 
-This part was substantively updated on September 23, 2026. It connects current model cards, research reports, and implementation evidence to the mechanisms developed throughout the book. It is a dated engineering snapshot, not an exhaustive catalogue or permanent leaderboard. Earlier results are explicitly retained as foundations. Reported speedups and benchmark scores belong to the cited source's hardware, software, model, workload, baseline, and quality threshold; they were not reproduced on accelerators for this book. The other parts retain their September 13 research cutoff unless explicitly dated.
+This part was substantively updated on September 23, 2026, with worked comparisons and recovery examples added on September 24. The frontier-model snapshot below remains dated September 23. It connects current model cards, research reports, and implementation evidence to the mechanisms developed throughout the book. It is a dated engineering snapshot, not an exhaustive catalogue or permanent leaderboard. Earlier results are explicitly retained as foundations. Reported speedups and benchmark scores belong to the cited source's hardware, software, model, workload, baseline, and quality threshold; they were not reproduced on accelerators for this book. Part VI was also revised on September 24; the remaining parts retain their September 13 research cutoff unless explicitly dated.
 
 The durable value of a recent result is usually not its rank. It is the mechanism that changed the resource model: sparse activation, better load balancing, reinforcement learning with verifiable rewards, explicit inference-time compute, asynchronous attention pipelines, disaggregated KV state, hierarchical memory, native-resolution multimodality, or enforceable trust boundaries for tools.
 
@@ -74,6 +74,16 @@ For a hybrid model, estimate persistent state as the sum of attention-layer KV, 
 [Manifold-Constrained Hyper-Connections](https://arxiv.org/abs/2512.24880) studies multiple residual streams and constrained mixing between them. A doubly stochastic mixing matrix has nonnegative entries with every row and column summing to one. The intent is to retain richer routing without unconstrained amplification in the residual transport. This is a training architecture change, not a post-hoc serving flag.
 
 For an independent two-stream example, the matrix `[[0.75,0.25],[0.25,0.75]]` maps scalar streams `[2,10]` to `[4,8]`. Each new stream is a convex combination; the sum remains twelve. By contrast, multiplying both streams by two doubles the sum at every layer. The constrained example illustrates transport stability, not a proof that an entire nonlinear network cannot diverge. Layer transformations, gates, finite-iteration constraint enforcement, and optimizer behavior still matter.
+
+#### Compare depth selection with stream transport
+
+[Attention Residuals, March 2026 v1](https://arxiv.org/abs/2603.15031v1), replaces fixed residual accumulation with learned selection over earlier layer outputs at the same token position. A layer-specific learned pseudo-query scores normalized source representations; a softmax weights the original representations as values. The query is learned, while its weights depend on the input through the keys. Block AttnRes reduces the retained sources to the embedding, completed block sums, and the current partial block sum when present.
+
+:::diagram residual_routing|Original schematic of two different routing axes. AttnRes selects sources across depth for one token. mHC transports a widened set of streams at the current depth and separately reads, transforms, and writes a layer update. Neither drawing is token-to-token attention.
+
+For one coordinate of three vector-valued sources, values `[2,4,10]` and illustrative attention weights `[0.2,0.3,0.5]` produce `0.2*2 + 0.3*4 + 0.5*10 = 6.6`. The full source vectors determine the weights. This is a selected aggregate, not the two-stream transport `[2,10] -> [4,8]` above. The [mHC formulation, January 2026 v2](https://arxiv.org/html/2512.24880v2) keeps readout and writeback mappings separate from its constrained residual transport; finite Sinkhorn iterations approximate the doubly stochastic constraint.
+
+The engineering comparison therefore measures different state: earlier depth outputs or block summaries for AttnRes, versus widened current-depth streams and mixing work for mHC. These are activation and training-architecture costs, not interchangeable reductions in historical token KV. Compare matched training budgets, loss, activation memory and end-to-end execution. The figure does not establish which architecture wins.
 
 [Engram](https://arxiv.org/abs/2601.07372) explores learned conditional memory through n-gram-based lookup as a complement to conditional expert computation. The basic distinction is computation versus lookup: a short token pattern selects stored vectors, while contextual processing determines how useful those vectors are. A lookup table can hold recurring local associations without recomputing them through every dense layer. Hash collisions, table size, placement, and the quality of the contextual gate are engineering concerns.
 
@@ -200,6 +210,27 @@ Using the reported global-KV figure, one million tokens occupy about 890 million
 
 A cache-hit result should therefore report at least bytes reused, bytes transferred, state reconstructed, and resumed computation. A disaggregated handoff must carry the architecture's state schema, not only a list of ordinary per-layer K/V tensors. Mixing model revisions, quantization scales, compression layouts, or recurrent snapshots can produce plausible but incorrect continuations. Validate cold execution against cache reuse, offload/reload, interruption, and branch rollback at the intended numerical tolerance.
 
+### Worked admission ledger: count the complete worker
+
+Consider a hypothetical inference worker with 80 GiB of usable device memory. These are planning numbers, not measurements or the specification of a named checkpoint. All entries below are local to this worker after its chosen sharding; weights include their quantization metadata. Shared fixed allocations appear once, while request allocations scale with concurrent requests.
+
+| Allocation | GiB | Scope and assumption |
+| --- | ---: | --- |
+| Resident weights and scales | 40 | Shared, already placed on this worker |
+| Runtime and communication buffers | 6 | Shared worst-case allocation |
+| Captured graphs and fixed scratch | 4 | Shared; excludes scratch below |
+| Admission reserve | 6 | Held back for fragmentation and uncertainty |
+| Attention KV | 4 | Per request, including reserved output growth |
+| Recurrent and local state | 1 | Per request, hypothetical hybrid layers |
+| Cache metadata and alignment | 0.25 | Per request, separate from raw KV |
+| Replay, draft and transfer scratch | 2.25 | Per request at simultaneous peak |
+
+The raw KV row follows an uncompressed example with 32 attention layers, eight KV heads, head dimension 128, two-byte elements, and a reserved total length of 32,768 tokens: `2 * 32 * 8 * 128 * 32768 * 2 = 4,294,967,296 bytes = 4 GiB`. The leading two counts K and V. It is unrelated to the 890-byte global-cache component reported for the different architecture above.
+
+Fixed allocations plus reserve total 56 GiB. Each request needs at most 7.5 GiB under these assumptions. Three concurrent requests need `56 + 3*7.5 = 78.5 GiB`; four need 86 GiB and must not be admitted. Three leave 1.5 GiB beyond the explicit six-GiB reserve. Counting only raw KV would incorrectly suggest room for six requests. If a request exceeds its reserved output length, admission must obtain more capacity before growth or enforce the declared stop policy.
+
+This is a memory ceiling, not a throughput promise. If every newly admitted request imports 4 GiB and measured usable transfer bandwidth is 20 GiB/s, five such imports per second already consume the entire link budget, before competing traffic. Transfer queues and latency may force a smaller admission rate. In a sharded deployment, repeat the ledger on every worker: free memory on one rank cannot satisfy an allocation on another, and replicated buffers must not be divided by the shard count.
+
 ### Long-context memory is becoming hierarchical
 
 Recent work explores two complementary ways to reduce long-context pressure. [RocketKV, version 1](https://arxiv.org/abs/2502.14051v1), combines coarse eviction with fine-grained sparse attention and reports up to 3 times end-to-end decode speedup and up to 31 percent peak-memory reduction on H100 against a full-KV-cache baseline, with negligible loss on its evaluated tasks. These numbers belong to the February 2025 version; later revisions report a different hardware evaluation. [SparseServe](https://arxiv.org/abs/2509.24626v1) places unselected KV state in host memory, controls batch size from the active working set, and segments prefill by layer; it reports up to a 9.26-fold reduction in mean time to first token and up to 3.14 times higher generation throughput than its evaluated baselines. These maxima need not occur in the same configuration.
@@ -281,6 +312,25 @@ The [Gemini 3.8 Audio card](https://deepmind.google/models/model-cards/gemini-3-
 
 For a live assistant, model the conversation and the delegated task as two concurrent state machines. A correction can invalidate a pending task while audio continues. Attach a task generation number to each delegated result, check it before committing an action or speaking an answer, and record the last audio actually played. This is an application design principle, not a claim that any cited service supplies transactional cancellation automatically.
 
+### Worked concurrent interaction: correction during a tool call
+
+Suppose a visual assistant is describing a diagram while looking up a cited specification. The following original timeline uses milliseconds from session start. Video timestamps identify evidence capture; audio times identify playback, not generation completion. The tool is read-only in this example.
+
+| Time | Concurrent activity | Host state and decision |
+| --- | --- | --- |
+| 0 | User asks about the left connector; video frame V0 is captured | Start task generation 41 and bind evidence V0 |
+| 100 | Specification lookup starts while the assistant begins a short acknowledgment | Tool call carries generation 41; audio queue belongs to that response |
+| 200 | New frame V200 shows the user pointing at the right connector | Store capture time and provenance; do not silently replace V0 in the pending task |
+| 600 | User interrupts: "I meant the right connector" | Advance to generation 42; request old-tool cancellation and flush unplayed old audio |
+| 650 | Playback stop is acknowledged; replacement lookup starts | Record old audio actually heard through 650; bind generation 42 to V200 only if still relevant |
+| 900 | Old lookup returns despite cancellation | Reject generation-41 result for speaking or new actions |
+| 1200 | Replacement lookup completes | Validate generation 42 and evidence freshness, then queue its answer |
+| 1400 | New answer begins playing | Record delivery now; queued audio at 1200 was not yet heard |
+
+If a newer frame contradicts V200, refresh evidence or ask for clarification instead of pairing the correction with stale visual state. A playback device may continue briefly after a stop request; the 600-650 ms interval belongs in the interruption metric. Checks at enqueue time alone are insufficient: invalidate queued old-generation audio and check generation again at delivery.
+
+For a write tool, generation validation must be coordinated with effect commitment through an authoritative gate, version precondition or fencing mechanism. A check followed by an unprotected network write leaves a race with the correction. If the external service already committed generation 41, mark that effect as committed and reconcile it; canceling speech cannot undo it. An endpoint without conditional execution requires an explicit ambiguous-outcome policy. This timeline describes an application contract, not a guarantee supplied by a particular live-model API.
+
 ### Budget and evaluate the entire interaction
 
 Time to first audio includes input buffering, encoder work, decision latency, codec generation, waveform decoding, and playback buffering. An illustrative budget assigns 80 milliseconds to input buffering, 60 to encoding, 140 to the first response decision, 40 to codec generation plus waveform decoding, and 80 to playback buffering. These five sequential stages total 400 milliseconds; overlap may reduce the total, while queueing can enlarge it. A first text token is not a first audible response.
@@ -348,6 +398,19 @@ This changes the benchmark contract. Record time to the first committed readable
 
 A useful toy calculation is a 32-token block refined in four 10-millisecond passes followed by a 4-millisecond acceptance pass. Its model-side rate is about 727 tokens per second, but the first committed block arrives no earlier than 44 milliseconds after the required prefix is ready. Reporting only 800 tokens per second from the four refinement passes omits necessary work. These numbers are illustrative, not measurements of DiffusionGemma.
 
+### Compare generation methods by their commit boundary
+
+| Method | Mutable unit and commitment | Reusable state and comparison boundary |
+| --- | --- | --- |
+| Autoregressive target | One next token becomes final under the decoding policy | Causal prefix KV; measure useful committed tokens and full serving latency |
+| Exact speculative autoregression | Draft block or tree, then target verification and correction | Discard rejected branch state; target-distribution equivalence requires the correct sampling algorithm |
+| Full-sequence masked diffusion | Multiple masked positions refined under a schedule | Mutable bidirectional state; no general promise of an early stable readable prefix |
+| Block diffusion | Refine one block against fixed earlier blocks | Prefix reuse follows the actual attention mask; mutable-block KV is not automatically reusable |
+| DiffusionGemma | Random-token canvas with self-conditioning, then acceptance | Separate causal encode-and-append pass populates prefix cache; count it alongside denoising |
+| Sequence editing | Insertions and deletions change token positions and length | Revalidate positional/cache dependencies and termination; support depends on the actual engine |
+
+The rows summarize the cited mechanisms in this chapter, not a speed ranking. In particular, diffusion used only as a speculative draft belongs under the autoregressive target's verification contract. A native diffusion target defines its own output behavior. Benchmark the same workload, quality floor, concurrency and output policy, and include canceled, revised and rejected work. A smaller number of model calls can still mean more arithmetic, memory traffic or time before the first useful commitment.
+
 ### Sequence editing and commercial diffusion
 
 The [LLaDA2.2-flash card](https://huggingface.co/inclusionAI/LLaDA2.2-flash), inspected September 23, introduces `DELETE` and `INSERT` controls, block-level MoE routing, and agentic reinforcement learning. This extends refinement beyond replacing tokens at fixed positions: deletion and insertion change sequence structure. Position indices, termination, visible streaming, and cache invalidation must follow the editing method. The card provides a Transformers example but says SGLang deployment support is coming soon; model availability does not establish readiness of every suggested engine.
@@ -397,6 +460,18 @@ Current model releases put more weight on completing extended workflows, but a l
 Preserved reasoning history adds another compatibility boundary. The [Kimi K3 usage card](https://huggingface.co/moonshotai/Kimi-K3) requires complete returned assistant messages, including reasoning content and tool calls, to be passed back for multi-turn use. A generic adapter that strips everything except visible text can silently change the supported interaction. Follow the model's contract while applying the application's retention and access policies; raw reasoning history is not a substitute for a compact, authoritative task ledger.
 
 Persistent memory must retain provenance and user scope. A fact extracted from an untrusted page cannot become a higher-priority instruction merely because it was saved in a memory store or summarized. Test revocation, stale facts, contradictory updates, deleted records, and a malicious observation that attempts to survive across sessions. A successful memory retrieval test says little about whether the retrieved material may authorize a side effect.
+
+### Worked recovery: the effect committed before the task checkpoint
+
+Part VI's `examples.durable_effects` stores one local effect with its receipt. The companion `python -m examples.task_recovery` adds a separate persistent task ledger. It records task identity, tenant, operation key, payload, generation, schema version, attempt limit, attempts spent, status and receipt. Its scripted task saves one draft; it does not simulate general model planning.
+
+The failure sequence is deliberately split across two databases. First commit the task's pending intent. Before dispatch, durably charge one effect attempt. Then save the draft and receipt in the effect database. Simulate process failure before marking the task done. On reopening, the task is still pending with one attempt spent, but the effect receipt exists. Recovery checks current host-supplied authority and generation, reads that matching receipt, and marks the task done without a second dispatch. The demo prints `status=done attempts=1 drafts=1` even with a one-attempt limit.
+
+If there is no receipt and no remaining attempt, return `needs_reconciliation`; a crash between charging and dispatch can consume an attempt without creating an effect. This conservative choice prevents restart from resetting the budget. A receipt query is a separate operation: the fixture bounds effect attempts only, while production also needs persistent deadlines and budgets for status reads, model calls and total spend. When another effect attempt is allowed, reuse the original operation key and exact payload.
+
+A changed generation returns `stale` before dispatch; revoked authorization denies receipt replay; changed task parameters cannot overwrite an existing intent. Unsupported ledger schema versions stop recovery. The fixture assumes one active runner per task. A production scheduler needs leases or fencing and a defined authority/commit ordering when corrections race a dispatch. The separate SQLite databases model the checkpoint gap, but the effect itself remains local and transactional; remote services require their own durable idempotency and reconciliation contract.
+
+**Worked check:** a task spent its final attempt, the draft committed, and the reply was lost. Must recovery fail or reset the counter? Neither. If current authority permits it, reconcile the existing receipt and finish with the original counter. If authority was revoked, do not expose the receipt through the denied task.
 
 ### Evaluate the model together with its harness
 
@@ -481,6 +556,29 @@ A useful comparison includes a dated hosted candidate, a feasible open-weight ca
 For an illustrative batch of one hundred tasks, route A costs 20 units and completes eighty verified tasks: 0.25 units per success. Route B costs 30 units and completes ninety: about 0.33 per success. A is cheaper on that ratio, but B may be the only acceptable route if the required success floor is 85 percent. The result still needs workload slices and uncertainty; averages cannot decide which failures are tolerable. A fallback route requires a detector of failure, whose own accuracy and cost must be measured.
 
 Public benchmarks also become development material. [Terminal-Bench 4.0](https://www.tbench.ai/news/terminal-bench-4-0) removes tasks with public solutions and requires fresh trials after changes to tasks or agent resources. Keep development tasks separate from held-out adoption tests; record known benchmark exposure and public solutions; and do not tune prompts or routing on the final comparison set. Preserve failures, timeouts, and all planned repetitions in the denominator. Use paired task-level uncertainty and workload slices rather than selecting a favorable run. An observed ninety-percent success rate on one hundred tasks is not a guarantee that future success exceeds eighty-five percent.
+
+### Worked adoption decision: a cheaper serving candidate
+
+The following is invented evaluation data for the documentation assistant, not a vendor benchmark. Before running it, the team freezes 400 independent task pairs, corpus and access snapshots, harness, model/prompt versions, retry rules and budgets. Each system receives every task. Verified success includes the required evidence and permitted final state; timeouts and failed retries stay in the denominator and cost totals.
+
+| Paired outcome | Tasks |
+| --- | ---: |
+| Both systems succeed | 340 |
+| Only incumbent succeeds | 20 |
+| Only candidate succeeds | 30 |
+| Neither succeeds | 10 |
+
+The incumbent succeeds on 360/400 tasks (90%); the candidate on 370/400 (92.5%). The paired improvement is `(30-20)/400 = 2.5` percentage points. Let each pair's difference be -1, 0 or 1. Its sample variance is `(50 - 400*0.025^2)/399`, giving an approximate standard error of 1.77 percentage points and a normal 95% interval of about -1.0 to +6.0 points. This supports neither a claim of proven superiority nor treating the two success counts as independent samples. Related tasks require grouped resampling; these invented independent pairs make the arithmetic transparent.
+
+The prespecified gates are: the paired interval's lower endpoint exceeds a -2-point noninferiority margin; the candidate's two-sided 95% Wilson lower success bound exceeds 88%; no observed forbidden effects; p99 first-token latency at most 1.5 seconds; and at least 20% lower total cost per verified success. The candidate's Wilson lower bound is about 89.5%. These are illustrative acceptance rules for this workload, not guarantees about future traffic or a general security threshold.
+
+Suppose all 400 incumbent attempts cost 160 units and all candidate attempts cost 120, including failed calls, retries, tools and allocated serving time. Cost per verified success is `160/360 ~= 0.444` versus `120/370 ~= 0.324`, about a 27% reduction. Observed p99 first-token latency is 1.30 versus 1.45 seconds, and both have zero observed forbidden effects. No-token timeouts count as latency SLO failures; do not omit them from the latency denominator. The candidate passes the stated offline gates, but the narrow latency headroom justifies only a bounded canary. Zero violations in 400 trials does not establish absence of rare failures.
+
+At a hypothetical 10,000 attempts daily, the observed per-attempt saving of 0.10 units would save 1,000 units per day. If integration costs 1,200 units, the arithmetic break-even is 1.2 full-traffic days, assuming the workload, retry behavior and cost remain unchanged. At a 5% canary, the same gross saving is only 50 units per day, before duplicate validation and rollback capacity. Do not use full-rollout economics to describe a canary.
+
+The decision is to keep the incumbent as default and run a 5% canary for at least seven days and 2,000 adjudicated tasks, whichever takes longer. Pin the assignment rule and inspect tenant, language, permission and long-document slices. Roll back immediately on a confirmed unauthorized disclosure or duplicated write; stop admissions to the candidate if p99 first-token latency exceeds 1.5 seconds in two consecutive predeclared 1,000-request windows. At the planned endpoint, evaluate each adjudicated canary task against the pinned incumbent in an isolated copy of its pre-action environment and evidence snapshot. Only the candidate executes live effects; the comparator must not duplicate real writes. These same-task evaluations provide the paired outcomes required by the quality rule. If faithful isolated replay is unavailable, prespecify an unpaired control design and its uncertainty rule instead of calling unrelated traffic paired. Include duplicate evaluation overhead in canary economics, and evaluate quality and cost at the planned endpoint with grouped uncertainty when appropriate; do not repeatedly peek for a favorable promotion result.
+
+Rollback switches the compatible routing manifest, preserves current permissions and deletion tombstones, and reconciles in-flight effects. Its owner rehearses the switch before the canary. Promotion requires the planned evidence and slice review; a changed model, verifier or routing rule starts a new comparison. If the candidate instead had p99 of 1.65 seconds, the offline decision would be no canary until a new bounded configuration passed the latency gate.
 
 ### What this snapshot does not establish
 
