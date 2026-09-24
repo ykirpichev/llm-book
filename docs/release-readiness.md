@@ -9,9 +9,32 @@ stated in the README and PDF imprint; no independent human certification is
 claimed. This policy supersedes the draft-only restrictions in historical logs.
 
 Book text and original figures use CC BY 4.0; original code uses MIT. The research
-cutoff is September 23, 2026 for the revised Part VII and September 13 for
-other parts unless explicitly dated. This update adds no locally reproduced
+cutoff is September 24, 2026 for Part VI, September 23 for Part VII, and
+September 13 for other parts unless explicitly dated. This update adds no locally reproduced
 accelerator benchmark evidence.
+
+## September 24 Part VI revision
+
+Versioned release: [public-2026-09-24](https://github.com/ykirpichev/llm-book/releases/tag/public-2026-09-24).
+Read [Part VI online](https://ykirpichev.github.io/llm-book/part-06.html) and its
+[chapter-by-chapter gap and source record](part6-update-2026-09-24.md).
+Earlier releases and their original assets are preserved.
+
+| Check | Result and scope |
+| --- | --- |
+| Technical review | Authoring-agent source, arithmetic, implementation and scope review across Chapters 46-53. No separate reviewer-agent campaign claimed for this revision. |
+| CPU/reference/document suite | All 126 tests pass. Eight new tests cover local transaction rollback, lost reply, separate-process replay, abrupt process exit, concurrent retries, tenant identity, payload conflict and revoked authorization. |
+| Final PDF | 476 pages, 80 outline entries and 326 external link annotations. Structural, navigation, text, geometry and sparse-page checks pass. |
+| Rendered layout | Front matter 1-8, all Part VI pages 332-401 and Part VII transition 402-403 rendered at 130 dpi. Contact-sheet review and full-size quantile-table inspection; revised ordering and bibliography pagination inspected again. |
+| Website | 70 chapters, nine parts, 80 reading pages and 48 figures. Internal-link/anchor/search tests pass; browser search finds ToolBench-X in Chapter 53. The new retrieval section fits a 390-pixel viewport without document overflow. |
+| Source links | 258 distinct manuscript URLs checked; 254 successful after retrying one temporary DNS failure, zero confirmed missing, four pre-existing publisher access blocks. The final ToolBench-X v2 URL was checked separately after pinning it. Reachability is not claim verification. |
+
+Validation used the pinned Python 3.12/document runtime. The new reference
+implements atomic local SQLite effects, not remote exactly-once execution or
+production authorization. No accelerator benchmarks or cited retrieval-model
+experiments were run. Published workflow results and asset hashes are available
+through the release and Actions links; the source archive includes a per-file
+checksum manifest and excludes Git history and unrelated output experiments.
 
 ## September 23 Part VII revision
 

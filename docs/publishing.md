@@ -8,7 +8,7 @@ Use Python 3.12, install `requirements.txt` and Poppler, then run:
 make release
 ```
 
-The assets are written to `output/release/public-2026-09-23/`:
+The assets are written to `output/release/public-2026-09-24/`:
 
 - `engineering-large-language-models.pdf`
 - `engineering-large-language-models-source.zip`
@@ -43,8 +43,8 @@ After the source is pushed, let the Build book workflow pass on `main`. Its
 Linux font layout may differ from the locally reviewed PDF; publish the reviewed
 PDF from the package unless you inspect the CI-built PDF too.
 
-Preserve the original `public-2026-09` release. Create a new GitHub Release with tag `public-2026-09-23` pointing to the published
-source commit. Use the prepared [release notes](release-notes-public-2026-09-23.md)
+Preserve the original `public-2026-09` release. Create a new GitHub Release with tag `public-2026-09-24` pointing to the published
+source commit. Use the prepared [release notes](release-notes-public-2026-09-24.md)
 and attach the PDF, source archive, and `SHA256SUMS`. Mark it as the latest
 release. The edition's AI review and hardware-validation limits belong in the
 release notes, not behind an implication of independent human review.

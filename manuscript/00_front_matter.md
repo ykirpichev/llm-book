@@ -4,7 +4,7 @@ subtitle: "Training, Inference, CUDA, Distributed Systems, and Technical Leaders
 author: "Yury Kirpichev"
 edition: "Public Edition - September 2026"
 copyright_year: "2026"
-publication_date: "September 23, 2026"
+publication_date: "September 24, 2026"
 keywords: "large language models, LLM systems, model training, inference, CUDA, distributed systems, technical leadership"
 ---
 
@@ -18,7 +18,7 @@ This book follows those dependencies from model training to an operating service
 
 ### A note on scope
 
-This public edition covers foundations, training, inference, CUDA, distributed systems, production algorithms, agents, multimodal systems, recent research, and technical leadership. Part VII was revised through September 23, 2026; other parts retain the September 13 research cutoff, with explicitly dated implementation checks where noted. It explains the central mechanisms in the text; primary-source links supply evidence and further detail rather than replacing the explanation. Links to moving documentation describe the implementation checked at that time, not a promise about later releases.
+This public edition covers foundations, training, inference, CUDA, distributed systems, production algorithms, agents, multimodal systems, recent research, and technical leadership. Part VI was revised through September 24, 2026, and Part VII through September 23, 2026; other parts retain the September 13 research cutoff, with explicitly dated implementation checks where noted. It explains the central mechanisms in the text; primary-source links supply evidence and further detail rather than replacing the explanation. Links to moving documentation describe the implementation checked at that time, not a promise about later releases.
 
 The book is not an exhaustive survey of every paper or a guarantee of production readiness. Recent preprints are treated as provisional evidence, and reported results must be revalidated on the reader's models, hardware, workloads, and quality constraints.
 
